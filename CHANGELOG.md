@@ -218,7 +218,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Removed real Gemini/Groq API keys that had been committed to `.env.example`
   (placeholders only now). **Keys present in earlier git history must be rotated.**
 - **Full security audit + hardening** (SAST, dependency CVE scan, secret scan,
-  and manual review — see `PacketIQ_Security_Audit_Report.pdf`). Fixed:
+  and manual review — see `docs/reports/PacketIQ_Security_Audit_Report.pdf`). Fixed:
   **path-traversal / arbitrary file write** in the evidence export (the `ip`
   filter is validated and never reaches the output path); **DNS-rebinding** and
   **CSRF** on the local web server (new middleware validates the Host header and

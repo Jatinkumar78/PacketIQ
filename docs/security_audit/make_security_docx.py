@@ -21,7 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import make_security_pdf as data  # noqa: E402
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                   "PacketIQ_Security_Audit_Report.docx")
+                   "reports", "PacketIQ_Security_Audit_Report.docx")
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
 NAVY = RGBColor(0x0B, 0x1F, 0x3A)
 BLUE = RGBColor(0x1D, 0x4E, 0xD8)

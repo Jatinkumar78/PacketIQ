@@ -23,6 +23,7 @@ from scapy.all import ICMP, IP, TCP, UDP, DNS, DNSQR, Ether, Raw, wrpcap  # noqa
 from scapy.layers.http import HTTP, HTTPRequest, HTTPResponse  # noqa: E402
 
 SANDBOX = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(SANDBOX))   # repo root (docs/sandbox_test → repo)
 PCAP_DIR = os.path.join(SANDBOX, "pcaps")
 os.makedirs(PCAP_DIR, exist_ok=True)
 
@@ -460,7 +461,7 @@ def main():
     import subprocess
     try:
         pt = subprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q"],
-                            cwd=os.path.dirname(SANDBOX), capture_output=True, text=True, timeout=600)
+                            cwd=ROOT, capture_output=True, text=True, timeout=600)
         last = [ln for ln in pt.stdout.splitlines() if "passed" in ln or "failed" in ln]
         record(cat, "Automated unit/integration test suite", pt.returncode == 0, last[-1] if last else "see output")
         RESULTS["meta"]["pytest_summary"] = last[-1] if last else ""
@@ -468,7 +469,7 @@ def main():
         record(cat, "pytest", False, f"ERROR: {e}")
     try:
         rf = subprocess.run([sys.executable, "-m", "ruff", "check", "packetiq", "tests"],
-                            cwd=os.path.dirname(SANDBOX), capture_output=True, text=True, timeout=120)
+                            cwd=ROOT, capture_output=True, text=True, timeout=120)
         record(cat, "Lint (ruff)", rf.returncode == 0, "All checks passed" if rf.returncode == 0 else rf.stdout[-120:])
     except Exception as e:
         record(cat, "ruff", False, f"ERROR: {e}")

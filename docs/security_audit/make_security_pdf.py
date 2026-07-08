@@ -15,7 +15,8 @@ from reportlab.platypus import (
 )
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                   "PacketIQ_Security_Audit_Report.pdf")
+                   "reports", "PacketIQ_Security_Audit_Report.pdf")
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
 NAVY = colors.HexColor("#0b1f3a")
 BLUE = colors.HexColor("#1d4ed8")

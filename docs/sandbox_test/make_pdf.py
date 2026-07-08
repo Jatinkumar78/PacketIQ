@@ -16,7 +16,8 @@ from reportlab.platypus import (
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RESULTS = json.load(open(os.path.join(HERE, "results.json")))
-OUT = os.path.join(os.path.dirname(HERE), "PacketIQ_Sandbox_Test_Report.pdf")
+OUT = os.path.join(os.path.dirname(HERE), "reports", "PacketIQ_Sandbox_Test_Report.pdf")
+os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
 # ── palette ──
 NAVY = colors.HexColor("#0b1f3a")

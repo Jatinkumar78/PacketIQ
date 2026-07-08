@@ -421,15 +421,23 @@ PacketIQ/
 │   ├── inputs/                    # Zeek conn.log ingestion
 │   ├── dashboard/ · webapp/       # FastAPI UIs (+ interactive graph, REST API)
 │   └── utils/
-├── tools/validate.py              # precision/recall validation harness
+├── tools/                         # dev harnesses: validate · eval_copilot · ablation · benchmark
+├── datasets/                      # detection-validation manifests + CTU-13 fetch script
+├── reports/                       # generated results (detection · faithfulness · performance)
+├── docs/                          # documentation + evidence
+│   ├── grounding_guardrail.md     # deterministic output-grounding methodology (methods write-up)
+│   ├── reports/                   # Security Audit · Sandbox Test · Minutes (PDF/DOCX)
+│   ├── security_audit/            # reproducible audit scripts + raw bandit/pip-audit output
+│   ├── sandbox_test/              # end-to-end campaign runner + results.json
+│   └── assets/                    # images (bot avatar)
 ├── samples/generate_sample.py     # build a demo PCAP
-├── tests/                         # 78 pytest tests
+├── tests/                         # 202 pytest tests
 ├── .github/workflows/ci.yml       # CI (pytest + ruff + mypy)
-├── PacketIQ.command · PacketIQ.bat       # double-click launchers (macOS/Linux · Windows)
-├── Dockerfile · docker-compose.yml · quickstart.sh
+├── PacketIQ.command · PacketIQ.bat · quickstart.sh   # double-click / one-command launchers
+├── Dockerfile · docker-compose.yml
 ├── pyproject.toml · setup.py · requirements.txt · MANIFEST.in
 ├── packetiq.toml.example · .env.example
-└── LICENSE · CHANGELOG.md
+└── LICENSE · CHANGELOG.md · README.md
 ```
 
 ---
