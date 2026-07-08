@@ -19,7 +19,7 @@ from typing import Optional
 
 from packetiq.detection.models import DetectionEvent, EventType, Severity
 from packetiq.extractor.data_extractor import ExtractionResult
-from packetiq.utils.helpers import is_private_ip
+from packetiq.utils.helpers import is_private_ip, same_org_network
 
 MIN_CONNECTIONS    = 12      # need 12+ hits to distinguish beacon from coincidence
 MIN_INTERVAL       = 5.0     # seconds — ignore retransmit bursts and TLS keep-alives
@@ -69,6 +69,12 @@ class BeaconDetector:
         # C2 beacons phone home to external IPs — internal regular connections
         # are monitoring agents, health checks, sync clients, etc.
         if is_private_ip(dst):
+            return None
+        # Same-organisation traffic (both endpoints on one LAN, including a
+        # public-IP campus /16) is intra-LAN periodicity — idle-RDP keepalives,
+        # health checks, sync clients — not C2 phoning home across the internet.
+        # A genuine external beacon (a different /16) is still caught.
+        if same_org_network(src, dst):
             return None
 
         from packetiq import config

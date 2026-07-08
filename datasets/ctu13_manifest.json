@@ -8,6 +8,7 @@
     {"file": "sogou.pcap",         "malicious": true,  "expect": ["C2_BEACON"], "note": "Sogou botnet"},
     {"file": "qvod.pcap",          "malicious": true,  "expect": ["C2_BEACON"], "note": "Qvod botnet"},
     {"file": "rbot-dos-icmp.pcap", "malicious": true,  "expect": ["C2_BEACON"], "note": "Rbot DDoS bot, IRC C2"},
+    {"file": "virut-fastflux.pcap", "malicious": true, "expect": ["DNS_ANOMALY", "C2_BEACON", "IOC_MATCH"], "note": "Virut fast-flux botnet (DGA / fast-flux DNS — different family class)"},
     {"file": "normal-20110817.pcap", "malicious": false, "note": "Real benign host traffic"},
     {"file": "normal-dns-2015.pcap", "malicious": false, "note": "Real benign DNS traffic"},
     {"file": "normal-dns-2013.pcap", "malicious": false, "note": "Real benign DNS traffic"}

@@ -14,7 +14,7 @@ Detects protocol-level anomalies from flow and packet data:
 
 from packetiq.detection.models import DetectionEvent, EventType, Severity
 from packetiq.extractor.data_extractor import ExtractionResult
-from packetiq.utils.helpers import is_private_ip
+from packetiq.utils.helpers import is_private_ip, same_org_network
 
 # ICMP tunneling threshold — a normal ping session (64-byte payloads, ~100 pings)
 # totals under 20 KB. Legitimate large-ping diagnostics rarely exceed 100 KB.
@@ -164,6 +164,10 @@ def _smb_to_internet(result: ExtractionResult) -> list[DetectionEvent]:
 
         if not (src_ext or dst_ext):
             continue
+        # Intra-organisation SMB (both endpoints on the same LAN, including a
+        # public-IP campus /16) is normal file sharing, not internet-facing SMB.
+        if same_org_network(flow.src_ip, flow.dst_ip):
+            continue
 
         key = (flow.src_ip, flow.dst_ip, flow.dst_port)
         if key in seen:
@@ -212,6 +216,10 @@ def _cleartext_to_internet(result: ExtractionResult) -> list[DetectionEvent]:
             continue
         if is_private_ip(flow.dst_ip):
             continue  # Internal only — lower risk (still flagged by credential detector)
+        # Same-organisation traffic (both endpoints on one LAN / public-IP campus
+        # /16) is not a cleartext credential exposure to the internet.
+        if same_org_network(flow.src_ip, flow.dst_ip):
+            continue
 
         svc = CLEARTEXT_RISKY[flow.dst_port]
         key = (flow.src_ip, flow.dst_ip, flow.dst_port)

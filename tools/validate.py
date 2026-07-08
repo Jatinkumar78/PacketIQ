@@ -65,7 +65,7 @@ def _flagged(events, threshold: Severity) -> bool:
     return any(_SEV_ORDER.get(e.severity, 9) <= bar for e in events)
 
 
-def run(manifest: dict, base_dir: Path, md_out: str = None) -> int:
+def run(manifest: dict, base_dir: Path, md_out: str = None, gates: dict = None) -> int:
     threshold = Severity[manifest.get("severity_threshold", "HIGH").upper()]
     captures = manifest.get("captures", [])
     if not captures:
@@ -143,6 +143,20 @@ def run(manifest: dict, base_dir: Path, md_out: str = None) -> int:
     if md_out:
         Path(md_out).write_text(_to_markdown(metrics))
         print(f"\nMarkdown report written to {md_out}")
+
+    # Optional CI gate: exit non-zero if metrics fall below required floors. This
+    # turns the synthetic suite into a standing regression check (recall/precision
+    # must not drop) that GitHub Actions can enforce on every push.
+    if gates:
+        checks = [("recall", recall), ("precision", precision), ("f1", f1)]
+        failures = [f"{name} {val:.1%} < required {gates[name]:.1%}"
+                    for name, val in checks
+                    if gates.get(name) is not None and val + 1e-9 < gates[name]]
+        if failures:
+            print("\nGATE FAILED: " + "; ".join(failures))
+            return 1
+        if any(gates.get(k) is not None for k in ("recall", "precision", "f1")):
+            print("\nGATE PASSED.")
     return 0
 
 
@@ -341,13 +355,20 @@ def main():
                     help="Run the built-in synthetic labeled fixture suite (9 captures, all detectors)")
     ap.add_argument("--markdown", dest="md_out", help="Write a Markdown accuracy report to this path")
     ap.add_argument("--keep", metavar="DIR", help="Copy generated fixtures to DIR (for --demo/--suite)")
+    ap.add_argument("--min-recall", type=float, metavar="R",
+                    help="CI gate: exit non-zero if recall < R (0.0–1.0)")
+    ap.add_argument("--min-precision", type=float, metavar="P",
+                    help="CI gate: exit non-zero if precision < P (0.0–1.0)")
+    ap.add_argument("--min-f1", type=float, metavar="F",
+                    help="CI gate: exit non-zero if F1 < F (0.0–1.0)")
     args = ap.parse_args()
+    gates = {"recall": args.min_recall, "precision": args.min_precision, "f1": args.min_f1}
 
     if args.demo or args.suite:
         import tempfile
         tmp = Path(tempfile.mkdtemp(prefix="packetiq_validate_"))
         manifest = _build_suite(tmp) if args.suite else _build_demo(tmp)
-        rc = run(manifest, tmp, md_out=args.md_out)
+        rc = run(manifest, tmp, md_out=args.md_out, gates=gates)
         if args.keep:
             import shutil
             dest = Path(args.keep)
@@ -364,7 +385,7 @@ def main():
     base_dir = Path(manifest.get("base_dir", Path(args.manifest).parent))
     if not base_dir.is_absolute():
         base_dir = Path(args.manifest).parent / base_dir
-    return run(manifest, base_dir, md_out=args.md_out)
+    return run(manifest, base_dir, md_out=args.md_out, gates=gates)
 
 
 if __name__ == "__main__":

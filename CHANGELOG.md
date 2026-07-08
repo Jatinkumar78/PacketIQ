@@ -5,6 +5,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Detection accuracy, flow inputs & CI hardening
+
+**Added**
+- **NetFlow / IPFIX ingestion** (`packetiq/inputs/netflow.py`, `packetiq netflow`).
+  Parses Cisco **NetFlow v5**, **NetFlow v9**, and **IPFIX (v10)** export files —
+  template-based decoding of the IANA Information Elements — into the same
+  `ExtractionResult` the PCAP path produces, so every flow-based detector
+  (port/host scan, beacon, ICMP volume, SMB / cleartext misuse) and IOC enrichment
+  runs on flow telemetry at collector scale with no raw capture. Eight new tests
+  cover v5, v9, IPFIX, multi-datagram streams and graceful degradation.
+- **Real-world detection accuracy re-measured and enlarged.** The CTU-13 harness
+  now spans **five malware families** (added Virut fast-flux / DGA) plus benign
+  captures: **100% recall · 83.3% precision · 90.9% F1** (up from 57% precision),
+  every decision attributable to a specific detector — see `reports/detection_real.md`.
+- **CI eval gates.** `tools/validate.py` gained `--min-recall / --min-precision /
+  --min-f1` (exit non-zero below the floor). CI now enforces the synthetic suite at
+  100% recall/precision, runs the deterministic guardrail invariant, a throughput
+  benchmark smoke, and a `pip-audit` dependency-CVE scan on every push.
+
+**Changed / Fixed**
+- **False-positive precision fixes (principled, recall preserved).** A shared
+  `same_org_network()` helper stops the SMB, cleartext-protocol, C2-beacon and
+  non-standard-resolver detectors from misreading **intra-LAN traffic on a
+  public-IP network** (e.g. a university /16) as internet-facing. The DNS
+  "excessive-query" signal — re-resolving one name, a caching/polling artifact — is
+  demoted to LOW/informational; DGA, tunneling and IOC remain the discriminative
+  DNS threats. Recall held at 100% on real malware and the synthetic suite held 100%.
+- **Dependency pins synced.** `requirements.txt` now matches `setup.py`'s
+  security-patched floors (`python-multipart>=0.0.31`, `requests>=2.33.0`,
+  `cryptography>=44.0.1`, `urllib3>=2.7.0`), resolving a conflict where an
+  unpatched `python-multipart` could be installed.
+
 ### Added — local AI copilot & evaluation
 - **Local-LLM copilot (Ollama) — offline, private, no API key.** The AI copilot
   can now run entirely on the analyst's machine via a local Ollama model, so

@@ -2,9 +2,81 @@
 requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# Project metadata is defined in setup.py (kept as the single source of truth).
-# This file declares the build backend and tool configuration.
+# ─────────────────────────────────────────────────────────────────────────────
+# Project metadata (PEP 621) — the single source of truth. setup.py is gone;
+# `pip install -e .` and `python -m build` read everything from here.
+# ─────────────────────────────────────────────────────────────────────────────
+[project]
+name = "packetiq"
+version = "1.0.0"
+description = "AI PCAP Forensics & SOC Copilot"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Jatin Kumar" }]
+keywords = ["pcap", "forensics", "network-security", "soc", "threat-intel", "dfir"]
 
+# Security-patched floors are intentional and verified to exist on PyPI; do not
+# lower them (see CHANGELOG Security). Kept in lockstep with requirements.txt.
+dependencies = [
+    "scapy>=2.5.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.1",
+    "tabulate>=0.9.0",
+    "colorama>=0.4.6",
+    "requests>=2.32.4",              # CVE-2024-47081 (.netrc credential leak)
+    "urllib3>=2.6.0",                # decompression-bomb DoS fix
+    "anthropic>=0.40.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-multipart>=0.0.18",      # CVE-2024-53981 (parser DoS)
+    "google-genai>=1.0.0",
+    "groq>=0.11.0",
+    "tomli>=2.0.0; python_version < '3.11'",
+    "cryptography>=44.0.1",          # GHSA-537c-gmf6-5ccf and prior
+]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Security",
+    "Topic :: System :: Networking :: Monitoring",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "pyyaml>=6.0.0", "pysigma>=0.11.0", "yara-python>=4.3.0", "ruff", "mypy"]
+yara = ["yara-python>=4.3.0"]
+geoip = ["geoip2>=4.7.0"]
+
+[project.scripts]
+packetiq = "packetiq.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/PacketIQ"
+Changelog = "https://github.com/PacketIQ/blob/main/CHANGELOG.md"
+
+# ── Packaging: discover the package and ship its bundled data files ──────────
+[tool.setuptools.packages.find]
+include = ["packetiq*"]
+
+[tool.setuptools.package-data]
+packetiq = [
+    "detection/data/*.csv",
+    "detection/data/yara_rules/*",
+    "enrichment/data/*",
+    "webapp/templates/*.html",
+    "dashboard/templates/*.html",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tooling configuration
+# ─────────────────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
@@ -37,4 +109,3 @@ ignore_missing_imports = true
 warn_unused_ignores = false
 check_untyped_defs = false
 exclude = "(^|/)(\\.venv|venv|build|dist|samples)/"
-

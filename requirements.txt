@@ -1,15 +1,18 @@
+# Runtime dependencies — kept in lockstep with pyproject.toml [project.dependencies].
+# Security-patched floors are intentional and verified to exist on PyPI; do not lower.
 scapy>=2.5.0
 click>=8.1.0
 rich>=13.0.0
-python-dotenv>=1.0.0
+python-dotenv>=1.0.1
 tabulate>=0.9.0
 colorama>=0.4.6
-requests>=2.31.0
+requests>=2.32.4              # CVE-2024-47081 (.netrc credential leak)
+urllib3>=2.6.0               # decompression-bomb DoS fix
 anthropic>=0.40.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
-python-multipart>=0.0.9
+python-multipart>=0.0.18     # CVE-2024-53981 (parser DoS)
 google-genai>=1.0.0
 groq>=0.11.0
 tomli>=2.0.0; python_version < "3.11"
-cryptography>=42.0.0
+cryptography>=44.0.1         # GHSA-537c-gmf6-5ccf and prior

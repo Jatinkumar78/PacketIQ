@@ -138,3 +138,38 @@ def is_private_ip(ip: str) -> bool:
         )
     except ValueError:
         return False
+
+
+def same_org_network(ip_a: str, ip_b: str, prefix: int = 16) -> bool:
+    """
+    Return True when two IPs plausibly belong to the *same organisation's network*,
+    so traffic between them is intra-LAN rather than crossing the internet:
+
+      - both are local (private / loopback / link-local), OR
+      - both are public and share the same /prefix block (default /16) — this covers
+        public-IP LANs such as a university's own /16 (e.g. Stratosphere CTU's
+        147.32.0.0/16), where intra-campus SMB/RDP/FTP is *not* internet-facing.
+
+    A private↔public pair returns False (that IS a genuine network-boundary
+    crossing). Used by the SMB, cleartext-protocol, and C2-beacon detectors, whose
+    "to an external / internet host" logic must not fire on same-network traffic.
+    Non-IP inputs (e.g. an HTTP Host header) return False (cannot be judged).
+    """
+    if not ip_a or not ip_b:
+        return False
+    try:
+        a = ipaddress.ip_address(ip_a)
+        b = ipaddress.ip_address(ip_b)
+    except ValueError:
+        return False
+    if a.version != b.version:
+        return False
+    a_local = a.is_private or a.is_loopback or a.is_link_local
+    b_local = b.is_private or b.is_loopback or b.is_link_local
+    if a_local and b_local:
+        return True
+    if a_local != b_local:
+        return False  # one local, one public → genuine boundary crossing
+    # both public → same organisation only if they share the same prefix block
+    same_prefix = prefix if a.version == 4 else 48
+    return b in ipaddress.ip_network(f"{ip_a}/{same_prefix}", strict=False)

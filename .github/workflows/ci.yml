@@ -30,10 +30,45 @@ jobs:
           pip install ruff mypy
 
       - name: Lint (ruff)
-        run: ruff check packetiq tests
+        run: ruff check packetiq tools tests
 
       - name: Type check (mypy, non-blocking)
         run: mypy packetiq || true
 
-      - name: Run tests
+      - name: Unit + integration tests
         run: pytest -q
+
+      # Standing guarantee: the deterministic grounding guardrail redacts every
+      # ungrounded IP / MITRE technique / CVE / domain / file-hash. These tests use
+      # no LLM, so they gate the 0-hallucination invariant on every push.
+      - name: Guardrail invariant — 0 ungrounded entities (deterministic)
+        run: pytest -q tests/test_grounding_guard.py tests/test_grounding.py
+
+      # Standing guarantee: detection accuracy must not regress. The synthetic
+      # labeled suite must keep 100% recall and 100% precision (exit non-zero if not).
+      - name: Detection regression gate (synthetic suite)
+        run: python tools/validate.py --suite --min-recall 1.0 --min-precision 1.0
+
+      # Smoke: the throughput benchmark runs end-to-end on a generated capture.
+      - name: Throughput benchmark smoke
+        run: python tools/benchmark.py --demo --packets 20000
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: pip-audit (dependency CVE scan)
+        # Reports known-vulnerable dependencies. Non-blocking so an unfixable
+        # transitive advisory cannot wedge the pipeline, but surfaced on every run.
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip install -e .
+          pip-audit

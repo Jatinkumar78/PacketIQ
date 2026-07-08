@@ -4,7 +4,7 @@ DNS Anomaly Detector.
 Detects:
   1. DGA-like domains      — high Shannon entropy + unusual length patterns
   2. DNS tunneling          — excessively long query names (data exfil via DNS)
-  3. Excessive query rate   — same domain queried abnormally often
+  3. High-volume single name — one FQDN re-queried a lot (LOW/informational only)
   4. Non-standard resolvers — DNS to unexpected IPs (not common public resolvers)
   5. Rare TLD usage         — queries to suspicious/uncommon TLDs
 
@@ -251,8 +251,17 @@ def _tunneling_detection(result: ExtractionResult) -> list[DetectionEvent]:
 
 def _excessive_queries(result: ExtractionResult) -> list[DetectionEvent]:
     """
-    Flag domains queried more than EXCESSIVE_QUERY_COUNT times total,
-    and flag sources that hit the same domain very fast (beaconing pattern).
+    Surface domains queried an unusually high number of times as **LOW /
+    informational** context — NOT a threat classification.
+
+    Repeatedly re-resolving the *same* FQDN is a TTL / caching / client-polling
+    artifact (e.g. a Dropbox or Firefox-tiles client polling one host hundreds of
+    times), not an attack: it was the dominant precision cost on real benign
+    traffic. The genuinely malicious DNS patterns are handled by dedicated,
+    discriminative detectors — many *distinct* high-entropy subdomains (DGA →
+    `_dga_detection`), oversized query names (tunneling → `_tunneling_detection`),
+    and known-bad names (IOC match). So volume-of-one-name is emitted only as LOW
+    context, below the MEDIUM alerting threshold, and never drives a verdict.
     """
     events: list[DetectionEvent] = []
 
@@ -273,7 +282,8 @@ def _excessive_queries(result: ExtractionResult) -> list[DetectionEvent]:
         ts_list = sorted(q["ts"] for q in result.dns_queries if q.get("qname") == domain)
         max_rate = _max_window_count(ts_list, RATE_WINDOW_SECS)
 
-        severity = Severity.HIGH if max_rate >= RATE_THRESHOLD else Severity.MEDIUM
+        # Informational only — repetition of a single name is not discriminative.
+        severity = Severity.LOW
         events.append(DetectionEvent(
             event_type   = EventType.DNS_ANOMALY,
             severity     = severity,
@@ -281,8 +291,8 @@ def _excessive_queries(result: ExtractionResult) -> list[DetectionEvent]:
             dst_port     = 53,
             protocol     = "DNS",
             description  = (
-                f"Excessive DNS queries — {domain!r} queried {count}× "
-                f"(max {max_rate} in {int(RATE_WINDOW_SECS)}s)"
+                f"High-volume DNS to a single name (informational) — {domain!r} "
+                f"queried {count}× (max {max_rate} in {int(RATE_WINDOW_SECS)}s)"
             ),
             packet_count = count,
             confidence   = min(1.0, count / 100),
@@ -308,7 +318,7 @@ def _non_standard_resolver(result: ExtractionResult) -> list[DetectionEvent]:
     mDNS/LLMNR multicast addresses are excluded — they are always legitimate.
     """
     events: list[DetectionEvent] = []
-    from packetiq.utils.helpers import is_private_ip
+    from packetiq.utils.helpers import is_private_ip, same_org_network
     flagged: set[tuple] = set()
 
     for q in result.dns_queries:
@@ -330,6 +340,11 @@ def _non_standard_resolver(result: ExtractionResult) -> list[DetectionEvent]:
                 or dst_host.lower().startswith("ff0") or dst_host.lower().startswith("ff2"):
             continue
         if is_private_ip(dst_host):
+            continue
+        # An organisation's own resolver on a public IP (same /16 as the client —
+        # e.g. a campus DNS server) is not a rogue/hijacked resolver. A genuine
+        # off-network resolver (different /16) is still flagged.
+        if same_org_network(q.get("src", ""), dst_host):
             continue
 
         key = (q.get("src", ""), dst)

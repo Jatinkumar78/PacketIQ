@@ -7,7 +7,8 @@
 #   * normal-capture-* / *-only-dns : real benign traffic  (label: BENIGN)
 #
 # They are downloaded into datasets/real/pcaps/ (gitignored — never committed).
-# Total ~75 MB. Re-runnable: skips files already present (curl -C - resume).
+# Total ~185 MB (8 captures, 5 malware families). Re-runnable: skips files already
+# present (curl -C - resume).
 set -euo pipefail
 BASE="https://mcfp.felk.cvut.cz/publicDatasets"
 DEST="$(cd "$(dirname "$0")" && pwd)/real/pcaps"
@@ -19,6 +20,7 @@ FILES=(
   "CTU-Malware-Capture-Botnet-48/botnet-capture-20110816-sogou.pcap|sogou.pcap"
   "CTU-Malware-Capture-Botnet-49/botnet-capture-20110816-qvod.pcap|qvod.pcap"
   "CTU-Malware-Capture-Botnet-45/botnet-capture-20110815-rbot-dos-icmp.pcap|rbot-dos-icmp.pcap"
+  "CTU-Malware-Capture-Botnet-54/botnet-capture-20110815-fast-flux-2.pcap|virut-fastflux.pcap"
   "CTU-Malware-Capture-Botnet-50/normal-capture-20110817.pcap|normal-20110817.pcap"
   "CTU-Normal-4-only-DNS/2015-03-24_capture1-only-dns.pcap|normal-dns-2015.pcap"
   "CTU-Normal-6-filtered/2013-10-21_capture-1-only-dns.pcap|normal-dns-2013.pcap"

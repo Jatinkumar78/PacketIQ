@@ -182,6 +182,7 @@ packetiq <command> [options]
 | `misp` | Push IOCs to a MISP instance | `packetiq misp dump.pcap --dry-run` |
 | `slice` | Carve a finding's packets into an evidence PCAP | `packetiq slice dump.pcap --ip 1.2.3.4 -o ev.pcap` |
 | `zeek` | Analyze a Zeek `conn.log` (no PCAP needed) | `packetiq zeek conn.log` |
+| `netflow` | Analyze a NetFlow v5/v9/IPFIX export (no PCAP needed) | `packetiq netflow flows.bin` |
 | `live` | Real-time monitoring on a NIC (or `--read` replay) | `packetiq live -i en0` |
 | `setup-capture` | **One-time** capture-privilege setup (no per-run sudo) | `packetiq setup-capture` |
 | `fuse` | Fuse multiple captures into one campaign | `packetiq fuse day1.pcap day2.pcap` |
@@ -248,6 +249,7 @@ curl http://localhost:8080/api/sigma/<job>/rules.zip                # SIGMA rule
 
 - **PCAP / PCAPNG / CAP** — streamed packet-by-packet (memory-bounded)
 - **Zeek `conn.log`** (TSV or JSON) — flow-log analysis without a raw capture
+- **NetFlow / IPFIX** (v5 · v9 · IPFIX export files) — flow-telemetry analysis at collector scale, no raw capture
 - **Live capture** — `packetiq live -i <iface>` (sliding-window IDS) or `--read file.pcap` to replay offline. Capturing raw packets needs OS privileges; run **`packetiq setup-capture` once** (or click *"🔓 Enable live capture (one-time)"* in the web Live Monitor) and you won't need `sudo` per run. It installs **ChmodBPF** on macOS (the same mechanism Wireshark uses), grants **CAP_NET_RAW** to Python on Linux via `setcap`, and checks **Npcap** on Windows.
 
 ---
@@ -264,7 +266,7 @@ curl http://localhost:8080/api/sigma/<job>/rules.zip                # SIGMA rule
 
 **Grounded, low-hallucination prompts** — the system prompts enforce evidence-only answers (*never invent an IP/domain/technique/CVE; say "not present in this capture" when there's no evidence*) at temperature `0.15`. The detectors, not the LLM, decide what was found — the AI only explains it. Copilot groundedness is measured quantitatively by `tools/eval_copilot.py` (see [Validation harnesses](#validation-harnesses)).
 
-**Grounding guardrail (a guarantee, not just a prompt)** — a deterministic post-filter sits on the copilot's output stream and checks every specific claim it makes — IP, MITRE technique ID, CVE, **domain and file hash (MD5/SHA-1/SHA-256)** — against the exact evidence it was given, redacting anything ungrounded before it reaches you (and dropping a wholly-invented list item). It only ever *removes* an invented entity, never adds or changes a real one, so a faithful answer is untouched. This is what makes even a small local model hit **0 hallucinations**: on the built-in evaluation, raw `qwen2.5:7b-instruct` scores ~45–75% faithful (it varies run-to-run — LLMs are non-deterministic), and a deterministic **100.0%** with the guardrail on — and the [multi-model ablation](#validation-harnesses) shows the same 100% on `llama3.1:8b` and `llama3.2:3b` too. On by default (`PACKETIQ_GROUNDING_GUARD=0` disables it, used only to measure the raw model). Covers chat, "Explain with AI", AI reports and the CLI. Full methodology: [docs/grounding_guardrail.md](docs/grounding_guardrail.md).
+**Grounding guardrail (a guarantee, not just a prompt)** — a deterministic post-filter sits on the copilot's output stream and checks every specific claim it makes — IP, MITRE technique ID, CVE, **domain and file hash (MD5/SHA-1/SHA-256)** — against the exact evidence it was given, redacting anything ungrounded before it reaches you (and dropping a wholly-invented list item). It only ever *removes* an invented entity, never adds or changes a real one, so a faithful answer is untouched. This is what makes even a small local model hit **0 hallucinations**: on the built-in evaluation, raw `qwen2.5:7b-instruct` scores ~45–75% faithful (it varies run-to-run — LLMs are non-deterministic), and a deterministic **100.0%** with the guardrail on — and the [multi-model ablation](#validation-harnesses) shows the same 100% on `llama3.1:8b` and `llama3.2:3b` too. On by default (`PACKETIQ_GROUNDING_GUARD=0` disables it, used only to measure the raw model). Covers chat, "Explain with AI", AI reports and the CLI. Full methodology: [docs/grounding_guardrail.md](docs/grounding_guardrail.md); formal write-up with the multi-model ablation in [docs/paper/deterministic_output_grounding.md](docs/paper/deterministic_output_grounding.md).
 
 **Local model (no key, fully offline)** — install [Ollama](https://ollama.com), run `ollama pull qwen2.5:7b-instruct` (or `llama3.1:8b`), and the copilot works with **no API key and no data leaving your machine** — ideal for sensitive captures. Auto-detected when the daemon is running; or pick **"Local (Ollama)"** in the selector.
 
@@ -364,7 +366,7 @@ python tools/ablation.py --markdown reports/faithfulness_ablation.md    # guardr
 python tools/benchmark.py --dir datasets/real/pcaps --markdown reports/performance.md
 ```
 
-- **`validate.py`** runs the real detection pipeline over labeled captures. `--suite` uses crafted fixtures (one per detector + benign) so it needs no downloads — a **regression/sanity check, not a real-world accuracy claim**. Point `--manifest` at real captures for real figures: `datasets/fetch_ctu.sh` pulls a labeled Stratosphere CTU-13 sample, on which PacketIQ scores **100% recall** (every real malware capture caught) with a transparent per-detector account of the precision trade-off — see [`reports/detection_real.md`](reports/detection_real.md) and the [public datasets guide](datasets/README.md).
+- **`validate.py`** runs the real detection pipeline over labeled captures. `--suite` uses crafted fixtures (one per detector + benign) so it needs no downloads — a **regression/sanity check, not a real-world accuracy claim**. Point `--manifest` at real captures for real figures: `datasets/fetch_ctu.sh` pulls a labeled Stratosphere CTU-13 sample (five malware families + benign), on which PacketIQ scores **100% recall · 83.3% precision · 90.9% F1** — every real malware capture caught with a transparent, per-detector account of every decision — see [`reports/detection_real.md`](reports/detection_real.md) and the [public datasets guide](datasets/README.md).
 - **`eval_copilot.py`** measures copilot **groundedness** deterministically (regex entity-matching against the exact context the model saw) — a human-free hallucination metric, ideal for a validation chapter. **`ablation.py`** sweeps it across several local models to show the guardrail's 100% is model-independent.
 - **`benchmark.py`** measures real throughput and memory through the exact analysis pipeline (`--demo` needs no download).
 
@@ -418,7 +420,7 @@ PacketIQ/
 │   ├── timeline/ · display/       # reconstruction + rich terminal UI
 │   ├── copilot/                   # AI SOC copilot (optional)
 │   ├── alerts/                    # Telegram + Slack/email/webhook channels
-│   ├── inputs/                    # Zeek conn.log ingestion
+│   ├── inputs/                    # Zeek conn.log + NetFlow/IPFIX (v5·v9·v10) ingestion
 │   ├── dashboard/ · webapp/       # FastAPI UIs (+ interactive graph, REST API)
 │   └── utils/
 ├── tools/                         # dev harnesses: validate · eval_copilot · ablation · benchmark
@@ -426,6 +428,8 @@ PacketIQ/
 ├── reports/                       # generated results (detection · faithfulness · performance)
 ├── docs/                          # documentation + evidence
 │   ├── grounding_guardrail.md     # deterministic output-grounding methodology (methods write-up)
+│   ├── paper/                     # formal short paper: deterministic output grounding
+│   ├── RELEASE.md                 # build/verify/publish the wheel (PEP 621)
 │   ├── reports/                   # Security Audit · Sandbox Test · Minutes (PDF/DOCX)
 │   ├── security_audit/            # reproducible audit scripts + raw bandit/pip-audit output
 │   ├── sandbox_test/              # end-to-end campaign runner + results.json
@@ -435,7 +439,7 @@ PacketIQ/
 ├── .github/workflows/ci.yml       # CI (pytest + ruff + mypy)
 ├── PacketIQ.command · PacketIQ.bat · quickstart.sh   # double-click / one-command launchers
 ├── Dockerfile · docker-compose.yml
-├── pyproject.toml · setup.py · requirements.txt · MANIFEST.in
+├── pyproject.toml · requirements.txt · MANIFEST.in   # PEP 621 packaging
 ├── packetiq.toml.example · .env.example
 └── LICENSE · CHANGELOG.md · README.md
 ```
@@ -450,7 +454,7 @@ PacketIQ/
 - [x] Local-LLM (Ollama) copilot — offline, private, no API key
 - [x] Copilot grounding + faithfulness evaluation harness (`tools/eval_copilot.py`)
 - [x] Detection precision/recall harness + report (`tools/validate.py --suite --markdown`)
-- [ ] NetFlow / IPFIX ingestion
+- [x] NetFlow / IPFIX ingestion (v5 · v9 · IPFIX → same detectors as PCAP)
 - [ ] GeoIP map in the SPA (loader ships; needs a MaxMind GeoLite2 DB)
 - [ ] PyPI release
 

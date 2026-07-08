@@ -1212,6 +1212,64 @@ def zeek_cmd(conn_log: str, top: int):
     ui.print_divider()
 
 
+@main.command("netflow")
+@click.argument("flow_file", type=click.Path(exists=True, readable=True))
+@click.option("--top", "-t", default=15, show_default=True)
+def netflow_cmd(flow_file: str, top: int):
+    """
+    Analyze a NetFlow v5 / v9 / IPFIX export — flow-based detection without a PCAP.
+
+    \b
+    Example:
+        packetiq netflow /var/lib/nfcapd/flows.bin
+    """
+    from packetiq.inputs import load_netflow
+
+    ui.print_section("NETFLOW / IPFIX ANALYSIS", "flow-export ingestion")
+    ui.print_status(f"Loading {flow_file}...", status="loading")
+    try:
+        result = load_netflow(flow_file)
+    except Exception as e:
+        ui.print_status(f"Failed to parse flow export: {e}", status="error")
+        sys.exit(1)
+
+    ui.print_status(
+        f"Loaded {len(result.flows):,} flow(s), {len(result.unique_src_ips)} source(s), "
+        f"{len(result.external_ips)} external IP(s).",
+        status="ok",
+    )
+
+    engine = DetectionEngine()
+    events, risk, _fps = engine.run(result, flow_file)   # payload passes no-op gracefully
+    chains = CorrelationEngine().correlate(events)
+
+    ui.print_summary_panel(f"RISK SCORE: {risk.score}/100 [{risk.tier}]", {
+        "Total Events":  str(len(events)),
+        "Attack Chains": str(len(chains)),
+        "Critical":      str(risk.by_severity.get("CRITICAL", 0)),
+        "High":          str(risk.by_severity.get("HIGH", 0)),
+        "Medium":        str(risk.by_severity.get("MEDIUM", 0)),
+        "Low":           str(risk.by_severity.get("LOW", 0)),
+    })
+
+    if events:
+        rows = []
+        for e in events:
+            dst = f"{e.dst_ip}:{e.dst_port}" if e.dst_ip and e.dst_port else (e.dst_ip or "—")
+            rows.append([e.severity.value, e.event_type.value.replace("_", " "),
+                         e.src_ip or "—", dst, e.description[:70]])
+        ui.print_table(
+            "Detection Events",
+            columns=[("Severity", "bold white", "center"), ("Type", "yellow", "left"),
+                     ("Source", "red", "left"), ("Destination", "cyan", "left"),
+                     ("Description", "dim white", "left")],
+            rows=rows, max_rows=top,
+        )
+    else:
+        ui.print_status("No threats detected in this flow export.", status="ok")
+    ui.print_divider()
+
+
 @main.command("notify")
 @click.argument("message", default="PacketIQ test notification.")
 @click.option("--status", "show_status", is_flag=True, help="Show which channels are configured.")
