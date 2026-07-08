@@ -34,9 +34,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   prompt rules, a deterministic post-filter now sits on the copilot's output
   stream (`_stream_ai`, so it covers chat, Explain-with-AI, AI reports and the
   CLI alike). Every specific claim the model emits — IP address, MITRE technique
-  ID, CVE — is checked against the exact evidence it was given (the analysis
-  context plus the analyst's own question); anything ungrounded is redacted
-  before it reaches the user, and a wholly-invented list item is dropped. It can
+  ID, CVE, **domain and file hash (MD5/SHA-1/SHA-256)** — is checked against the
+  exact evidence it was given (the analysis context plus the analyst's own
+  question); anything ungrounded is redacted before it reaches the user, and a
+  wholly-invented list item is dropped. Domains are matched behind a real-TLD gate
+  so file names (`app.py`), field references (`tcp.port`) and version strings are
+  never touched, and naming the registrable parent of an observed FQDN is allowed
+  while an invented sibling subdomain is not. It can
   only ever *remove* an invented entity, never add or alter a real one, so a
   faithful answer passes through byte-for-byte. This is what lets even a small
   local model reach **0 hallucinations**: on the built-in evaluation, raw
@@ -60,6 +64,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   captures (malware-traffic-analysis.net, CIC-IDS2017, Stratosphere IPS). Synthetic
   numbers are labeled as such — they are a regression/sanity check, not a
   real-world accuracy claim.
+- **Real-world detection validation (Stratosphere CTU-13).** `datasets/fetch_ctu.sh`
+  pulls a small, balanced set of genuine labeled captures (real malware botnets +
+  real benign traffic) and `datasets/ctu13_manifest.json` runs the same harness
+  over them. Measured result: **100% recall (every real malware capture caught,
+  zero misses)** with a transparent, per-detector account of the precision
+  trade-off (`reports/detection_real.md`). Captures are gitignored (large +
+  malware); the manifest and fetch script are versioned so the run is reproducible.
+- **Multi-model faithfulness ablation** (`tools/ablation.py`) — runs the copilot
+  faithfulness eval across several local Ollama models (e.g. `qwen2.5:7b`,
+  `llama3.1:8b`, `llama3.2:3b`) with the guardrail off vs on, showing the
+  guardrail reaches a deterministic 100% on *every* model, not just one.
+- **Pipeline throughput benchmark** (`tools/benchmark.py`) — measures real
+  packets/s, MB/s, per-stage timing and peak memory through the exact
+  parse→extract→detect pipeline, on a synthetic capture (`--demo`, no download) or
+  real captures (`--dir`/`--pcap`). Confirms streaming keeps memory roughly flat
+  with capture size (`reports/performance.md`).
+
+### Fixed
+- **IOC false positive: shared-hosting domains no longer blocklisted from URL
+  indicators.** ThreatFox lists malicious *URLs* staged on multi-tenant services
+  (e.g. `https://drive.google.com/uc?...` — malware on Google Drive). The feed
+  parser collapsed each URL to its bare host, so `drive.google.com` (and Dropbox,
+  Discord CDN, GitHub raw, pastebin, `t.me`, …) became CRITICAL "malicious
+  domains" — a critical false alarm for every legitimate user. A URL IOC on a
+  shared front-door host is no longer promoted to a domain IOC
+  (`packetiq/enrichment/feeds.py`; regression test in `tests/test_enrichment.py`).
+  Found while validating against real benign traffic.
 
 ### Added — analyst experience & assurance
 - **Per-finding explainability + precision grading** (`packetiq/triage.py`). Every

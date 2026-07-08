@@ -171,3 +171,69 @@ def test_guard_can_be_disabled(monkeypatch):
 def test_gg_enabled_flag(monkeypatch, flag, expected):
     monkeypatch.setenv("PACKETIQ_GROUNDING_GUARD", flag)
     assert A._gg_enabled() is expected
+
+
+# ── Domains + file hashes ────────────────────────────────────────────────────
+D_CONTEXT = (
+    "Host 192.168.1.50 resolved cdn.evil-c2.top and beaconed to it. "
+    "Dropped payload SHA-256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855. "
+    "Also contacted good-known.com."
+)
+D_Q = [{"role": "user", "content": "what domains and hashes?"}]
+
+
+def _drun(text: str) -> str:
+    gf = A._GroundingFilter(A._grounding_allowed(D_CONTEXT, D_Q))
+    return gf.feed(text) + gf.flush()
+
+
+def test_domain_and_hash_allowed_set():
+    a = A._grounding_allowed(D_CONTEXT, D_Q)
+    assert "cdn.evil-c2.top" in a["domains"]
+    assert "good-known.com" in a["domains"]
+    assert "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" in a["hashes"]
+
+
+def test_invented_domain_redacted_grounded_kept():
+    text = "Traffic went to cdn.evil-c2.top and to totally-made-up-c2.xyz elsewhere.\n"
+    out = _drun(text)
+    assert "cdn.evil-c2.top" in out          # grounded → kept
+    assert "totally-made-up-c2.xyz" not in out  # invented → removed
+
+
+def test_registrable_parent_of_observed_fqdn_allowed():
+    """Evidence has the FQDN cdn.evil-c2.top; naming its parent evil-c2.top is fine,
+    but an unobserved sibling subdomain is not."""
+    out = _drun("The domain evil-c2.top hosted it; admin.evil-c2.top did not appear.\n")
+    assert "evil-c2.top" in out
+    assert "admin.evil-c2.top" not in out
+
+
+def test_invented_hash_redacted_grounded_kept():
+    good = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    bad = "deadbeefdeadbeefdeadbeefdeadbeef"  # 32-hex md5-shaped, invented
+    out = _drun(f"Sample {good} matched; {bad} did not.\n")
+    assert good in out
+    assert bad not in out
+
+
+def test_tld_gate_leaves_filenames_and_fields_untouched():
+    """The TLD gate means non-domain dotted tokens are never redacted, even though
+    they are not in the evidence."""
+    text = ("Edit app.py and index.html, check tcp.port and the session.id field, "
+            "version v1.2.3 — none are domains.\n")
+    out = _drun(text)
+    for tok in ("app.py", "index.html", "tcp.port", "session.id", "v1.2.3"):
+        assert tok in out
+
+
+def test_domain_grounding_via_stream(monkeypatch):
+    async def fake_raw(provider, key, model, system, context, messages):
+        for piece in ["Beacon to cdn.evil-c2.top", " then to sneaky-c2.club.\n"]:
+            yield piece
+
+    monkeypatch.setattr(A, "_stream_ai_raw", fake_raw)
+    monkeypatch.setenv("PACKETIQ_GROUNDING_GUARD", "1")
+    full = "".join(_drain(A._stream_ai("ollama", "h", "m", "sys", D_CONTEXT, D_Q)))
+    assert "cdn.evil-c2.top" in full
+    assert "sneaky-c2.club" not in full

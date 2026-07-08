@@ -69,3 +69,21 @@ def test_empty_store_returns_no_events():
     res = ExtractionResult()
     res.external_ips = {"1.2.3.4"}
     assert enrich(res, IOCStore()) == []
+
+
+def test_shared_hosters_never_blocklisted_from_url_iocs():
+    """Regression: ThreatFox lists malicious *URLs* staged on shared services
+    (e.g. https://drive.google.com/uc?...). Collapsing such a URL to its bare host
+    used to blocklist the whole domain — a CRITICAL false alarm for every legit
+    user of Google Drive / Discord CDN / pastebin / t.me / GitHub raw / …. The
+    shared front doors must never become domain IOCs."""
+    from packetiq.enrichment.feeds import _SHARED_HOSTERS, load_store
+    load_store.cache_clear()
+    store = load_store()
+    for host in _SHARED_HOSTERS:
+        assert store.lookup_domain(host) is None, f"{host} wrongly flagged as IOC"
+    # A real DNS query for a shared hoster must not raise an IOC_MATCH.
+    res = ExtractionResult()
+    res.dns_queries = [{"ts": 1.0, "src": "10.0.0.1", "dst": "8.8.8.8",
+                        "qname": "drive.google.com"}]
+    assert all(e.event_type != EventType.IOC_MATCH for e in enrich(res, store))

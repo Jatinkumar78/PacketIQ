@@ -1107,19 +1107,39 @@ def _ai_status_payload() -> dict:
 
 
 # ── Grounding guardrail ──────────────────────────────────────────────────────
-# The copilot's evidence (IPs, MITRE technique IDs, CVEs) is deterministic and
-# real. The one place a hallucination can enter is the LLM's prose — a small
-# local model, in particular, likes to *pad* MITRE lists or invent a CVE. The
+# The copilot's evidence (IPs, MITRE technique IDs, CVEs, domains, file hashes) is
+# deterministic and real. The one place a hallucination can enter is the LLM's
+# prose — a small local model, in particular, likes to *pad* MITRE lists, invent a
+# CVE, or name a plausible-sounding C2 domain that was never in the capture. The
 # prompt asks it not to; this guardrail *guarantees* it. Every specific claim the
 # model streams is checked against the exact evidence it was given, and any IP /
-# technique ID / CVE that is not grounded is redacted before it reaches the user.
-# It is a deterministic post-filter, not a second model — it can only ever remove
-# an invented entity, never add or alter a real one, so a faithful answer passes
-# through byte-for-byte. This is what lets even a local model hit 0 hallucinations.
+# technique ID / CVE / domain / file hash that is not grounded is redacted before
+# it reaches the user. It is a deterministic post-filter, not a second model — it
+# can only ever remove an invented entity, never add or alter a real one, so a
+# faithful answer passes through byte-for-byte. This is what lets even a local
+# model hit 0 hallucinations.
 _GG_IP_RE   = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 _GG_TECH_RE = re.compile(r"\bT\d{4}(?:\.\d{3})?\b")
 _GG_CVE_RE  = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE)
 _GG_LIST_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+# MD5 (32) / SHA-1 (40) / SHA-256 (64) hex digests — longest alternative first so
+# the whole digest is consumed, with \b anchors so a 64-hex isn't split into a 32.
+_GG_HASH_RE = re.compile(r"\b(?:[a-fA-F0-9]{64}|[a-fA-F0-9]{40}|[a-fA-F0-9]{32})\b")
+_GG_DOMAIN_RE = re.compile(
+    r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b", re.IGNORECASE)
+# Only treat a dotted token as a *domain* when its last label is a real TLD. This
+# keeps the redactor off file names (app.py, index.html), Wireshark-style field
+# references (tcp.port), version strings and abbreviations (e.g., i.e.) — none of
+# which are domains — while still catching an invented C2 like "evil-c2.top".
+# Deliberately EXCLUDES the ccTLDs id/in/it: those collide with code identifiers
+# (session.id, sign.in) far more often than they name a real C2. An invented C2
+# almost always uses a common gTLD (.com/.net/.top/.xyz/...), all still covered.
+_GG_TLDS = frozenset("""
+com net org io co info biz xyz top online site club shop app dev me tv cc ws
+ru cn uk de fr nl eu us ca au jp kr br es pl se no fi dk ch at be cz sk
+ua ro gr pt hu tr ir za mx ar cl hk tw sg my th vn ph pk ng ke gov edu mil
+int pro name mobi asia tel cat live icu vip work link click pw su cf gq ml ga
+""".split())
 
 
 def _gg_enabled() -> bool:
@@ -1142,6 +1162,21 @@ def _gg_valid_ips(text: str) -> set:
     return out
 
 
+def _gg_domains(text: str) -> set:
+    """Domains (lowercased) whose final label is a real TLD — the TLD gate keeps
+    file names / field references out of the entity set (see _GG_TLDS)."""
+    out = set()
+    for m in _GG_DOMAIN_RE.findall(text or ""):
+        d = m.lower()
+        if d.rsplit(".", 1)[-1] in _GG_TLDS:
+            out.add(d)
+    return out
+
+
+def _gg_hashes(text: str) -> set:
+    return {h.lower() for h in _GG_HASH_RE.findall(text or "")}
+
+
 def _grounding_allowed(context: str, messages: list) -> dict:
     """The set of specific entities the copilot is allowed to state: everything in
     the evidence context PLUS anything in the analyst's own questions (referencing
@@ -1155,6 +1190,8 @@ def _grounding_allowed(context: str, messages: list) -> dict:
         "ips":        _gg_valid_ips(txt),
         "techniques": {t.upper() for t in _GG_TECH_RE.findall(txt)},
         "cves":       {c.upper() for c in _GG_CVE_RE.findall(txt)},
+        "domains":    _gg_domains(txt),
+        "hashes":     _gg_hashes(txt),
     }
 
 
@@ -1207,9 +1244,12 @@ class _GroundingFilter:
     @staticmethod
     def _has_entity(text: str) -> bool:
         """Any specific claim still present after redaction — by construction it can
-        only be a grounded one (ungrounded entities are already gone)."""
-        return bool(_GG_IP_RE.search(text) or _GG_TECH_RE.search(text)
-                    or _GG_CVE_RE.search(text))
+        only be a grounded one (ungrounded entities are already gone). Uses the same
+        validated/TLD-gated extractors as the allowed-set, so prose like 'app.py'
+        never counts as an entity."""
+        return bool(_GG_TECH_RE.search(text) or _GG_CVE_RE.search(text)
+                    or _GG_HASH_RE.search(text) or _gg_valid_ips(text)
+                    or _gg_domains(text))
 
     def _redact(self, text: str):
         removed = False
@@ -1242,9 +1282,33 @@ class _GroundingFilter:
             removed = True
             return ""
 
+        def hash_sub(m):
+            nonlocal removed
+            tok = m.group(0)
+            if tok.lower() in self.allowed["hashes"]:
+                return tok
+            removed = True
+            return ""
+
+        def domain_sub(m):
+            nonlocal removed
+            tok = m.group(0)
+            low = tok.lower()
+            if low.rsplit(".", 1)[-1] not in _GG_TLDS:
+                return tok               # last label isn't a TLD → not a domain
+            allowed = self.allowed["domains"]
+            # exact match, or the registrable parent of an observed FQDN (evidence
+            # a.b.evil.com lets the model say evil.com) — but not an invented child.
+            if low in allowed or any(e == low or e.endswith("." + low) for e in allowed):
+                return tok
+            removed = True
+            return ""
+
         text = _GG_IP_RE.sub(ip_sub, text)
         text = _GG_TECH_RE.sub(tech_sub, text)
         text = _GG_CVE_RE.sub(cve_sub, text)
+        text = _GG_HASH_RE.sub(hash_sub, text)
+        text = _GG_DOMAIN_RE.sub(domain_sub, text)
         return text, removed
 
 

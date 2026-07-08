@@ -1,0 +1,15 @@
+{
+  "dataset_name": "Stratosphere CTU-13 / Malware Capture Facility (real-world sample)",
+  "base_dir": "real/pcaps",
+  "severity_threshold": "MEDIUM",
+  "_provenance": "Captures from https://mcfp.felk.cvut.cz/publicDatasets/ (Stratosphere IPS, CTU University). botnet-capture-* = a host infected with real malware (label: malicious); normal-capture-* / *-only-dns = real benign traffic (label: benign). Download with datasets/fetch_ctu.sh. PCAPs are gitignored (large + malware). expect[] lists the ground-truth behaviour the malware family exhibits (C2 communication) for the per-detector recall breakdown; it is honestly reported as a miss when PacketIQ's heuristics do not catch it.",
+  "captures": [
+    {"file": "donbot.pcap",        "malicious": true,  "expect": ["C2_BEACON"], "note": "Donbot spam botnet, IRC C2"},
+    {"file": "sogou.pcap",         "malicious": true,  "expect": ["C2_BEACON"], "note": "Sogou botnet"},
+    {"file": "qvod.pcap",          "malicious": true,  "expect": ["C2_BEACON"], "note": "Qvod botnet"},
+    {"file": "rbot-dos-icmp.pcap", "malicious": true,  "expect": ["C2_BEACON"], "note": "Rbot DDoS bot, IRC C2"},
+    {"file": "normal-20110817.pcap", "malicious": false, "note": "Real benign host traffic"},
+    {"file": "normal-dns-2015.pcap", "malicious": false, "note": "Real benign DNS traffic"},
+    {"file": "normal-dns-2013.pcap", "malicious": false, "note": "Real benign DNS traffic"}
+  ]
+}

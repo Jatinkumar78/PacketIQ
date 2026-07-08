@@ -264,7 +264,7 @@ curl http://localhost:8080/api/sigma/<job>/rules.zip                # SIGMA rule
 
 **Grounded, low-hallucination prompts** — the system prompts enforce evidence-only answers (*never invent an IP/domain/technique/CVE; say "not present in this capture" when there's no evidence*) at temperature `0.15`. The detectors, not the LLM, decide what was found — the AI only explains it. Copilot groundedness is measured quantitatively by `tools/eval_copilot.py` (see [Validation harnesses](#validation-harnesses)).
 
-**Grounding guardrail (a guarantee, not just a prompt)** — a deterministic post-filter sits on the copilot's output stream and checks every specific claim it makes — IP, MITRE technique ID, CVE — against the exact evidence it was given, redacting anything ungrounded before it reaches you (and dropping a wholly-invented list item). It only ever *removes* an invented entity, never adds or changes a real one, so a faithful answer is untouched. This is what makes even a small local model hit **0 hallucinations**: on the built-in evaluation, raw `qwen2.5:7b-instruct` scores ~45–75% faithful (it varies run-to-run — LLMs are non-deterministic), and a deterministic **100.0%** with the guardrail on. On by default (`PACKETIQ_GROUNDING_GUARD=0` disables it, used only to measure the raw model). Covers chat, "Explain with AI", AI reports and the CLI.
+**Grounding guardrail (a guarantee, not just a prompt)** — a deterministic post-filter sits on the copilot's output stream and checks every specific claim it makes — IP, MITRE technique ID, CVE, **domain and file hash (MD5/SHA-1/SHA-256)** — against the exact evidence it was given, redacting anything ungrounded before it reaches you (and dropping a wholly-invented list item). It only ever *removes* an invented entity, never adds or changes a real one, so a faithful answer is untouched. This is what makes even a small local model hit **0 hallucinations**: on the built-in evaluation, raw `qwen2.5:7b-instruct` scores ~45–75% faithful (it varies run-to-run — LLMs are non-deterministic), and a deterministic **100.0%** with the guardrail on — and the [multi-model ablation](#validation-harnesses) shows the same 100% on `llama3.1:8b` and `llama3.2:3b` too. On by default (`PACKETIQ_GROUNDING_GUARD=0` disables it, used only to measure the raw model). Covers chat, "Explain with AI", AI reports and the CLI. Full methodology: [docs/grounding_guardrail.md](docs/grounding_guardrail.md).
 
 **Local model (no key, fully offline)** — install [Ollama](https://ollama.com), run `ollama pull qwen2.5:7b-instruct` (or `llama3.1:8b`), and the copilot works with **no API key and no data leaving your machine** — ideal for sensitive captures. Auto-detected when the daemon is running; or pick **"Local (Ollama)"** in the selector.
 
@@ -352,28 +352,43 @@ Two harnesses turn "it works" into measured numbers you can cite:
 ```bash
 # 1. Detection precision / recall / F1 (per-detector recall too)
 python tools/validate.py --suite --markdown reports/detection.md       # built-in synthetic fixtures
-python tools/validate.py --manifest datasets/my_labels.json            # real labeled PCAPs (see datasets/README.md)
+bash   datasets/fetch_ctu.sh                                           # real labeled captures (Stratosphere CTU-13)
+python tools/validate.py --manifest datasets/ctu13_manifest.json       # → real-world precision/recall/F1
 
 # 2. Copilot faithfulness (share of the AI's specific claims that are grounded
 #    in the evidence; any invented IP / technique / CVE is flagged). Runs offline.
 python tools/eval_copilot.py --demo --provider ollama --markdown reports/copilot.md
+python tools/ablation.py --markdown reports/faithfulness_ablation.md    # guardrail across local models
+
+# 3. Pipeline throughput (real packets/s, MB/s, peak memory)
+python tools/benchmark.py --dir datasets/real/pcaps --markdown reports/performance.md
 ```
 
-- **`validate.py`** runs the real detection pipeline over labeled captures. `--suite` uses crafted fixtures (one per detector + benign) so it needs no downloads — these are a **regression/sanity check, not a real-world accuracy claim**; point `--manifest` at [public datasets](datasets/README.md) for real-world figures.
-- **`eval_copilot.py`** measures copilot **groundedness** deterministically (regex entity-matching against the exact context the model saw) — a human-free hallucination metric, ideal for a validation chapter.
+- **`validate.py`** runs the real detection pipeline over labeled captures. `--suite` uses crafted fixtures (one per detector + benign) so it needs no downloads — a **regression/sanity check, not a real-world accuracy claim**. Point `--manifest` at real captures for real figures: `datasets/fetch_ctu.sh` pulls a labeled Stratosphere CTU-13 sample, on which PacketIQ scores **100% recall** (every real malware capture caught) with a transparent per-detector account of the precision trade-off — see [`reports/detection_real.md`](reports/detection_real.md) and the [public datasets guide](datasets/README.md).
+- **`eval_copilot.py`** measures copilot **groundedness** deterministically (regex entity-matching against the exact context the model saw) — a human-free hallucination metric, ideal for a validation chapter. **`ablation.py`** sweeps it across several local models to show the guardrail's 100% is model-independent.
+- **`benchmark.py`** measures real throughput and memory through the exact analysis pipeline (`--demo` needs no download).
 
 ---
 
-## 📊 Performance (indicative)
+## 📊 Performance
 
-The parser streams packets one at a time, so memory stays bounded regardless of file size. Figures below are **rough, hardware-dependent estimates** — not a formal benchmark.
+Real, measured numbers from `tools/benchmark.py` over the full parse→extract→detect
+pipeline (the same one the CLI and web app use). Reproduce on any machine with
+`python tools/benchmark.py --demo` (no download) or `--dir <pcaps>`. Figures below
+are single-threaded on an Apple-silicon Mac (macOS, Python 3.9); throughput is
+CPU-bound in parsing + detection, and **memory stays roughly flat (~100–150 MB)
+regardless of capture size** because parsing is streaming — it never loads the
+whole PCAP into RAM.
 
-| Capture | Packets | Analysis time | Memory |
-|---------|---------|---------------|--------|
-| ~5 MB | ~8 K | a few seconds | low |
-| ~16 MB | ~30 K | seconds | low |
-| ~60 MB | ~80 K | tens of seconds | moderate |
-| ~100 MB+ | ~100 K+ | scales ~linearly | moderate |
+| Capture (real, CTU-13) | Packets | Size | Time | Packets/s | Peak RSS |
+|---|--:|--:|--:|--:|--:|
+| sogou.pcap    | 20,663 | 18 MB | 10.4 s | ~1,990 | 151 MB |
+| donbot.pcap   | 24,764 |  5 MB | 11.6 s | ~2,140 | 107 MB |
+| qvod.pcap     | 85,735 | 20 MB | 49.9 s | ~1,720 | 117 MB |
+| **aggregate** | **188 K** | **76 MB** | **113 s** | **~1,660** | **151 MB** |
+
+Detection dominates the wall time (~3× parsing); the streaming reader keeps the
+memory envelope constant. Full report: [`reports/performance.md`](reports/performance.md).
 
 > File carving and TLS inspection do extra full passes, so very large captures (multi-GB) run slower — acceptable for forensics.
 

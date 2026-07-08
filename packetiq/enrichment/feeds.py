@@ -20,6 +20,34 @@ from packetiq.detection.models import Severity
 
 _BUNDLED_DIR = Path(__file__).parent / "data"
 
+# Multi-tenant hosting / CDN / paste services. A ThreatFox *URL* IOC on one of
+# these (e.g. https://drive.google.com/uc?...=<id> — malware staged on Drive)
+# identifies one malicious *path*, not the whole domain, which billions of people
+# use legitimately. Collapsing such a URL to its bare host and blocklisting it
+# would raise a CRITICAL alert for every user of the service — a false positive.
+# We therefore never derive a *domain* IOC for these front-door hosts from a URL.
+# (A dedicated-but-shared subdomain, e.g. evil-bucket.s3.amazonaws.com, is unique
+# per tenant and is NOT suppressed — only the shared front doors are.)
+_SHARED_HOSTERS = frozenset({
+    "drive.google.com", "docs.google.com", "sites.google.com", "google.com",
+    "storage.googleapis.com", "firebasestorage.googleapis.com",
+    "dropbox.com", "www.dropbox.com", "dl.dropboxusercontent.com",
+    "dropboxusercontent.com", "onedrive.live.com", "1drv.ms",
+    "github.com", "raw.githubusercontent.com", "githubusercontent.com",
+    "objects.githubusercontent.com", "gitlab.com", "bitbucket.org",
+    "cdn.discordapp.com", "media.discordapp.net", "discord.com", "discordapp.com",
+    "pastebin.com", "paste.ee", "hastebin.com", "controlc.com",
+    "t.me", "telegram.me", "telegram.org",
+    "s3.amazonaws.com", "amazonaws.com", "cloudfront.net",
+    "archive.org", "blogspot.com", "wordpress.com", "sourceforge.net",
+    "mediafire.com", "mega.nz", "sendspace.com", "wetransfer.com", "anonfiles.com",
+})
+
+
+def _is_shared_hoster(host: str) -> bool:
+    """True for a shared front-door host that must never become a domain IOC."""
+    return host in _SHARED_HOSTERS
+
 
 def cache_dir() -> Path:
     """User-writable feed cache (where `feeds update` writes fresh snapshots)."""
@@ -140,10 +168,13 @@ def load_store() -> IOCStore:
             store.bad_ips.setdefault(ip, IOCHit(ip, "ip", "ThreatFox", label, Severity.CRITICAL))
         elif itype == "domain":
             d = ioc.rstrip(".").lower()
-            store.bad_domains.setdefault(d, IOCHit(d, "domain", "ThreatFox", label, Severity.CRITICAL))
+            if d and not _is_shared_hoster(d):
+                store.bad_domains.setdefault(d, IOCHit(d, "domain", "ThreatFox", label, Severity.CRITICAL))
         elif itype == "url":
             host = ioc.split("://", 1)[-1].split("/", 1)[0].split(":")[0].rstrip(".").lower()
-            if host:
+            # A URL IOC pins one malicious path; only blocklist its host as a domain
+            # when that host isn't a shared hoster (else we'd flag every legit user).
+            if host and not _is_shared_hoster(host):
                 store.bad_domains.setdefault(host, IOCHit(host, "domain", "ThreatFox", label, Severity.CRITICAL))
         n += 1
     if n:
