@@ -1,0 +1,37 @@
+# PacketIQ configuration — tune detector thresholds per environment.
+#
+# Copy to `packetiq.toml` (in the directory you run PacketIQ from), or point
+# $PACKETIQ_CONFIG at this file. Every key is optional; anything omitted uses
+# the built-in default shown here.
+
+[brute_force]
+window_secs               = 60      # sliding window for SYN bursts
+ssh_threshold             = 20      # SYNs/window to flag SSH (22) brute force
+ftp_threshold             = 15      # FTP (21)
+telnet_threshold          = 10      # Telnet (23)
+rdp_threshold             = 10      # RDP (3389)
+vnc_threshold             = 10      # VNC (5900)
+legitimate_session_bytes  = 15000   # avg bytes/conn above this = real session, not brute force
+
+[port_scan]
+vertical_port_threshold    = 15     # distinct ports to one host = vertical scan
+horizontal_host_threshold  = 20     # distinct hosts on one port = sweep
+stealth_halfopen_threshold = 10     # half-open SYNs = stealth scan
+
+[beacon]
+min_connections      = 12           # minimum hits to consider a beacon
+min_interval         = 5.0          # ignore intervals shorter than this (secs)
+max_interval         = 600.0        # ignore intervals longer than this (secs)
+cv_threshold_high    = 0.10         # CV below this => CRITICAL (near-perfect timing)
+cv_threshold_med     = 0.25         # CV below this => HIGH (regular)
+cv_threshold_jittered = 0.50        # upper CV bound for the jitter-tolerant check
+periodicity_ratio    = 0.70         # fraction of intervals near the median to flag a jittered beacon
+
+[dns]
+dga_entropy_threshold = 3.8         # Shannon entropy (bits/char) to suspect a DGA
+dga_min_length        = 12          # minimum SLD length to consider for DGA
+tunnel_label_length   = 50          # query-name length suggesting DNS tunneling
+excessive_query_count = 20          # same domain queried more than this
+
+[icmp]
+tunnel_threshold_bytes = 102400     # total ICMP flow bytes suggesting a tunnel (100 KB)

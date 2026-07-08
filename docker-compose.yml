@@ -1,0 +1,17 @@
+services:
+  packetiq:
+    build: .
+    image: packetiq:latest
+    container_name: packetiq
+    ports:
+      - "8080:8080"
+    # Optional: provide AI keys for the copilot (analysis works without them)
+    env_file:
+      - .env
+    volumes:
+      # persist refreshed threat-intel feeds across restarts
+      - packetiq_data:/data
+    restart: unless-stopped
+
+volumes:
+  packetiq_data:

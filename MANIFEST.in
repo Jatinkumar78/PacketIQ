@@ -1,0 +1,19 @@
+include README.md
+include LICENSE
+include requirements.txt
+include .env.example
+
+# Bundled threat-intel feeds, YARA rules, and web templates
+recursive-include packetiq/detection/data *.csv
+recursive-include packetiq/detection/data/yara_rules *.yar *.yara
+recursive-include packetiq/enrichment/data *
+recursive-include packetiq/webapp/templates *.html
+recursive-include packetiq/dashboard/templates *.html
+
+# Demo capture generator (not the generated .pcap itself)
+include samples/generate_sample.py
+
+# Exclude caches / build artifacts
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude .DS_Store

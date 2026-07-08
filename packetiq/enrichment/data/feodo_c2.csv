@@ -1,0 +1,10 @@
+# PacketIQ bundled feed: Feodo Tracker C2 IPs
+# Source : abuse.ch Feodo Tracker https://feodotracker.abuse.ch
+# Format : ip,malware
+# Snapshot: 2026-06-08 19:42 UTC  (refresh with: packetiq feeds update)
+# Lines starting with '#' are ignored.
+162.243.103.246,Emotet
+50.16.16.211,QakBot
+34.204.119.63,QakBot
+178.62.3.223,QakBot
+27.133.154.218,QakBot

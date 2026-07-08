@@ -1,0 +1,11 @@
+{
+  "dataset_name": "EXAMPLE — replace with your real labeled captures",
+  "base_dir": "pcaps",
+  "severity_threshold": "MEDIUM",
+  "captures": [
+    {"file": "malware_sample_1.pcap", "malicious": true,  "expect": ["IOC_MATCH", "C2_BEACON"]},
+    {"file": "malware_sample_2.pcap", "malicious": true,  "expect": ["HTTP_ATTACK"]},
+    {"file": "normal_traffic_1.pcap", "malicious": false},
+    {"file": "normal_traffic_2.pcap", "malicious": false}
+  ]
+}

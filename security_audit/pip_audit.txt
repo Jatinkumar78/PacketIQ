@@ -1,0 +1,45 @@
+/Users/jay/Documents/PacketIQ/.venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+Found 37 known vulnerabilities in 14 packages
+Name             Version ID                  Fix Versions
+---------------- ------- ------------------- ------------
+cryptography     48.0.0  GHSA-537c-gmf6-5ccf 48.0.1
+filelock         3.19.1  GHSA-w853-jp5j-5j7f 3.20.1
+filelock         3.19.1  GHSA-qmgc-5h2g-mvrw 3.20.3
+idna             3.13    PYSEC-2026-215      3.15
+msgpack          1.1.2   GHSA-6v7p-g79w-8964 1.2.1
+pillow           11.3.0  PYSEC-2026-165      12.2.0
+pillow           11.3.0  GHSA-cfh3-3jmp-rvhc 12.1.1
+pillow           11.3.0  GHSA-whj4-6x5x-4v2j 12.2.0
+pillow           11.3.0  GHSA-5xmw-vc9v-4wf2 12.2.0
+pillow           11.3.0  GHSA-r73j-pqj5-w3x7 12.2.0
+pillow           11.3.0  GHSA-pwv6-vv43-88gr 12.2.0
+pip              21.2.4  PYSEC-2023-228      23.3
+pip              21.2.4  PYSEC-2026-196      26.1.2
+pip              21.2.4  GHSA-4xh5-x5gv-qwph 25.3
+pip              21.2.4  GHSA-6vgw-5pg2-w6jp 26.0
+pip              21.2.4  GHSA-58qw-9mgm-455v 26.1
+pip              21.2.4  GHSA-jp4c-xjxw-mgf9 26.1
+pypdf            6.13.2  GHSA-jm82-fx9c-mx94 6.13.3
+pytest           8.4.2   GHSA-6w46-j5rx-g56g 9.0.3
+python-dotenv    1.2.1   GHSA-mf9w-mj56-hr94 1.2.2
+python-multipart 0.0.20  GHSA-wp53-j4wj-2cfg 0.0.22
+python-multipart 0.0.20  GHSA-mj87-hwqh-73pj 0.0.26
+python-multipart 0.0.20  GHSA-pp6c-gr5w-3c5g 0.0.27
+python-multipart 0.0.20  GHSA-v9pg-7xvm-68hf 0.0.31
+python-multipart 0.0.20  GHSA-5rvq-cxj2-64vf 0.0.30
+python-multipart 0.0.20  GHSA-6jv3-5f52-599m 0.0.30
+requests         2.32.5  GHSA-gc5v-m9x4-r6x2 2.33.0
+setuptools       58.0.4  PYSEC-2022-43012    65.5.1
+setuptools       58.0.4  PYSEC-2025-49       78.1.1
+setuptools       58.0.4  GHSA-cx63-2mw6-8hw5 70.0.0
+starlette        0.49.3  PYSEC-2026-161      1.0.1
+starlette        0.49.3  PYSEC-2026-249      1.3.1
+starlette        0.49.3  PYSEC-2026-248      1.3.0
+starlette        0.49.3  GHSA-wqp7-x3pw-xc5r 1.1.0
+starlette        0.49.3  GHSA-x746-7m8f-x49c 1.1.0
+urllib3          2.6.3   PYSEC-2026-142      2.7.0
+urllib3          2.6.3   PYSEC-2026-141      2.7.0
+Name     Skip Reason
+-------- -----------------------------------------------------------------------
+packetiq Dependency not found on PyPI and could not be audited: packetiq (1.0.0)

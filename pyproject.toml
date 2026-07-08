@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# Project metadata is defined in setup.py (kept as the single source of truth).
+# This file declares the build backend and tool configuration.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+extend-exclude = [".venv", "venv", "samples", "build", "dist"]
+
+[tool.ruff.lint]
+# Pragmatic rule set: real bugs + basic hygiene, not style nitpicking.
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",   # line length handled by formatter, not enforced hard
+    "E701",   # compact one-liner conditionals are a deliberate style here
+    "E702",   # compact statements (e.g. test fixtures) are intentional
+    "E741",   # ambiguous var names (l, etc.) used in parsers
+    "F841",   # unused locals — kept for readability in some report builders
+    "B007",   # loop control var not used (regex .finditer presence checks)
+    "B008",   # function calls in argument defaults (FastAPI Depends/File patterns)
+]
+
+[tool.mypy]
+python_version = "3.9"
+ignore_missing_imports = true
+warn_unused_ignores = false
+check_untyped_defs = false
+exclude = "(^|/)(\\.venv|venv|build|dist|samples)/"
+

@@ -1,0 +1,457 @@
+{
+  "meta": {
+    "generated": "2026-06-15 19:21:17 UTC",
+    "platform": "macOS-26.5.1-arm64-arm-64bit",
+    "python": "3.9.6",
+    "ioc_ip_used": "162.243.103.246",
+    "pytest_summary": ""
+  },
+  "categories": [
+    {
+      "name": "Detection accuracy (true positives)",
+      "cases": [
+        {
+          "name": "Brute force (SSH)",
+          "status": "PASS",
+          "detail": "expected ['BRUTE_FORCE'] \u2192 fired ['BRUTE_FORCE'] (1 events, risk 15)"
+        },
+        {
+          "name": "Port scan (vertical)",
+          "status": "PASS",
+          "detail": "expected ['PORT_SCAN'] \u2192 fired ['PORT_SCAN'] (2 events, risk 16)"
+        },
+        {
+          "name": "Host scan (horizontal)",
+          "status": "PASS",
+          "detail": "expected ['HOST_SCAN'] \u2192 fired ['HOST_SCAN', 'PORT_SCAN'] (2 events, risk 14)"
+        },
+        {
+          "name": "DNS tunneling",
+          "status": "PASS",
+          "detail": "expected ['DNS_ANOMALY', 'DNS_TUNNELING'] \u2192 fired ['DNS_TUNNELING'] (1 events, risk 25)"
+        },
+        {
+          "name": "C2 beaconing",
+          "status": "PASS",
+          "detail": "expected ['C2_BEACON'] \u2192 fired ['C2_BEACON', 'IOC_MATCH'] (2 events, risk 32)"
+        },
+        {
+          "name": "ICMP tunneling",
+          "status": "PASS",
+          "detail": "expected ['ICMP_TUNNELING'] \u2192 fired ['ICMP_TUNNELING'] (1 events, risk 1)"
+        },
+        {
+          "name": "HTTP exploitation",
+          "status": "PASS",
+          "detail": "expected ['HTTP_ATTACK'] \u2192 fired ['HTTP_ATTACK'] (4 events, risk 34)"
+        },
+        {
+          "name": "Cleartext credentials",
+          "status": "PASS",
+          "detail": "expected ['CREDENTIAL_EXPOSURE'] \u2192 fired ['CREDENTIAL_EXPOSURE'] (2 events, risk 32)"
+        },
+        {
+          "name": "Suspicious TCP flags (XMAS)",
+          "status": "PASS",
+          "detail": "expected ['SUSPICIOUS_FLAGS'] \u2192 fired ['SUSPICIOUS_FLAGS'] (1 events, risk 13)"
+        },
+        {
+          "name": "Threat-intel IOC match",
+          "status": "PASS",
+          "detail": "expected ['IOC_MATCH'] \u2192 fired ['IOC_MATCH'] (1 events, risk 23)"
+        },
+        {
+          "name": "SMB to/from internet",
+          "status": "PASS",
+          "detail": "expected ['PROTOCOL_MISUSE'] \u2192 fired ['IOC_MATCH', 'PROTOCOL_MISUSE'] (2 events, risk 38)"
+        }
+      ]
+    },
+    {
+      "name": "False-positive control",
+      "cases": [
+        {
+          "name": "Benign HTTPS+DNS produces zero findings",
+          "status": "PASS",
+          "detail": "0 findings, risk 0/100"
+        }
+      ]
+    },
+    {
+      "name": "Triage, explainability & FP suppression",
+      "cases": [
+        {
+          "name": "Explain returns grounded what/why/action + MITRE",
+          "status": "PASS",
+          "detail": "precision=Confirmed, mitre=['T1071', 'T1090']"
+        },
+        {
+          "name": "Evidence-backed finding graded 'Confirmed'",
+          "status": "PASS",
+          "detail": "Confirmed"
+        },
+        {
+          "name": "Low-confidence heuristic graded 'Tentative'",
+          "status": "PASS",
+          "detail": "Tentative"
+        },
+        {
+          "name": "Default config suppresses nothing (recall preserved)",
+          "status": "PASS",
+          "detail": "kept 2"
+        },
+        {
+          "name": "Confidence floor suppresses low-confidence finding",
+          "status": "PASS",
+          "detail": "below confidence floor (50%)"
+        }
+      ]
+    },
+    {
+      "name": "Exports (real artifacts)",
+      "cases": [
+        {
+          "name": "Court-ready HTML report (custody + ATT&CK + reasoning + print CSS)",
+          "status": "PASS",
+          "detail": "26117 bytes"
+        },
+        {
+          "name": "ATT&CK Navigator layer (enterprise-attack, format 4.5)",
+          "status": "PASS",
+          "detail": "12 techniques"
+        },
+        {
+          "name": "STIX 2.1 bundle",
+          "status": "PASS",
+          "detail": "2 objects"
+        },
+        {
+          "name": "SIGMA rules generated",
+          "status": "PASS",
+          "detail": "5 rules"
+        }
+      ]
+    },
+    {
+      "name": "Vulnerability mapping (NVD CPE \u00b7 CVSS \u00b7 CISA KEV)",
+      "cases": [
+        {
+          "name": "Observed software resolved to an exact CPE",
+          "status": "PASS",
+          "detail": "cpe:2.3:a:apache:http_server:2.4.49:*:*:*:*:*:*:*"
+        },
+        {
+          "name": "Version-aware NVD CVE mapping",
+          "status": "PASS",
+          "detail": "2 CVEs"
+        },
+        {
+          "name": "CISA KEV cross-reference flags actively-exploited CVEs",
+          "status": "PASS",
+          "detail": "KEV+ransomware on top CVE"
+        },
+        {
+          "name": "CVSS fused into a vulnerability risk score",
+          "status": "PASS",
+          "detail": "{'score': 98, 'tier': 'CRITICAL'}"
+        },
+        {
+          "name": "Exploit attempt correlated to CVE + target software",
+          "status": "PASS",
+          "detail": "Log4Shell\u2192target"
+        },
+        {
+          "name": "Per-host attack-surface roll-up",
+          "status": "PASS",
+          "detail": "host 192.168.1.10"
+        }
+      ]
+    },
+    {
+      "name": "Web API (end-to-end)",
+      "cases": [
+        {
+          "name": "POST /api/upload \u2192 analysis completes",
+          "status": "PASS",
+          "detail": "10 events, risk 100"
+        },
+        {
+          "name": "Results include explainability + ATT&CK coverage + custody SHA-256",
+          "status": "PASS",
+          "detail": "meta.sha256 + events[].why present"
+        },
+        {
+          "name": "GET /api/packets/{job}",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/packets/{job}/0",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "POST /api/packets/{job}/0/explain (AI)",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/cve/{job}",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/vulns/{job} (NVD CPE+CVSS+KEV)",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/navigator/{job}",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/report/{job}.html",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/report/{job}.html?print=1",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/stix/{job}",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/sigma/{job}/rules.zip",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/feeds",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/ai/status",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/live/interfaces",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/history",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "Dynamic per-PCAP threat-intel matches (synced to this capture)",
+          "status": "PASS",
+          "detail": "1 feed(s) matched this capture"
+        },
+        {
+          "name": "POST /api/ai/provider (auto-switch control)",
+          "status": "PASS",
+          "detail": "HTTP 200"
+        },
+        {
+          "name": "GET /api/evidence/{job} (carve evidence PCAP)",
+          "status": "PASS",
+          "detail": "1524 bytes"
+        }
+      ]
+    },
+    {
+      "name": "Alternative inputs & campaign",
+      "cases": [
+        {
+          "name": "Zeek conn.log ingestion + detection",
+          "status": "PASS",
+          "detail": "2 events from flow log"
+        },
+        {
+          "name": "Campaign fuse merges multiple captures",
+          "status": "PASS",
+          "detail": "90 packets merged from 2 captures"
+        }
+      ]
+    },
+    {
+      "name": "Edge cases & robustness",
+      "cases": [
+        {
+          "name": "Rejects too-small/invalid capture",
+          "status": "PASS",
+          "detail": "HTTP 400"
+        },
+        {
+          "name": "Rejects unsupported file type",
+          "status": "PASS",
+          "detail": "HTTP 400"
+        },
+        {
+          "name": "Unknown job \u2192 404 (results)",
+          "status": "PASS",
+          "detail": "404"
+        },
+        {
+          "name": "Unknown job \u2192 404 (navigator)",
+          "status": "PASS",
+          "detail": "404"
+        },
+        {
+          "name": "Empty capture analysed without crash (0 findings)",
+          "status": "PASS",
+          "detail": "0 findings"
+        }
+      ]
+    },
+    {
+      "name": "Quality gates",
+      "cases": [
+        {
+          "name": "Automated unit/integration test suite",
+          "status": "PASS",
+          "detail": "see output"
+        },
+        {
+          "name": "Lint (ruff)",
+          "status": "PASS",
+          "detail": "All checks passed"
+        }
+      ]
+    }
+  ],
+  "detection_evidence": {
+    "Brute force (SSH)": {
+      "expected": [
+        "BRUTE_FORCE"
+      ],
+      "fired": [
+        "BRUTE_FORCE"
+      ],
+      "events": 1,
+      "risk": 15
+    },
+    "Port scan (vertical)": {
+      "expected": [
+        "PORT_SCAN"
+      ],
+      "fired": [
+        "PORT_SCAN"
+      ],
+      "events": 2,
+      "risk": 16
+    },
+    "Host scan (horizontal)": {
+      "expected": [
+        "HOST_SCAN"
+      ],
+      "fired": [
+        "HOST_SCAN",
+        "PORT_SCAN"
+      ],
+      "events": 2,
+      "risk": 14
+    },
+    "DNS tunneling": {
+      "expected": [
+        "DNS_ANOMALY",
+        "DNS_TUNNELING"
+      ],
+      "fired": [
+        "DNS_TUNNELING"
+      ],
+      "events": 1,
+      "risk": 25
+    },
+    "C2 beaconing": {
+      "expected": [
+        "C2_BEACON"
+      ],
+      "fired": [
+        "C2_BEACON",
+        "IOC_MATCH"
+      ],
+      "events": 2,
+      "risk": 32
+    },
+    "ICMP tunneling": {
+      "expected": [
+        "ICMP_TUNNELING"
+      ],
+      "fired": [
+        "ICMP_TUNNELING"
+      ],
+      "events": 1,
+      "risk": 1
+    },
+    "HTTP exploitation": {
+      "expected": [
+        "HTTP_ATTACK"
+      ],
+      "fired": [
+        "HTTP_ATTACK"
+      ],
+      "events": 4,
+      "risk": 34
+    },
+    "Cleartext credentials": {
+      "expected": [
+        "CREDENTIAL_EXPOSURE"
+      ],
+      "fired": [
+        "CREDENTIAL_EXPOSURE"
+      ],
+      "events": 2,
+      "risk": 32
+    },
+    "Suspicious TCP flags (XMAS)": {
+      "expected": [
+        "SUSPICIOUS_FLAGS"
+      ],
+      "fired": [
+        "SUSPICIOUS_FLAGS"
+      ],
+      "events": 1,
+      "risk": 13
+    },
+    "Threat-intel IOC match": {
+      "expected": [
+        "IOC_MATCH"
+      ],
+      "fired": [
+        "IOC_MATCH"
+      ],
+      "events": 1,
+      "risk": 23
+    },
+    "SMB to/from internet": {
+      "expected": [
+        "PROTOCOL_MISUSE"
+      ],
+      "fired": [
+        "IOC_MATCH",
+        "PROTOCOL_MISUSE"
+      ],
+      "events": 2,
+      "risk": 38
+    },
+    "Benign control": {
+      "events": 0,
+      "risk": 0
+    }
+  },
+  "totals": {
+    "total": 55,
+    "passed": 55,
+    "failed": 0,
+    "pass_rate": 100.0
+  }
+}
