@@ -24,11 +24,70 @@ _MESSY = """**VERDICT:** Suspicious
 **ACTION:** Pivot on the querying host."""
 
 
+_BULLETED = """VERDICT: Worth a look - long encoded URI over cleartext HTTP
+SUMMARY: An HTTP GET from an internal host to an external server on port 80.
+ORIGIN: Internal 172.20.10.3 (client) to public 52.84.112.57 on port 80.
+KEY POINTS:
+- Host roles: internal client to external server
+- Ports: 50219 (ephemeral) to 80 (HTTP)
+- Payload: 5.74/8.00 entropy, consistent with encoded text
+ASSESSMENT: Not proof of compromise, but worth a second look.
+ACTION: Follow the TCP stream and decode the URI."""
+
+# Old/alternate headings a model may drift to, including a bare heading with no colon.
+_ALIASED = """Verdict — Worth a look: long encoded URI
+What this packet is — An HTTP GET to an external server.
+Key fields that matter
+- TTL: 64 is consistent with Linux
+- Destination port: 80, an HTTP service
+Indicators & context — The URI looks encoded.
+Recommended next step — Follow the TCP stream."""
+
+
 def test_prompt_forbids_markdown_and_names_the_sections():
     p = webapp._PACKET_EXPLAIN_SYSTEM
     assert "Do NOT use Markdown" in p
-    for label in ("VERDICT:", "SUMMARY:", "ORIGIN:", "ASSESSMENT:", "ACTION:"):
+    for label in ("VERDICT:", "SUMMARY:", "ORIGIN:", "KEY POINTS:", "ASSESSMENT:", "ACTION:"):
         assert label in p
+
+
+def test_key_points_parse_into_a_list():
+    s = webapp._parse_explanation(_BULLETED)
+    assert isinstance(s["key_points"], list)
+    assert len(s["key_points"]) == 3
+    assert s["key_points"][0] == "Host roles: internal client to external server"
+    assert not any(p.startswith("-") for p in s["key_points"])
+
+
+def test_verdict_reason_is_split_from_the_label():
+    s = webapp._parse_explanation(_BULLETED)
+    assert s["verdict"] == "Worth a look"          # clean badge text
+    assert s["verdict_key"] == "review"
+    assert s["verdict_reason"] == "long encoded URI over cleartext HTTP"
+
+
+def test_alias_headings_and_bare_heading_are_understood():
+    s = webapp._parse_explanation(_ALIASED)
+    assert s["verdict"] == "Worth a look"
+    assert s["summary"].startswith("An HTTP GET")
+    assert len(s["key_points"]) == 2               # bare "Key fields that matter" heading
+    assert "encoded" in s["assessment"]
+    assert s["action"].startswith("Follow the TCP stream")
+
+
+def test_verdict_alone_is_not_a_structured_answer():
+    # Nothing substantive → caller renders the prose fallback instead of a bare badge.
+    assert webapp._parse_explanation("VERDICT: Benign") == {}
+
+
+def test_overlong_verdict_reason_becomes_the_summary():
+    # A model that ran its whole answer onto the verdict line must not stretch the badge.
+    long_tail = "This is a very long trailing explanation that clearly belongs in the summary " \
+                "rather than beside the verdict badge, since it runs well past the limit."
+    s = webapp._parse_explanation("VERDICT: Benign - " + long_tail)
+    assert "verdict_reason" not in s
+    assert s["summary"] == long_tail
+    assert s["verdict"] == "Benign"
 
 
 def test_parses_clean_labelled_sections():

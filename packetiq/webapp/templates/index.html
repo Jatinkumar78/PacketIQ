@@ -773,23 +773,31 @@ tbody tr:hover td{background:var(--surface2)}
 .hero-title{animation:float3d 8s ease-in-out infinite,glitch 12s linear infinite}
 
 /* ── AI packet triage card ─────────────────────────────────────────── */
-.ai-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.ai-head{display:flex;align-items:baseline;gap:10px;margin-bottom:14px;flex-wrap:wrap;
+  padding-bottom:12px;border-bottom:1px solid var(--border,#1e293b)}
 .ai-badge{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;
-  padding:4px 10px;border-radius:999px;border:1px solid currentColor}
+  padding:4px 11px;border-radius:999px;border:1px solid currentColor;flex:none}
 .ai-badge.benign{color:var(--success);background:rgba(16,185,129,.10)}
 .ai-badge.informational{color:#3b82f6;background:rgba(59,130,246,.10)}
 .ai-badge.review{color:var(--medium);background:rgba(234,179,8,.10)}
 .ai-badge.suspicious{color:var(--critical);background:rgba(239,68,68,.10)}
-.ai-head-sub{font-size:11px;color:var(--text-sub)}
-.ai-sec{margin:0 0 11px}
-.ai-sec-t{font-size:10.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;
-  color:var(--text-sub);margin-bottom:3px}
-.ai-sec p{margin:0;font-size:13px;line-height:1.6;color:var(--text,#e2e8f0)}
-.ai-ev{margin-top:14px;padding-top:12px;border-top:1px solid var(--border,#1e293b)}
-.ai-ev-grid{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:12px}
+.ai-head-sub{font-size:12.5px;color:var(--text,#e2e8f0);line-height:1.5;flex:1 1 220px}
+.ai-sec{margin:0 0 14px}
+.ai-sec-t{font-size:10px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;
+  color:var(--text-sub);margin-bottom:5px}
+.ai-sec p{margin:0;font-size:13px;line-height:1.65;color:var(--text,#e2e8f0)}
+.ai-sec p+p{margin-top:8px}
+.ai-list{margin:0;padding:0;list-style:none}
+.ai-list li{position:relative;padding-left:15px;margin-bottom:5px;font-size:12.5px;
+  line-height:1.6;color:var(--text,#e2e8f0)}
+.ai-list li:before{content:"";position:absolute;left:2px;top:8px;width:4px;height:4px;
+  border-radius:50%;background:var(--text-sub)}
+.ai-list b{color:var(--text-sub);font-weight:600}
+.ai-ev{margin-top:16px;padding-top:13px;border-top:1px solid var(--border,#1e293b)}
+.ai-ev-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12px}
 .ai-ev-k{color:var(--text-sub);white-space:nowrap}
 .ai-ev-v{color:var(--text,#e2e8f0);word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
-.ai-foot{margin-top:12px;font-size:10.5px;color:var(--text-sub);line-height:1.5}
+.ai-foot{margin-top:13px;font-size:10.5px;color:var(--text-sub);line-height:1.5}
 </style>
 </head>
 <body>
@@ -2542,48 +2550,81 @@ function stripMd(s){
                       .replace(/^\s*[#>\-•]+\s*/gm,'').trim();
 }
 
-/* Deterministic evidence rows — straight from the packet, never from the model. */
+/* Deterministic evidence rows — straight from the packet, never from the model.
+   A row is only emitted when its underlying fact is actually present, so a stale
+   or partial response can never render "undefined". */
 function packetEvidenceRows(f){
   const rows=[];
-  const add=(k,v)=>{ if(v!==undefined && v!==null && v!=='') rows.push([k,v]); };
-  add('Protocol', f.protocol + (f.info ? ' — ' + f.info : ''));
-  if(f.src) add('Source', f.src + (f.src_role ? '  ['+f.src_role+']' : ''));
-  if(f.dst) add('Destination', f.dst + (f.dst_role ? '  ['+f.dst_role+']' : ''));
-  if(f.sport_desc) add('Ports', f.sport_desc + '  →  ' + f.dport_desc);
+  const has=v=>v!==undefined && v!==null && v!=='';
+  const add=(k,v)=>{ if(has(v)) rows.push([k,v]); };
+  add('Protocol', has(f.protocol) ? f.protocol + (has(f.info) ? ' — '+f.info : '') : '');
+  add('Source', has(f.src) ? f.src + (has(f.src_role) ? '  ['+f.src_role+']' : '') : '');
+  add('Destination', has(f.dst) ? f.dst + (has(f.dst_role) ? '  ['+f.dst_role+']' : '') : '');
+  add('Ports', has(f.sport_desc) && has(f.dport_desc) ? f.sport_desc+'  →  '+f.dport_desc : '');
   add('Direction', f.direction);
-  if(f.ttl!==undefined) add('TTL', f.ttl+' → initial '+f.ttl_initial+', ~'+f.hops+' hops · consistent with '+f.os_hint);
-  if(f.hop_limit!==undefined) add('Hop limit', f.hop_limit);
-  if(f.tcp_flags) add('TCP flags', f.tcp_flags + (f.window!==undefined ? '  · Window '+f.window : ''));
-  if(f.icmp_type!==undefined) add('ICMP', 'type '+f.icmp_type+', code '+f.icmp_code);
+  add('TTL', has(f.ttl) ? f.ttl+' → initial '+f.ttl_initial+', ~'+f.hops+' hops · consistent with '+f.os_hint : '');
+  add('Hop limit', f.hop_limit);
+  add('TCP flags', has(f.tcp_flags) ? f.tcp_flags + (has(f.window) ? '  · Window '+f.window : '') : '');
+  add('ICMP', has(f.icmp_type) ? 'type '+f.icmp_type+', code '+f.icmp_code : '');
   add('Application', f.app_decoded);
   add('TLS SNI', f.sni);
-  if(f.payload_size) add('Payload', f.payload_size+' bytes · entropy '+f.entropy+'/8.00 ('+f.entropy_note+') · '+f.printable_pct+'% printable');
-  else add('Payload', 'none (control segment — handshake/ACK)');
-  add('Frame length', f.frame_len + ' bytes');
+  if(has(f.payload_size)){
+    add('Payload', f.payload_size
+        ? f.payload_size+' bytes · entropy '+f.entropy+'/8.00 ('+f.entropy_note+') · '+f.printable_pct+'% printable'
+        : 'none (control segment — handshake/ACK)');
+  }
+  add('Frame length', has(f.frame_len) ? f.frame_len+' bytes' : '');
   return rows;
+}
+
+/* "Label: detail" → bold the label so the bullets scan quickly. */
+function aiBullet(t){
+  const m=String(t).match(/^([^:]{2,32}):\s*(.+)$/);
+  return m ? '<b>'+esc(m[1])+':</b> '+esc(m[2]) : esc(t);
+}
+
+/* Fallback formatting when the model ignored the section format: keep its prose
+   readable by splitting bullets and sentences instead of one solid block. */
+function aiFallbackHtml(text){
+  const lines=stripMd(text||'').split('\n').map(l=>l.trim()).filter(Boolean);
+  if(lines.length>1)
+    return '<ul class="ai-list">'+lines.map(l=>'<li>'+aiBullet(l)+'</li>').join('')+'</ul>';
+  // Split into sentences without lookbehind (unsupported in older Safari).
+  const SEP='\u0001';
+  const parts=(lines[0]||'(no explanation)')
+    .replace(/([.!?])\s+(?=[A-Z])/g,'$1'+SEP).split(SEP).filter(Boolean);
+  return parts.map(p=>'<p>'+esc(p)+'</p>').join('');
 }
 
 function renderPacketAI(j){
   const s=j.sections||{}, f=j.facts||{};
-  const ev=packetEvidenceRows(f).map(([k,v])=>
-    '<div class="ai-ev-k">'+esc(k)+'</div><div class="ai-ev-v">'+esc(v)+'</div>').join('');
-  const evidence='<div class="ai-ev"><div class="ai-sec-t">Evidence from the packet</div>'
-                +'<div class="ai-ev-grid">'+ev+'</div></div>';
+  const rows=packetEvidenceRows(f);
+  const evidence = rows.length
+    ? '<div class="ai-ev"><div class="ai-sec-t">Evidence from the packet</div><div class="ai-ev-grid">'
+      + rows.map(([k,v])=>'<div class="ai-ev-k">'+esc(k)+'</div><div class="ai-ev-v">'+esc(v)+'</div>').join('')
+      + '</div></div>'
+    : '';
 
-  // The model ignored the format — show its prose, cleaned, rather than nothing.
+  // The model ignored the format — show its prose, cleaned and broken up.
   if(!s.verdict){
-    const raw=stripMd(j.explanation||'(no explanation)');
-    return '<div class="ai-sec"><div class="ai-sec-t">AI triage</div><p>'+esc(raw)+'</p></div>'+evidence;
+    return '<div class="ai-sec"><div class="ai-sec-t">AI triage</div>'
+         + aiFallbackHtml(j.explanation) + '</div>' + evidence;
   }
 
   const sec=(title,body)=> body ? '<div class="ai-sec"><div class="ai-sec-t">'+title
                                  +'</div><p>'+esc(body)+'</p></div>' : '';
+  const points=(s.key_points||[]).length
+    ? '<div class="ai-sec"><div class="ai-sec-t">Key points</div><ul class="ai-list">'
+      + s.key_points.map(p=>'<li>'+aiBullet(p)+'</li>').join('') + '</ul></div>'
+    : '';
+
   return '<div class="ai-head">'
        +   '<span class="ai-badge '+esc(s.verdict_key||'informational')+'">'+esc(s.verdict)+'</span>'
-       +   '<span class="ai-head-sub">AI triage verdict</span>'
+       +   '<span class="ai-head-sub">'+esc(s.verdict_reason||'AI triage verdict')+'</span>'
        + '</div>'
        + sec('What this packet is', s.summary)
        + sec('Where it comes from', s.origin)
+       + points
        + sec('Is it suspicious?', s.assessment)
        + sec('Recommended action', s.action)
        + evidence

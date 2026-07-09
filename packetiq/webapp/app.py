@@ -1634,19 +1634,24 @@ _AI_LABEL = {"gemini": "Google Gemini", "groq": "Groq", "anthropic": "Anthropic"
 _PACKET_EXPLAIN_SYSTEM = (
     "You are PacketIQ Copilot, a senior network-forensics analyst writing a triage note on ONE "
     "packet for a SOC colleague. You are given a decoded fact sheet for that packet.\n\n"
-    "OUTPUT FORMAT — plain text only. Emit exactly these five labels, each starting a new line, "
-    "in this order. Do NOT use Markdown: no asterisks, no bold, no bullet characters, no headings, "
-    "no blank lines between sections.\n\n"
-    "VERDICT: one of Benign, Informational, Worth a look, or Suspicious — that single label only.\n"
-    "SUMMARY: two or three sentences stating what this packet is and what the two endpoints are "
+    "OUTPUT FORMAT — plain text only. Emit exactly these six labels, each starting a new line, "
+    "in this order. Do NOT use Markdown: no asterisks, no bold, no headings, no numbering.\n\n"
+    "VERDICT: exactly one of Benign, Informational, Worth a look, or Suspicious. Write the label, "
+    "then a dash and at most eight words saying why. Nothing more.\n"
+    "SUMMARY: one or two sentences stating what this packet is and what the two endpoints are "
     "doing, naming the protocol and the service involved.\n"
-    "ORIGIN: where it came from and where it is going — which side is internal and which is "
-    "external, which is the client and which is the server, the service port in use, and what the "
-    "TTL suggests about the sender's operating system and how many hops away it is.\n"
-    "ASSESSMENT: whether this is suspicious and why or why not, citing the concrete evidence — "
-    "encrypted versus cleartext, payload entropy, whether the port matches the protocol, exposure "
-    "to an external host, TCP handshake state, and any decoded name (TLS SNI, HTTP host, DNS query). "
-    "State plainly if it is ordinary traffic.\n"
+    "ORIGIN: one or two sentences on where it came from and where it is going — which side is "
+    "internal and which is external, which is the client and which is the server, and what the TTL "
+    "suggests about the sender's operating system and how many hops away it is.\n"
+    "KEY POINTS: three to six bullets, each on its own line beginning with '- '. Start each bullet "
+    "with a short label, then a colon, then one concise fact. Cover only what is present: host "
+    "roles, ports and direction, TTL and OS hint, TCP flags or handshake state, payload entropy "
+    "(encrypted, compressed or plaintext), and any decoded name such as a TLS SNI, HTTP host or "
+    "DNS query. Keep each bullet to one line.\n"
+    "ASSESSMENT: two or three sentences on whether this is suspicious and why or why not, citing "
+    "the concrete evidence — encrypted versus cleartext, payload entropy, whether the port matches "
+    "the protocol, exposure to an external host, handshake state. Say plainly if it is ordinary "
+    "traffic.\n"
     "ACTION: one concrete next step for the analyst. If nothing is wrong, say 'No action — normal "
     "traffic' and name the single check that would confirm it.\n\n"
     "RULES: Use ONLY facts from the fact sheet. Never invent IP addresses, ports, domains, payload "
@@ -1655,14 +1660,42 @@ _PACKET_EXPLAIN_SYSTEM = (
     "restating the sheet verbatim. One packet in isolation is usually normal — do not manufacture "
     "threat where there is none.")
 
-# The five labels the explainer must emit, and a tolerant parser for them.
-_EXPLAIN_LABELS = ("VERDICT", "SUMMARY", "ORIGIN", "ASSESSMENT", "ACTION")
+# Canonical section keys, plus the aliases a model may drift to. Longest alias is
+# matched first so "KEY FIELDS THAT MATTER" wins over "KEY FIELDS".
+_EXPLAIN_ALIASES = {
+    "VERDICT": "verdict",
+    "SUMMARY": "summary",
+    "WHAT THIS PACKET IS": "summary",
+    "ORIGIN": "origin",
+    "WHERE IT COMES FROM": "origin",
+    "KEY POINTS": "key_points",
+    "KEY FIELDS THAT MATTER": "key_points",
+    "KEY FIELDS": "key_points",
+    "ASSESSMENT": "assessment",
+    "IS IT SUSPICIOUS": "assessment",
+    "INDICATORS & CONTEXT": "assessment",
+    "INDICATORS AND CONTEXT": "assessment",
+    "INDICATORS": "assessment",
+    "ACTION": "action",
+    "RECOMMENDED NEXT STEP": "action",
+    "RECOMMENDED ACTION": "action",
+}
+# A label may be followed by a separator and text, or stand alone on its own line
+# (models often write a bare heading, then the content beneath it).
 _EXPLAIN_LABEL_RE = re.compile(
-    r"^\s*[#*\-•\s]*(" + "|".join(_EXPLAIN_LABELS) + r")\s*[*_]*\s*[:\-–—]\s*(.*)$",
+    r"^\s*[#*\-•\s]*(?:\*\*)?\s*("
+    + "|".join(re.escape(a) for a in sorted(_EXPLAIN_ALIASES, key=len, reverse=True))
+    + r")\s*\??\s*[*_]*\s*(?:[:\-–—]\s*(.*))?$",
     re.IGNORECASE)
-# Verdict → UI badge class. Anything unrecognised falls back to informational.
-_VERDICT_KEYS = (("benign", "benign"), ("informational", "informational"),
-                 ("worth", "review"), ("suspicious", "suspicious"), ("malicious", "suspicious"))
+_BULLET_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+(.*)$")
+# Sections that make a parsed answer worth rendering as a card at all.
+_SUBSTANTIVE_SECTIONS = {"summary", "origin", "key_points", "assessment", "action"}
+_VERDICT_REASON_MAX = 120
+# Verdict labels, longest first so "worth a look" beats a bare prefix match.
+_VERDICTS = ("informational", "worth a look", "suspicious", "malicious", "benign")
+_VERDICT_KEYS = {"benign": "benign", "informational": "informational",
+                 "worth a look": "review", "suspicious": "suspicious",
+                 "malicious": "suspicious"}
 
 
 def _strip_markdown(s: str) -> str:
@@ -1675,34 +1708,86 @@ def _strip_markdown(s: str) -> str:
 
 def _verdict_key(verdict: str) -> str:
     low = (verdict or "").strip().lower()
-    for needle, key in _VERDICT_KEYS:
-        if low.startswith(needle):
-            return key
+    for label in sorted(_VERDICTS, key=len, reverse=True):
+        if low.startswith(label):
+            return _VERDICT_KEYS[label]
     return "informational"
+
+
+def _split_verdict(raw: str) -> tuple:
+    """Separate the verdict label from any reason the model appended, so the UI can
+    show a clean badge ('Worth a look') beside its justification."""
+    txt = _strip_markdown(raw)
+    low = txt.lower()
+    for label in sorted(_VERDICTS, key=len, reverse=True):
+        if low.startswith(label):
+            reason = txt[len(label):].lstrip(" :;,.–—-").strip()
+            return txt[:len(label)], reason
+    return (txt.split(".")[0][:40].strip(), "")
+
+
+def _bullets(lines: list) -> list:
+    """Turn the KEY POINTS block into a clean list, whether or not the model used
+    bullet characters."""
+    out = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        m = _BULLET_RE.match(line)
+        text = _strip_markdown(m.group(1) if m else line)
+        if text:
+            out.append(text)
+    return out
 
 
 def _parse_explanation(text: str) -> dict:
     """Split the model's labelled triage note into sections the UI can style.
     Returns {} if the model ignored the format, so callers can fall back to prose."""
-    out: dict = {}
+    sections: dict = {}
     current = None
     buf: list = []
+
+    def flush():
+        if not current:
+            return
+        if current == "key_points":
+            pts = _bullets(buf)
+            if pts:
+                sections["key_points"] = pts
+        else:
+            val = _strip_markdown(" ".join(buf))
+            if val:
+                sections[current] = val
+
     for line in (text or "").splitlines():
         m = _EXPLAIN_LABEL_RE.match(line)
         if m:
-            if current:
-                out[current] = _strip_markdown(" ".join(buf))
-            current = m.group(1).lower()
-            buf = [m.group(2)]
+            flush()
+            current = _EXPLAIN_ALIASES[m.group(1).upper()]
+            buf = [m.group(2) or ""]        # bare heading → content starts next line
         elif current:
             buf.append(line)
-    if current:
-        out[current] = _strip_markdown(" ".join(buf))
-    out = {k: v for k, v in out.items() if v}
-    if out.get("verdict"):
-        out["verdict"] = out["verdict"].rstrip(".")
-        out["verdict_key"] = _verdict_key(out["verdict"])
-    return out
+    flush()
+
+    if sections.get("verdict"):
+        label, reason = _split_verdict(sections["verdict"])
+        sections["verdict"] = label
+        sections["verdict_key"] = _verdict_key(label)
+        if reason:
+            # The badge line takes a short phrase. Anything longer is really the
+            # summary (a model that ran its whole answer onto one line) — keep the
+            # content rather than stretching the header.
+            if len(reason) <= _VERDICT_REASON_MAX:
+                sections["verdict_reason"] = reason
+            elif "summary" not in sections:
+                sections["summary"] = reason
+
+    # A lone verdict with no substance isn't a structured answer — let the caller
+    # fall back to rendering the model's prose properly.
+    if not _SUBSTANTIVE_SECTIONS & set(sections):
+        return {}
+    return sections
 
 # Shown when no provider is usable — covers both the cloud-key and local-LLM paths.
 _NO_PROVIDER_HINT = (

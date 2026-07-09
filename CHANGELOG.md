@@ -18,11 +18,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   request line, DNS query).
   The model now answers in **plain labelled sections** (Verdict · What this packet is ·
   Where it comes from · Is it suspicious? · Recommended action), which the web UI renders
-  as a **styled triage card** with a colour-coded verdict badge and a separate
+  as a **styled triage card**: a colour-coded verdict badge with its one-line reason,
+  headed prose sections, a **bulleted "Key points"** list, and a separate
   **"Evidence from the packet"** panel built from the deterministic facts — not from the
-  model. Previously the panel printed the model's raw Markdown (literal `**Verdict**`);
-  a server-side parser now strips any stray Markdown, and falls back to cleaned prose if
-  the model ignores the format. 15 new tests.
+  model. Previously the panel printed the model's raw Markdown as a wall of text (literal
+  `**Verdict**`). A server-side parser now strips stray Markdown, understands alternate
+  and bare headings, splits the verdict from its reason, and falls back to cleanly
+  formatted prose if the model ignores the format; the evidence panel is omitted rather
+  than rendering `undefined` when facts are missing. 20 new tests.
 - **Detailed Telegram findings + full PDF report.** The **📣 Send report + PDF** button
   now sends a proper SOC brief (risk, severity breakdown, top talkers, attack chains
   with MITRE, and every key finding with one-line evidence) instead of a two-line list,
