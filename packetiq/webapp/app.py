@@ -657,6 +657,10 @@ def _run_analysis(job_id: str, pcap_path: str, loop: asyncio.AbstractEventLoop) 
 
             result    = extractor.finalize()
             file_meta = parser.file_summary()
+            # file_summary() names the file as it sits on disk — an internal temp
+            # name for an upload. The report's chain of custody must cite the
+            # evidence file the analyst actually submitted.
+            file_meta["filename"] = fname or file_meta.get("filename", "")
             file_meta["sha256"] = _sha256_file(pcap_path)   # chain-of-custody
             progress("parse", 30, f"Parsed {count:,} packets — extraction complete.")
 

@@ -30,9 +30,12 @@ def test_html_report_contains_sections():
                              description="Brute force on SSH")]
     risk = score(events)
     html = build_html({"filename": "demo.pcap"}, res, events, [], risk, [])
-    for marker in ("PacketIQ — SOC Analysis Report", "Network graph", "<svg",
-                   "Detection events", "Brute force on SSH", "RISK"):
-        assert marker in html
+    for marker in ("Network Forensics &amp; Incident Report",   # house-style cover title
+                   "PACKETIQ", "demo.pcap", "PIQ-",             # brand, evidence, report ref
+                   "OVERALL RISK", "Network graph", "<svg",
+                   "Detection events", "Brute force on SSH",
+                   "Limitations &amp; assurance"):
+        assert marker in html, marker
 
 
 def test_network_svg_renders_nodes():

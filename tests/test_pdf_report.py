@@ -3,7 +3,7 @@ valid PDF from the serialised analysis result, and degrade gracefully on sparse
 input. All content is drawn from the real analysis — nothing is invented here.
 """
 
-from packetiq.export import pdf_report
+from packetiq.export import pdf_report, report_style
 
 _RES = {
     "meta": {"filename": "jay2.pcapng", "total_packets": 1234, "bytes_fmt": "1.2 MB",
@@ -55,9 +55,23 @@ def test_build_pdf_survives_minimal_result(tmp_path):
     assert open(out, "rb").read()[:5] == b"%PDF-"
 
 
+def test_build_pdf_survives_empty_result(tmp_path):
+    out = str(tmp_path / "empty.pdf")
+    assert pdf_report.build_pdf(out, {}) is True
+    assert open(out, "rb").read()[:5] == b"%PDF-"
+
+
+def test_report_is_multi_page_with_a_cover(tmp_path):
+    # Cover + numbered body sections should never collapse to a single page.
+    out = str(tmp_path / "r.pdf")
+    assert pdf_report.build_pdf(out, _RES) is True
+    data = open(out, "rb").read()
+    assert data.count(b"/Type /Page") >= 2 or data.count(b"/Type/Page") >= 2
+
+
 def test_iocs_and_recommendations_are_grounded():
-    iocs = dict(pdf_report._collect_iocs(_RES))
-    assert "tunnel.evil.example.com" in iocs.get("Threat-intel matches", [])
-    assert "172.20.10.1" in iocs.get("IPs in findings", [])
-    recs = pdf_report._collect_recommendations(_RES["events"])
+    iocs = dict(report_style.iocs(_RES))
+    assert "tunnel.evil.example.com" in iocs.get("Threat-intelligence matches", [])
+    assert "172.20.10.1" in iocs.get("Hosts named in findings", [])
+    recs = report_style.recommendations(_RES["events"])
     assert recs == ["Block the resolver path and inspect the host."]

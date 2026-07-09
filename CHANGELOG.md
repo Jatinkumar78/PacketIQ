@@ -8,6 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Professional AI packet analysis, richer Telegram alerts + PDF & a faster local LLM
 
 **Added**
+- **All three reports rebuilt to one professional house style.** A new
+  `packetiq/export/report_style.py` is the single source of truth for the report's identity,
+  its twelve numbered sections, its palette and its assurance statements — shared by the PDF,
+  the HTML export and the AI-written report.
+  The **PDF** (`export/pdf_report.py`) is now a print-ready document: a cover page with the
+  risk verdict band and a document-details block (report reference, evidence SHA-256,
+  classification), running headers, `Page X of Y` footers, and twelve numbered sections —
+  Executive Summary, Scope & Methodology, Capture Overview, Risk Assessment, Detection
+  Findings, Finding Details, Attack Chain Analysis, MITRE ATT&CK Coverage, Network Activity,
+  Indicators of Compromise, Recommended Actions, and Limitations & Assurance.
+  The **HTML export** gained the same cover block, self-numbering sections, and the shared
+  limitations statement, with print rules that keep headings with their tables.
+  The **AI-written report** (`/report`) now follows the identical twelve-section structure and
+  is told to write "Not observed in this capture." rather than pad an empty section. A test
+  locks all three surfaces to the same section list.
+
+**Fixed**
+- **Reports named the wrong evidence file.** For an uploaded PCAP the chain-of-custody block
+  cited the internal temporary filename (a UUID) instead of the file the analyst submitted,
+  because `PCAPParser.file_summary()` reports the name on disk. The report now always cites the
+  submitted filename. This mattered: a forensics report that misnames its evidence is unusable.
+
 - **Professional per-packet AI analysis, rendered as a triage card.** The "Explain this
   packet" copilot now reads a **decoded analyst fact sheet** (`inspect.analyst_facts` /
   `analyst_brief`) instead of a raw scapy field dump — so it reasons like a senior

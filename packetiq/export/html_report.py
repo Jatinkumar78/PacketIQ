@@ -395,18 +395,64 @@ def _recommendations(events, chains) -> str:
 
 
 def _methodology() -> str:
+    from packetiq.export import report_style as st
     return (
         "<div class='summary' style='border-left-color:#3b82f6'>"
-        "<b>Scope &amp; method.</b> Every finding in this report is produced by PacketIQ's "
-        "<i>deterministic</i> detection engine — behavioural heuristics plus threat-intel/IOC, YARA, "
-        "JA3, and protocol-misuse detectors — operating solely on the captured packets. No external "
-        "data was injected and no content was inferred by a language model. Each finding is graded for "
-        "<i>precision</i> (Confirmed / Probable / Tentative), reflecting evidentiary strength, and mapped "
-        "to MITRE ATT&amp;CK where applicable. Threat-actor overlap, when shown, is a behavioural "
-        "similarity score and <b>not</b> a formal attribution. All timestamps are taken from the capture "
-        "itself, and the report is reproducible: the same capture always yields the same report."
+        "<p><b>Scope &amp; method.</b> " + _esc(st.METHODOLOGY) + "</p>"
+        "<p>Each finding is additionally graded for <i>precision</i> (Confirmed / Probable / "
+        "Tentative), reflecting evidentiary strength. The report is reproducible: the same "
+        "capture always yields the same report.</p>"
         "</div>"
     )
+
+
+def _limitations(attrs=None) -> str:
+    """The same assurance statement the PDF carries — one house style, one caveat."""
+    from packetiq.export import report_style as st
+    blocks = ["<p>" + _esc(st.LIMITATIONS) + "</p>"]
+    if attrs:
+        blocks.append("<p><b>" + _esc(st.ATTRIBUTION_CAVEAT) + "</b></p>")
+    return "<div class='summary' style='border-left-color:#94a3b8'>" + "".join(blocks) + "</div>"
+
+
+def _doc_header(file_meta, risk, events, chains, generated, pcap_sha256, tool_version,
+                analyst, risk_color) -> str:
+    """Cover block: identity, verdict band and document details — mirrors the PDF cover."""
+    from packetiq.export import report_style as st
+    fname = file_meta.get("filename", "capture")
+    rid = st.report_id(fname, pcap_sha256 or "")
+
+    def row(k, v):
+        return f"<tr><td class='cl'>{_esc(k)}</td><td class='cv'>{v}</td></tr>"
+
+    details = "".join([
+        row("Report reference", f"<code>{_esc(rid)}</code>"),
+        row("Generated", _esc(generated)),
+        row("Evidence file", f"<code>{_esc(fname)}</code>"),
+        row("Evidence SHA-256", f"<code>{_esc(pcap_sha256)}</code>" if pcap_sha256
+            else "<span class='muted'>not computed</span>"),
+        row("Analyst", _esc(analyst) if analyst else "<span class='muted'>—</span>"),
+        row("Produced by", f"{_esc(st.BRAND)} v{_esc(tool_version)} — automated analysis"),
+        row("Classification", _esc(st.CLASSIFICATION)),
+    ])
+
+    return f"""
+  <div class="cover">
+    <div class="eyebrow">{_esc(st.BRAND.upper())}</div>
+    <h1>{_esc(st.DOC_TITLE)}</h1>
+    <p class="cover-file">{_esc(fname)}</p>
+    <div class="band" style="background:{risk_color}">
+      <div class="bstat"><div class="bl">OVERALL RISK</div><div class="bv">{risk.score}<span>/100</span></div></div>
+      <div class="bstat"><div class="bl">SEVERITY TIER</div><div class="bv">{_esc(risk.tier)}</div></div>
+      <div class="bstat"><div class="bl">FINDINGS</div><div class="bv">{len(events)}<span>&nbsp;in {len(chains)} chain(s)</span></div></div>
+    </div>
+    <p class="muted cover-sum">{_esc(risk.summary)}</p>
+    <div class="custody"><table>{details}</table></div>
+    <p class="foot cover-note">This document was generated automatically from the named evidence file.
+      The findings it contains are the output of deterministic detectors and reputation lookups; they
+      require analyst validation before they are relied upon. See <b>Limitations &amp; assurance</b> at
+      the end of this report.</p>
+  </div>"""
 
 
 def _events_rows(events) -> str:
@@ -630,10 +676,24 @@ def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
 <style>
   :root {{ color-scheme: dark; }}
   body {{ font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin:0; background:#0b0f1a; color:#e2e8f0; }}
-  .wrap {{ max-width: 1000px; margin: 0 auto; padding: 24px; }}
-  h1 {{ font-size: 22px; margin: 0 0 4px; }}
-  h2 {{ font-size: 16px; margin: 28px 0 10px; border-bottom: 1px solid #1e293b; padding-bottom: 6px; }}
+  .wrap {{ max-width: 1000px; margin: 0 auto; padding: 24px; counter-reset: sec; }}
+  h1 {{ font-size: 30px; line-height:1.15; margin: 0 0 6px; letter-spacing:-.01em; }}
+  /* Sections number themselves, so the document always reads as a report. */
+  h2 {{ font-size: 16px; margin: 30px 0 10px; border-bottom: 1px solid #1e293b; padding-bottom: 6px; }}
+  .wrap > h2::before {{ counter-increment: sec; content: counter(sec) ". "; color:#60a5fa; font-weight:700; }}
   h3 {{ font-size: 14px; margin: 0 0 6px; }}
+  /* ── Cover block ─────────────────────────────────────────────── */
+  .cover {{ border-bottom:2px solid #1e293b; padding-bottom:18px; margin-bottom:6px; }}
+  .cover .eyebrow {{ font-size:11px; font-weight:700; letter-spacing:.14em; color:#60a5fa; margin-bottom:6px; }}
+  .cover-file {{ font-size:14px; color:#94a3b8; margin:0 0 18px; }}
+  .cover-sum {{ font-size:13px; line-height:1.55; margin:10px 0 16px; }}
+  .cover-note {{ margin-top:14px; }}
+  .band {{ display:flex; flex-wrap:wrap; gap:0; border-radius:10px; overflow:hidden;
+           -webkit-print-color-adjust:exact; print-color-adjust:exact; }}
+  .bstat {{ flex:1 1 150px; padding:14px 18px; color:#fff; }}
+  .bstat .bl {{ font-size:10px; font-weight:700; letter-spacing:.09em; opacity:.85; }}
+  .bstat .bv {{ font-size:26px; font-weight:700; line-height:1.2; }}
+  .bstat .bv span {{ font-size:12px; font-weight:600; opacity:.85; }}
   .muted {{ color:#94a3b8; }} .note {{ color:#fbbf24; font-size:13px; }} .rec {{ color:#34d399; }}
   .risk {{ display:inline-block; padding:6px 14px; border-radius:8px; font-weight:700; color:#fff; background:{risk_color}; }}
   .summary {{ background:#111827; border:1px solid #1e293b; border-left:4px solid {risk_color}; border-radius:10px; padding:14px 16px; margin:14px 0; font-size:13px; line-height:1.5; }}
@@ -666,11 +726,20 @@ def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
   code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }}
   .foot {{ margin-top:30px; color:#64748b; font-size:11px; }}
   /* Print / Save-as-PDF: clean light document with sensible page breaks */
+  @page {{ margin: 18mm 14mm; }}
   @media print {{
     :root {{ color-scheme: light; }}
     body {{ background:#fff; color:#0f172a; }}
     .wrap {{ max-width:none; padding:0 6px; }}
-    h2 {{ page-break-after:avoid; border-bottom:1px solid #cbd5e1; }}
+    h2 {{ page-break-after:avoid; break-after:avoid; border-bottom:1px solid #cbd5e1; }}
+    h2 + * {{ page-break-before:avoid; break-before:avoid; }}
+    h3 {{ page-break-after:avoid; break-after:avoid; }}
+    .cover {{ page-break-after:always; border-bottom:none; }}
+    .cover .eyebrow {{ color:#1e4e79 !important; }}
+    .wrap > h2::before {{ color:#1e4e79 !important; }}
+    .cover-file, .foot {{ color:#475569 !important; }}
+    tr, .bstat {{ page-break-inside:avoid; }}
+    thead {{ display:table-header-group; }}
     .summary, .custody, .stat, .chain, .finding, .tcell {{ background:#fff !important; border-color:#cbd5e1 !important; }}
     .custody .cv, .finding p, td, h1, h2, h3 {{ color:#0f172a !important; }}
     .muted {{ color:#475569 !important; }} .rec {{ color:#047857 !important; }}
@@ -682,18 +751,15 @@ def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
   }}
 </style></head>
 <body><div class="wrap">
-  <h1>PacketIQ — SOC Analysis Report</h1>
-  <p class="muted">{_esc(file_meta.get('filename',''))} · generated {generated}</p>
-  <p><span class="risk">RISK {risk.score}/100 · {_esc(risk.tier)}</span>
-     &nbsp;<span class="muted">{_esc(risk.summary)}</span></p>
+  {_doc_header(file_meta, risk, events, chains, generated, pcap_sha256, tool_version, analyst, risk_color)}
 
   <h2>Executive summary</h2>
   <div class="summary">{_exec_summary(file_meta, result, events, chains, risk)}</div>
 
+  <div class="stats">{stats}</div>
+
   <h2>Chain of custody</h2>
   <div class="custody"><table>{custody}</table></div>
-
-  <div class="stats">{stats}</div>
 
   <h2>Severity breakdown</h2>
   <p>{"".join(f"<span class='pill' style='border-left:4px solid {_SEV_COLOR.get(s,'#888')}'>&nbsp;{_esc(s)}: {sev_counts.get(s,0)}&nbsp;</span> " for s in ('CRITICAL','HIGH','MEDIUM','LOW'))}</p>
@@ -741,10 +807,24 @@ def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
   <h2>Analyst recommendations &amp; next steps</h2>
   {_recommendations(events, chains)}
 
-  <h2>Methodology &amp; interpretation</h2>
+  <h2>Scope &amp; methodology</h2>
   {_methodology()}
 
-  <p class="foot">Generated by PacketIQ v{_esc(tool_version)} · behavioural + threat-intel analysis ·
-     all findings are derived from the captured evidence and should be validated against the raw capture.
-     Precision grades indicate detection confidence, not legal certainty.</p>
+  <h2>Limitations &amp; assurance</h2>
+  {_limitations(attrs)}
+
+  <p class="foot">Report {_esc(_report_ref(file_meta, pcap_sha256))} · generated {_esc(generated)} by
+     PacketIQ v{_esc(tool_version)}. Findings are derived from the captured evidence and should be
+     validated against the raw capture. Precision grades indicate detection confidence, not legal
+     certainty. {_esc(_classification())}.</p>
 </div></body></html>"""
+
+
+def _report_ref(file_meta: dict, pcap_sha256=None) -> str:
+    from packetiq.export import report_style as st
+    return st.report_id(file_meta.get("filename", "capture"), pcap_sha256 or "")
+
+
+def _classification() -> str:
+    from packetiq.export import report_style as st
+    return st.CLASSIFICATION

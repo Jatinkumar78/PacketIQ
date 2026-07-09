@@ -143,3 +143,26 @@ def test_report_print_mode(client, tmp_path):
     r = client.get(f"/api/report/{job}.html", params={"print": 1})
     assert r.status_code == 200
     assert "window.print()" in r.text
+
+
+def test_report_cites_the_uploaded_evidence_filename(client, tmp_path):
+    """Chain of custody must name the file the analyst submitted, never the
+    internal temp name the upload was written to."""
+    import re
+    job = _analyze(client, _scan_pcap(tmp_path))
+    html = client.get(f"/api/report/{job}.html").text
+    assert "scan.pcap" in html
+    assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", html)
+
+
+def test_report_carries_the_house_style(client, tmp_path):
+    import html as _h
+
+    from packetiq.export import report_style as st
+    job = _analyze(client, _scan_pcap(tmp_path))
+    html = client.get(f"/api/report/{job}.html").text
+    assert _h.escape(st.DOC_TITLE, quote=False) in html   # cover title (& is escaped)
+    assert "PIQ-" in html                          # report reference
+    assert "CONFIDENTIAL" in html                  # classification
+    assert "Limitations &amp; assurance" in html   # the assurance section
+    assert "counter(sec)" in html                  # sections number themselves
