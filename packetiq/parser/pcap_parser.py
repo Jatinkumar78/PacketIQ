@@ -58,9 +58,6 @@ class RawPacketRecord:
     # Raw payload reference (kept small — only first 512 bytes)
     raw_payload: bytes = field(default_factory=bytes, repr=False)
 
-    # Layer names for quick isinstance-style checks without re-importing
-    layers: list = field(default_factory=list, repr=False)
-
 
 class PCAPParser:
     """
@@ -122,7 +119,6 @@ class PCAPParser:
                 index=index,
                 timestamp=float(pkt.time),
                 size=len(pkt),
-                layers=list(pkt.layers()),
             )
 
             # ── Network layer ──────────────────────────────────────────
@@ -158,8 +154,9 @@ class PCAPParser:
                 record.tcp_ack   = tcp.ack
                 record.protocol  = "TCP"
                 record.service   = self._infer_service(tcp.sport, tcp.dport)
-                record.payload_size = len(bytes(tcp.payload))
-                record.raw_payload  = bytes(tcp.payload)[:512]
+                pl = bytes(tcp.payload)          # build once, not twice
+                record.payload_size = len(pl)
+                record.raw_payload  = pl[:512]
 
             elif pkt.haslayer(UDP):
                 udp = pkt[UDP]
@@ -167,8 +164,9 @@ class PCAPParser:
                 record.dst_port  = udp.dport
                 record.protocol  = "UDP"
                 record.service   = self._infer_service(udp.sport, udp.dport)
-                record.payload_size = len(bytes(udp.payload))
-                record.raw_payload  = bytes(udp.payload)[:512]
+                pl = bytes(udp.payload)          # build once, not twice
+                record.payload_size = len(pl)
+                record.raw_payload  = pl[:512]
 
             elif pkt.haslayer(ICMP):
                 record.protocol = "ICMP"

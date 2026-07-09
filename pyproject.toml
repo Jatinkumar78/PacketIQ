@@ -71,6 +71,7 @@ packetiq = [
     "detection/data/yara_rules/*",
     "enrichment/data/*",
     "webapp/templates/*.html",
+    "webapp/static/vendor/*.js",
     "dashboard/templates/*.html",
 ]
 

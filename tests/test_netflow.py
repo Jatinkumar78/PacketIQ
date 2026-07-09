@@ -140,3 +140,39 @@ def test_data_before_template_is_skipped_not_crash():
     hdr = struct.pack("!HHIIII", 9, 1, UPTIME, UNIX, 0, 1)
     recs = parse_netflow(hdr + data_fs)
     assert recs == []
+
+
+# ── Web-app wiring (parity with the CLI `netflow` command) ──────────────────
+def test_webapp_ingests_netflow_export(tmp_path, monkeypatch):
+    """A raw NetFlow export analyses end-to-end through the web API — the same
+    upload → detect → results path a PCAP takes, routed by extension."""
+    from fastapi.testclient import TestClient
+
+    from packetiq.webapp import create_app
+
+    monkeypatch.setenv("PACKETIQ_DB", str(tmp_path / "nf.db"))
+    # one source hitting 25 distinct ports on one host → vertical PORT_SCAN
+    data = _v5([("203.0.113.9", "192.168.1.10", 50000 + p, 20 + p, 6, 1, 40) for p in range(25)])
+    with TestClient(create_app()) as client:
+        r = client.post("/api/analyze",
+                        files={"file": ("scan.netflow", data, "application/octet-stream")})
+        assert r.status_code == 200, r.text
+        res = r.json()
+        assert res["meta"]["unique_flows"] == 25
+        assert any(e["event_type"] == "PORT_SCAN" for e in res["events"])
+
+
+def test_webapp_detects_netflow_by_magic_bytes(tmp_path, monkeypatch):
+    """Even with an unfamiliar extension, a flow export is recognised by its
+    NetFlow version word (first two bytes) rather than misparsed as a PCAP."""
+    from fastapi.testclient import TestClient
+
+    from packetiq.webapp import create_app
+
+    monkeypatch.setenv("PACKETIQ_DB", str(tmp_path / "nf2.db"))
+    data = _v5([("203.0.113.9", "192.168.1.10", 50000 + p, 20 + p, 6, 1, 40) for p in range(25)])
+    with TestClient(create_app()) as client:
+        r = client.post("/api/analyze",
+                        files={"file": ("export.bin", data, "application/octet-stream")})
+        assert r.status_code == 200, r.text
+        assert r.json()["meta"]["unique_flows"] == 25

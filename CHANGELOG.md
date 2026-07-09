@@ -5,6 +5,84 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Wireshark-accurate packets, 1-click Telegram & a faster pipeline
+
+**Fixed**
+- **Packet protocol labels now match Wireshark.** The Packets browser used to call
+  *every* segment on port 80 "HTTP" and *every* segment on port 443 "TCP/443"
+  (TLS was never recognised because scapy's TLS layer isn't loaded). Labels are now
+  decided by **payload inspection, exactly like Wireshark's Protocol column**: a TCP
+  segment is only "HTTP"/"TLS" when it actually carries that protocol, so handshake /
+  ACK / keep-alive segments correctly read "TCP", TLS records read "TLS", and HTTP or
+  TLS on non-standard ports is still detected. The Info column is now Wireshark-style
+  too (`51000 → 80 [SYN] Seq=0 Win=8192 Len=0`, `GET /path HTTP/1.1`,
+  `TLS 1.2 Client Hello`, `Standard query 0x1a2b A example.com`). 8 regression tests added.
+
+**Added**
+- **One-click Telegram alerts — no file editing.** A guided **✈️ Connect Telegram**
+  panel in the web app takes a @BotFather token, **auto-detects your chat ID** (it
+  reads the bot's recent messages so you never hunt for a numeric ID), and sends a
+  live test message. Applies instantly and, unless you opt out, is saved to `.env`;
+  removable from the UI. New endpoints `GET/POST/DELETE /api/notify/telegram` and
+  `POST /api/notify/telegram/detect`; 4 isolated tests.
+
+**Changed**
+- **~40 % faster analysis, identical results.** The capture was being parsed **5
+  times** (extraction + credential + JA3 + TLS-cert + file-carving). Detectors that
+  consume the same record type now **share one pass** (credential + JA3) and the raw-
+  packet detectors share another (TLS-cert + file-carving), cutting it to **3 passes**;
+  the per-packet parser also stopped building the TCP/UDP payload twice and dropped an
+  unused layer-list allocation. On a 20 MB capture end-to-end analysis dropped from
+  ~90 s to ~55 s (profiled). Detection output is **byte-for-byte identical** — verified
+  on 5 real captures (same event SHAs), so precision/recall are unchanged.
+
+### Offline-first web app & in-app AI keys
+
+**Added**
+- **Fully offline web app.** Chart.js and marked are now **bundled and served
+  locally** (`/static/vendor/…`) instead of from a CDN, so the browser UI works
+  with no internet at all. The core analysis was already offline (bundled
+  threat-intel snapshots, local detectors); this closes the last online dependency.
+- **Enter API keys in the app — no `.env` editing, no restart.** A **⚙ Keys**
+  panel in the copilot lets you paste a Gemini / Groq / Anthropic key; it applies
+  immediately (`POST /api/ai/key` sets it in-process) and, unless you opt out, is
+  saved to `.env` so it persists. Keys can be removed from the UI too. The no-key
+  banner is now an actionable "Add an API key" button instead of instructions to
+  edit a file and restart.
+- **Local-LLM (Ollama) status surfaced.** The settings panel shows whether the
+  local daemon is running and which models are installed — the copilot runs fully
+  offline and private with no key. Ollama is only ever contacted on `localhost`.
+
+**Fixed**
+- Six new tests cover offline asset serving (no CDN, path-traversal-safe) and the
+  key set/clear/persist flow (isolated from the real `.env`).
+
+### Web-app parity, richer reports & CI fixes
+
+**Added**
+- **NetFlow / IPFIX analysis from the web app.** A raw NetFlow v5 / v9 / IPFIX
+  export can now be uploaded and analysed in the browser through the same
+  upload → detect → report pipeline a PCAP uses — closing the last CLI-only gap.
+  Exports are routed by extension (`.netflow` / `.nfcapd` / `.ipfix` / …) **or** by
+  their version word (first two bytes), so an unfamiliar extension still works and
+  a PCAP is never misclassified. Two web-path tests were added.
+- **Substantially richer downloadable report.** The self-contained HTML / court-ready
+  PDF report gained traffic-composition (protocol mix, throughput, TCP-handshake
+  completion), top-talkers with passive OS hints, top conversations, service/port
+  usage, DNS and HTTP activity, observed software banners, threat-actor TTP-overlap
+  (clearly labelled *not* attribution), a consolidated analyst action list, and a
+  methodology note. Every section is deterministic and derived only from the
+  captured evidence — no value is inferred by a model.
+
+**Fixed**
+- **CI Python 3.9 job.** Root cause was the non-existent dependency pins above; with
+  the corrected floors a clean 3.9 install and the full test suite pass. Bumped
+  `actions/checkout@v5` and `actions/setup-python@v6` (Node 24) to clear the
+  deprecation warnings.
+- **Documentation accuracy pass.** Corrected stale/overstated metadata: the real
+  test count (217), "15 detection types across 12 modules" (was "20+ detectors"),
+  and OSINT feeds described as dated, refreshable **snapshots** rather than "live".
+
 ### Detection accuracy, flow inputs & CI hardening
 
 **Added**
@@ -32,10 +110,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   "excessive-query" signal — re-resolving one name, a caching/polling artifact — is
   demoted to LOW/informational; DGA, tunneling and IOC remain the discriminative
   DNS threats. Recall held at 100% on real malware and the synthetic suite held 100%.
-- **Dependency pins synced.** `requirements.txt` now matches `setup.py`'s
-  security-patched floors (`python-multipart>=0.0.31`, `requests>=2.33.0`,
-  `cryptography>=44.0.1`, `urllib3>=2.7.0`), resolving a conflict where an
-  unpatched `python-multipart` could be installed.
+- **Dependency pins corrected to versions that exist on PyPI.** The former
+  `setup.py` pinned floors that do not exist (`python-multipart>=0.0.31`,
+  `requests>=2.33.0`, `urllib3>=2.7.0`, `python-dotenv>=1.2.2`), which broke a clean
+  `pip install`. `pyproject.toml` and `requirements.txt` now carry the real
+  security-patched floors — `python-multipart>=0.0.18` (CVE-2024-53981),
+  `requests>=2.32.4` (CVE-2024-47081), `urllib3>=2.6.0`, `cryptography>=44.0.1` —
+  kept in lockstep.
 
 ### Added — local AI copilot & evaluation
 - **Local-LLM copilot (Ollama) — offline, private, no API key.** The AI copilot

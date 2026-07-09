@@ -15,6 +15,7 @@ import ipaddress
 import json
 import os
 import re
+import struct
 import tempfile
 import uuid
 import zipfile
@@ -83,6 +84,13 @@ async def _stream_upload_to(file, dest, max_mb: int = None) -> int:
 _jobs: dict[str, dict] = {}
 
 TEMPLATE = Path(__file__).parent / "templates" / "index.html"
+STATIC_DIR = Path(__file__).parent / "static"
+# Front-end libraries are vendored (not loaded from a CDN) so the web app works
+# with no internet at all. Served from /static/vendor via an allow-listed route.
+_VENDOR_ASSETS = {
+    "chart.umd.min.js": "application/javascript",
+    "marked.min.js": "application/javascript",
+}
 
 
 # ── Serialisers ───────────────────────────────────────────────────────────────
@@ -575,6 +583,28 @@ def _run_fuse(job_id: str, pcap_paths: list, loop: asyncio.AbstractEventLoop) ->
 
 # ── Core analysis (runs in thread pool) ──────────────────────────────────────
 
+# File types the web pipeline accepts: packet captures, Zeek conn.logs, and raw
+# NetFlow/IPFIX exports (parity with the CLI). A NetFlow export is also recognised
+# by its version word (see _looks_like_netflow), so an unfamiliar extension works.
+SUPPORTED_UPLOAD_EXT = (".pcap", ".pcapng", ".cap", ".log", ".tsv", ".json",
+                        ".netflow", ".nfcapd", ".nf", ".ipfix", ".flows")
+
+
+def _looks_like_netflow(path: str) -> bool:
+    """True if the file's first two bytes are a NetFlow/IPFIX version word (5, 9 or
+    10). PCAP (0xA1B2…) and PCAPNG (0x0A0D…) magic never start with 0x0005/0x0009/
+    0x000A, so this cannot misclassify a capture. Lets the web app accept a raw
+    flow export even when it has an unfamiliar extension."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(2)
+    except OSError:
+        return False
+    if len(head) < 2:
+        return False
+    return struct.unpack("!H", head)[0] in (5, 9, 10)
+
+
 def _run_analysis(job_id: str, pcap_path: str, loop: asyncio.AbstractEventLoop) -> Optional[dict]:
     """Full PacketIQ pipeline — blocking, call via run_in_executor."""
     from packetiq.correlation.engine import CorrelationEngine
@@ -591,11 +621,21 @@ def _run_analysis(job_id: str, pcap_path: str, loop: asyncio.AbstractEventLoop) 
         push(type="progress", step=step, percent=pct, label=label)
 
     fname = _jobs[job_id].get("filename", "")
-    is_zeek = fname.lower().endswith((".log", ".tsv")) or "conn" in fname.lower() and fname.lower().endswith(".json")
+    lower = fname.lower()
+    is_netflow = lower.endswith((".netflow", ".nfcapd", ".nf", ".ipfix", ".flows")) or _looks_like_netflow(pcap_path)
+    is_zeek = lower.endswith((".log", ".tsv")) or "conn" in lower and lower.endswith(".json")
 
     try:
         # ── Parse ──────────────────────────────────────────────────────
-        if is_zeek:
+        if is_netflow:
+            progress("parse", 5, "Parsing NetFlow / IPFIX export…")
+            from packetiq.inputs import load_netflow
+            result = load_netflow(pcap_path)
+            count = result.total_packets
+            file_meta = {"filename": fname, "filesize": os.path.getsize(pcap_path),
+                         "packet_count": count, "sha256": _sha256_file(pcap_path)}
+            progress("parse", 30, f"Loaded {len(result.flows):,} flow(s) from NetFlow export.")
+        elif is_zeek:
             progress("parse", 5, "Parsing Zeek conn.log…")
             from packetiq.inputs import load_conn_log
             result = load_conn_log(pcap_path)
@@ -925,6 +965,34 @@ def _read_env() -> dict:
     return env
 
 
+def _env_upsert(key: str, value: str) -> None:
+    """Persist KEY=value into ./.env, replacing an existing line or appending —
+    other content and comments are preserved. Lets a key entered in the web UI
+    survive a restart. Best-effort; the caller ignores OSError."""
+    env_path = Path(".env")
+    lines = env_path.read_text().splitlines() if env_path.is_file() else []
+    pre, epre = f"{key}=", f"export {key}="
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if s.startswith(pre) or s.startswith(epre):
+            lines[i] = f"{key}={value}"
+            break
+    else:
+        lines.append(f"{key}={value}")
+    env_path.write_text("\n".join(lines) + "\n")
+
+
+def _env_remove(key: str) -> None:
+    """Delete any KEY= line from ./.env (best-effort)."""
+    env_path = Path(".env")
+    if not env_path.is_file():
+        return
+    pre, epre = f"{key}=", f"export {key}="
+    kept = [ln for ln in env_path.read_text().splitlines()
+            if not (ln.strip().startswith(pre) or ln.strip().startswith(epre))]
+    env_path.write_text("\n".join(kept) + ("\n" if kept else ""))
+
+
 # Provider priority + their env var and default model. `ollama` is the local,
 # offline runtime — it has no API key (its "env var" is the optional model
 # override) and is treated as configured when its daemon is reachable. It sits
@@ -1089,10 +1157,21 @@ def _detect_provider(skip: Optional[set] = None) -> dict:
     return {"provider": None, "key": None, "model": ""}
 
 
+def _key_hint(name: str) -> str:
+    """Masked tail of a configured key, for the settings UI (never the full key)."""
+    if name == "ollama":
+        return ""
+    key = _provider_key(name)
+    if not key:
+        return ""
+    return "…" + key[-4:] if len(key) > 4 else "set"
+
+
 def _ai_status_payload() -> dict:
-    """Current AI provider state for the GUI control."""
+    """Current AI provider state for the GUI control (incl. offline Ollama)."""
     configured = _configured_providers()
     active = _detect_provider()
+    probe = _ollama_probe()
     return {
         "available": bool(configured),
         "mode": "auto" if not _AI_FORCED.get("provider") else "manual",
@@ -1100,9 +1179,17 @@ def _ai_status_payload() -> dict:
         "active": active["provider"],
         "providers": [
             {"name": n, "label": _AI_LABEL.get(n, n),
-             "configured": n in configured, "cooldown": _cooldown_left(n)}
+             "configured": n in configured, "cooldown": _cooldown_left(n),
+             "needs_key": n != "ollama", "key_hint": _key_hint(n)}
             for n, _, _ in _PROVIDER_SPECS
         ],
+        # Offline local-LLM status so the UI can guide the user without a key.
+        "ollama": {
+            "available": probe["up"],
+            "host": _ollama_host(),
+            "models": probe.get("models", []),
+            "model": _ollama_model() if probe["up"] else _OLLAMA_DEFAULT_MODEL,
+        },
     }
 
 
@@ -1528,11 +1615,25 @@ def create_app() -> FastAPI:
     async def index():
         return HTMLResponse(TEMPLATE.read_text(encoding="utf-8"))
 
+    @app.get("/static/vendor/{name}")
+    async def vendor_asset(name: str):
+        """Serve the bundled front-end libraries (Chart.js, marked) locally so the
+        app needs no CDN and runs fully offline. Allow-listed — no path traversal."""
+        media = _VENDOR_ASSETS.get(name)
+        if media is None:
+            raise HTTPException(404, "Unknown asset.")
+        path = STATIC_DIR / "vendor" / name
+        if not path.is_file():
+            raise HTTPException(404, "Asset not bundled.")
+        return Response(path.read_bytes(), media_type=media,
+                        headers={"Cache-Control": "public, max-age=86400"})
+
     @app.post("/api/upload")
     async def upload(file: UploadFile = File(...)):
         fname = os.path.basename(file.filename or "upload.pcap")   # strip any path components
-        if not fname.lower().endswith((".pcap", ".pcapng", ".cap", ".log", ".tsv", ".json")):
-            raise HTTPException(400, "Upload a packet capture (.pcap/.pcapng/.cap) or a Zeek conn.log (.log/.tsv/.json).")
+        if not fname.lower().endswith(SUPPORTED_UPLOAD_EXT):
+            raise HTTPException(400, "Upload a packet capture (.pcap/.pcapng/.cap), a Zeek conn.log "
+                                     "(.log/.tsv/.json), or a NetFlow/IPFIX export (.netflow/.nfcapd/.ipfix).")
 
         job_id    = str(uuid.uuid4())
         pcap_path = UPLOAD_DIR / f"{job_id}.pcap"
@@ -1639,11 +1740,12 @@ def create_app() -> FastAPI:
         """Synchronous REST endpoint: upload a PCAP, get the full analysis JSON.
         Intended for scripts / CI (no WebSocket needed)."""
         fname = file.filename or "upload.pcap"
-        if not fname.lower().endswith((".pcap", ".pcapng", ".cap")):
-            raise HTTPException(400, "Upload a .pcap, .pcapng, or .cap file.")
         content = await file.read()
+        is_flow_magic = len(content) >= 2 and struct.unpack("!H", content[:2])[0] in (5, 9, 10)
+        if not (fname.lower().endswith(SUPPORTED_UPLOAD_EXT) or is_flow_magic):
+            raise HTTPException(400, "Upload a PCAP/PCAPNG/CAP, a Zeek conn.log, or a NetFlow/IPFIX export.")
         if len(content) < 24:
-            raise HTTPException(400, "File is too small to be a valid PCAP.")
+            raise HTTPException(400, "File is too small to be a valid capture.")
 
         job_id = str(uuid.uuid4())
         pcap_path = UPLOAD_DIR / f"{job_id}.pcap"
@@ -1966,6 +2068,86 @@ def create_app() -> FastAPI:
         results = await loop.run_in_executor(None, _send_all, "PacketIQ findings", "\n".join(lines))
         return {"results": results, "sent_for": m["filename"]}
 
+    # ── Telegram guided setup (token + chat-id in the web UI) ────────────
+    @app.get("/api/notify/telegram")
+    async def telegram_status():
+        """Current Telegram config for the setup panel (token is masked)."""
+        from packetiq.alerts.telegram import load_credentials
+        tok, cid = load_credentials()
+        return {
+            "configured": bool(tok and cid),
+            "has_token":  bool(tok),
+            "token_hint": ("…" + tok[-4:]) if tok and len(tok) > 4 else ("set" if tok else ""),
+            "chat_id":    cid or "",
+        }
+
+    @app.post("/api/notify/telegram/detect")
+    async def telegram_detect(request: Request):
+        """Given the bot token, list chats that have messaged the bot so the user
+        can pick their chat ID instead of hunting for it manually."""
+        from packetiq.alerts.telegram import detect_chat_ids, load_credentials, valid_token
+        body = await request.json()
+        token = (body.get("token") or "").strip()
+        if not valid_token(token):                       # fall back to a saved token
+            token = (load_credentials()[0] or "").strip()
+        if not valid_token(token):
+            raise HTTPException(400, "Paste your bot token first — get one from @BotFather "
+                                     "(it looks like 123456789:AA…).")
+        loop = asyncio.get_event_loop()
+        ok, res = await loop.run_in_executor(None, detect_chat_ids, token)
+        if not ok:
+            raise HTTPException(400, str(res))
+        if not res:
+            raise HTTPException(404, "No chats found yet. Open Telegram, send your bot any "
+                                     "message (e.g. “hi”), then click Detect again.")
+        return {"chats": res}
+
+    @app.post("/api/notify/telegram")
+    async def telegram_save(request: Request):
+        """Save Telegram token + chat ID from the web UI. Applies immediately and,
+        unless persist=false, is written to ./.env. Optionally sends a test message."""
+        from packetiq.alerts.telegram import TelegramSender, load_credentials, valid_chat_id, valid_token
+        body = await request.json()
+        token = (body.get("token") or "").strip()
+        chat_id = str(body.get("chat_id") or "").strip()
+        persist = body.get("persist", True)
+        do_test = body.get("test", True)
+        saved_tok, saved_cid = load_credentials()        # keep a field the user left blank
+        token = token or (saved_tok or "")
+        chat_id = chat_id or (saved_cid or "")
+        if not valid_token(token):
+            raise HTTPException(400, "That bot token doesn't look right. Copy it from @BotFather "
+                                     "(format: 123456789:AA…).")
+        if not valid_chat_id(chat_id):
+            raise HTTPException(400, "Enter a chat ID — a number like 123456789, a group like "
+                                     "-1001234567890, or use Detect to fill it in automatically.")
+        os.environ["TELEGRAM_BOT_TOKEN"] = token
+        os.environ["TELEGRAM_CHAT_ID"] = chat_id
+        if persist:
+            try:
+                _env_upsert("TELEGRAM_BOT_TOKEN", token)
+                _env_upsert("TELEGRAM_CHAT_ID", chat_id)
+            except OSError:
+                pass                                     # runtime config still works this session
+        out = {"configured": True, "chat_id": chat_id, "token_hint": "…" + token[-4:]}
+        if do_test:
+            loop = asyncio.get_event_loop()
+            ok, desc = await loop.run_in_executor(None, TelegramSender(token, chat_id).test_connection)
+            out["tested"] = bool(ok)
+            out["message"] = desc
+        return out
+
+    @app.delete("/api/notify/telegram")
+    async def telegram_clear():
+        """Remove the Telegram token + chat ID (from this process and ./.env)."""
+        for var in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+            os.environ.pop(var, None)
+            try:
+                _env_remove(var)
+            except OSError:
+                pass
+        return {"configured": False}
+
     # ── AI SOC report (markdown) ────────────────────────────────────────
     @app.post("/api/report/{job_id}/ai")
     async def ai_report(job_id: str):
@@ -2008,6 +2190,47 @@ def create_app() -> FastAPI:
             _AI_COOLDOWN.pop(prov, None)   # user explicitly chose it — clear any cooldown
         else:
             raise HTTPException(400, f"Unknown provider '{prov}'. Use auto/{'/'.join(names)}.")
+        return _ai_status_payload()
+
+    @app.post("/api/ai/key")
+    async def ai_set_key(request: Request):
+        """Set a cloud provider's API key from the web UI. Applies immediately
+        (no restart) and, unless persist=false, is saved to ./.env so it survives
+        a restart. The local Ollama provider needs no key."""
+        body = await request.json()
+        prov = (body.get("provider") or "").strip().lower()
+        key = (body.get("key") or "").strip()
+        persist = body.get("persist", True)
+        envname = {n: e for n, e, _ in _PROVIDER_SPECS}.get(prov)
+        if prov == "ollama" or envname is None:
+            raise HTTPException(400, "Enter a key for Gemini, Groq, or Anthropic. "
+                                     "The local Ollama provider needs no API key.")
+        if not key or len(key) > 500 or "\n" in key or "\r" in key:
+            raise HTTPException(400, "That does not look like a valid API key.")
+        os.environ[envname] = key          # picked up instantly by every key lookup
+        if persist:
+            try:
+                _env_upsert(envname, key)
+            except OSError:
+                pass                        # runtime key still works for this session
+        _AI_COOLDOWN.pop(prov, None)
+        _AI_FORCED["provider"] = prov       # a key just entered → use it
+        return _ai_status_payload()
+
+    @app.delete("/api/ai/key/{provider}")
+    async def ai_clear_key(provider: str):
+        """Remove a stored API key (from this process and ./.env)."""
+        prov = provider.strip().lower()
+        envname = {n: e for n, e, _ in _PROVIDER_SPECS}.get(prov)
+        if prov == "ollama" or envname is None:
+            raise HTTPException(400, "Unknown provider.")
+        os.environ.pop(envname, None)
+        try:
+            _env_remove(envname)
+        except OSError:
+            pass
+        if _AI_FORCED.get("provider") == prov:
+            _AI_FORCED["provider"] = None   # don't stay forced on a now-keyless provider
         return _ai_status_payload()
 
     # ── NVD CVE lookup (real software banners → NIST NVD) ────────────────

@@ -11,7 +11,7 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3b82f6?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![Scapy](https://img.shields.io/badge/Scapy-packet%20engine-ef4444?style=for-the-badge&logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-78%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-229%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![GUI](https://img.shields.io/badge/100%25-GUI%20web%20app-3b82f6?style=for-the-badge&logo=googlechrome&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff%20clean-000000?style=for-the-badge&logo=ruff&logoColor=white)
 
@@ -39,10 +39,10 @@
 
 ## 📡 What is PacketIQ?
 
-**PacketIQ** is a defensive network-forensics platform for SOC analysts, threat hunters and incident responders. Feed it a packet capture (`.pcap` / `.pcapng` / `.cap`), a **Zeek `conn.log`**, or a **live interface**, and it produces a complete, evidence-backed analysis:
+**PacketIQ** is a defensive network-forensics platform for SOC analysts, threat hunters and incident responders. Feed it a packet capture (`.pcap` / `.pcapng` / `.cap`), a **Zeek `conn.log`**, a **NetFlow / IPFIX export**, or a **live interface**, and it produces a complete, evidence-backed analysis:
 
-- **20+ detectors** across recon, brute force, C2 beaconing, DNS/ICMP tunneling, credential exposure, TLS fingerprinting, file transfers and HTTP exploitation
-- **Real threat-intel enrichment** — every IP and domain is checked against live OSINT feeds (abuse.ch, Tor, Spamhaus)
+- **15 detection types** (across 12 detector modules) spanning recon, brute force, C2 beaconing, DNS/ICMP tunneling, credential exposure, TLS fingerprinting, file transfers and HTTP exploitation
+- **Real threat-intel enrichment** — every IP and domain is checked against real OSINT feeds (abuse.ch, Tor, Spamhaus) bundled as dated snapshots and refreshable with `packetiq feeds update`
 - **Attack-chain correlation** with **MITRE ATT&CK** and Lockheed-Martin kill-chain mapping
 - **Deployable detections** — pySigma-valid SIGMA rules, STIX 2.1 bundles, MISP push, evidence PCAP slices
 - **Three interfaces** — a rich terminal UI, a real-time FastAPI web app, and a local dashboard
@@ -60,9 +60,9 @@
 | Threat intel | hardcoded / made-up signatures | **real abuse.ch + Tor + Spamhaus feeds**, refreshable |
 | Attribution | "this is APT28 (92%)" from a port scan | **honest TTP-overlap score with disclaimers** |
 | Output | a wall of text | SIGMA (pySigma-valid), STIX, MISP, HTML report, evidence PCAP |
-| Inputs | PCAP only | **PCAP · Zeek conn.log · live capture** |
-| Detections | a few heuristics | **20+ detectors** incl. JA4, TLS certs, YARA, file carving |
-| Trust | unverifiable claims | **78 tests, CI, ruff-clean, fuzz-tested parser** |
+| Inputs | PCAP only | **PCAP · Zeek conn.log · NetFlow/IPFIX · live capture** |
+| Detections | a few heuristics | **15 detection types** incl. JA4, TLS certs, YARA, file carving |
+| Trust | unverifiable claims | **229 tests, CI, ruff-clean, fuzz-tested parser** |
 | Interface | terminal | **100% GUI web app — double-click to launch** |
 
 ---
@@ -96,7 +96,7 @@ docker compose up --build       # → http://localhost:8080
 
 Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` (created for you on first launch).
 
-> The core analysis needs **no API keys**. Keys are only for the optional AI copilot — the launcher creates `.env` for you; add a free `GEMINI_API_KEY` or `GROQ_API_KEY` there if you want the chat.
+> The core analysis needs **no API keys** and runs **fully offline** (the web UI bundles its own JS — no CDN). Keys are only for the optional AI copilot: click **⚙ Keys** in the copilot panel and paste a free `GEMINI_API_KEY` or `GROQ_API_KEY` right in the app — it applies **instantly, no restart** (or add it to `.env`). Prefer zero keys? Run a **local model with Ollama** — offline and private.
 
 <details>
 <summary>Developer / CLI install (optional)</summary>
@@ -104,7 +104,7 @@ Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` (crea
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev,yara,geoip]"                   # everything (tests, YARA, GeoIP)
-pytest                                                # run the 78-test suite
+pytest                                                # run the 229-test suite
 ```
 The CLI (`packetiq …`) is the same engine the web app uses — handy for scripting/CI, but not required.
 </details>
@@ -198,15 +198,15 @@ packetiq <command> [options]
 
 **Everything PacketIQ can do is in the browser — no terminal required.** A modern FastAPI single-page app with real-time WebSocket progress:
 
-- **Drag-and-drop upload** — `.pcap` / `.pcapng` / `.cap`, a Zeek `conn.log`, **or 2+ captures for a fused campaign**
+- **Drag-and-drop upload** — `.pcap` / `.pcapng` / `.cap`, a Zeek `conn.log`, a **NetFlow/IPFIX export**, **or 2+ captures for a fused campaign**
 - **Risk dashboard** — score, severity breakdown, protocol mix, top talkers
 - **Interactive connection graph** — force-directed, draggable, color-coded (internal / external / flagged)
-- **Packet inspector** — browse **every packet** with search; click any packet to see its layer/field tree + hex (Wireshark-style, but friendly), and **"Explain with AI"**
+- **Packet inspector** — browse **every packet** with search; click any packet to see its layer/field tree + hex (Wireshark-style, but friendly), and **"Explain with AI"**. Protocol + Info columns are decided by **payload inspection like Wireshark** (a bare SYN on :80 reads "TCP", a real handshake reads "TLS 1.2 Client Hello", etc.), not by port alone
 - **Threat events** table with evidence, confidence, a **precision grade** (Confirmed/High/Probable/Tentative) and an expandable **"Why was this flagged?"** panel (what · why · evidence · recommended action · MITRE), plus a **per-finding evidence-PCAP download (⬇)**
 - **Attack chains** with a **visual kill-chain pipeline**, a **MITRE ATT&CK coverage heatmap**, and a one-click **ATT&CK Navigator layer** export
 - **Threat-actor TTP overlap** (clearly labelled *not* attribution)
 - **Export & Share** panel — HTML report, **court-ready PDF report** (chain-of-custody + SHA-256 + ATT&CK coverage + per-finding reasoning), **AI SOC report (markdown)**, **ATT&CK Navigator layer**, SIGMA ZIP, STIX bundle, **MISP push**, evidence-PCAP carving
-- **Notifications** — test + send findings to Slack / email / webhook / Telegram, right from the panel
+- **Notifications** — **one-click ✈️ Connect Telegram** (paste a @BotFather token, it **auto-detects your chat ID** and sends a live test — no file editing), then test + send findings to Telegram / Slack / email / webhook right from the panel
 - **Threat Intel** panel — **dynamic per capture**: shows exactly which feed indicators (IOC IPs/domains, malicious JA3, known-malware hashes) matched *this* PCAP and on which hosts, above the loaded-feed inventory with **one-click "Update feeds"**
 - **Vulnerabilities** panel — one-click assessment that maps each host's observed software → **CPE** → **real NVD CVEs** (version-aware) → **CVSS** → **CISA KEV** (actively-exploited) → a vulnerability risk score, and **correlates observed exploit attempts against the target's real software** (attack seen + target vulnerable). All data from NVD + CISA; encrypted traffic exposes no banners
 - **History** panel — every past analysis, recorded locally
@@ -214,7 +214,7 @@ packetiq <command> [options]
 - **Timeline** with an activity sparkline
 - **AI copilot** chat panel (streaming, optional)
 
-> **100% feature parity with the CLI.** Single & multi-capture analysis, Zeek logs, live capture, SIGMA / STIX / MISP / HTML / AI reports, evidence PCAPs, threat-intel feeds, history, and alerts are all driveable from the browser — the CLI just shares the same engine for scripting/CI.
+> **100% feature parity with the CLI.** Single & multi-capture analysis, Zeek logs, NetFlow/IPFIX exports, live capture, SIGMA / STIX / MISP / HTML / AI reports, evidence PCAPs, threat-intel feeds, history, and alerts are all driveable from the browser — the CLI just shares the same engine for scripting/CI.
 
 ```bash
 packetiq webapp --host 0.0.0.0 --port 8080
@@ -341,8 +341,8 @@ dga_entropy_threshold = 3.8   # bits/char to suspect a DGA
 
 ```bash
 pip install -e ".[dev]"
-pytest                 # 174 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
-ruff check packetiq tests
+pytest                 # 229 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
+ruff check packetiq tools tests
 ```
 
 CI (GitHub Actions) runs **pytest + ruff + mypy across Python 3.9–3.12** on every push/PR. The parser is fuzz-tested against malformed/truncated captures, and generated SIGMA rules are validated with the real `pysigma` toolkit.
@@ -435,7 +435,7 @@ PacketIQ/
 │   ├── sandbox_test/              # end-to-end campaign runner + results.json
 │   └── assets/                    # images (bot avatar)
 ├── samples/generate_sample.py     # build a demo PCAP
-├── tests/                         # 202 pytest tests
+├── tests/                         # 229 pytest tests
 ├── .github/workflows/ci.yml       # CI (pytest + ruff + mypy)
 ├── PacketIQ.command · PacketIQ.bat · quickstart.sh   # double-click / one-command launchers
 ├── Dockerfile · docker-compose.yml

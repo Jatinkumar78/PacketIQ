@@ -80,45 +80,58 @@ def _severity_for(reason: str) -> Severity:
     return Severity.CRITICAL if reason.strip().lower() in _CRITICAL_FAMILIES else Severity.HIGH
 
 
+_TLS_STREAM_PORTS = (443, 8443, 4443, 8080, 993, 995, 465)
+
+
 class JA3Detector:
+
+    def begin(self) -> "JA3Detector":
+        """Prepare for a streaming (per-record) pass. Returns self so callers can
+        chain: `det = JA3Detector().begin()`. `active` is False when no JA3
+        threat-intel feed is available, so `feed` becomes a cheap no-op."""
+        self.blocklist = load_blocklist()
+        self.active = bool(self.blocklist)      # no feed → emit nothing, never guess
+        self.ja3_flows: dict[str, dict] = {}    # ja3_hash → {src, dst, port, count, sni}
+        return self
+
+    def feed(self, record: RawPacketRecord) -> None:
+        """Accumulate one packet record. Safe to call for every packet — it filters
+        internally, so this can share a single PCAP pass with other detectors."""
+        if not self.active or not record.raw_payload:
+            return
+        if record.dst_port not in _TLS_STREAM_PORTS and record.src_port not in _TLS_STREAM_PORTS:
+            return
+        parsed = _parse_client_hello(record.raw_payload)
+        if not parsed:
+            return
+        ja3_hash = _compute_ja3(parsed)
+        if ja3_hash not in self.ja3_flows:
+            self.ja3_flows[ja3_hash] = {
+                "src":   record.src_ip or "",
+                "dst":   record.dst_ip or "",
+                "port":  record.dst_port or 443,
+                "count": 0,
+                "sni":   parsed.get("sni", ""),
+                "ts":    record.timestamp,
+                "raw":   parsed,
+            }
+        self.ja3_flows[ja3_hash]["count"] += 1
 
     def detect_from_stream(
         self, stream: Generator[RawPacketRecord, None, None]
     ) -> list[DetectionEvent]:
         """Second-pass PCAP stream: extract JA3 hashes and flag known-bad ones."""
-        blocklist = load_blocklist()
-        if not blocklist:
-            # No real threat-intel feed available → emit nothing rather than
-            # guess. (See module docstring for how to supply a feed.)
+        self.begin()
+        if not self.active:
             return []
-
-        ja3_flows: dict[str, dict] = {}  # ja3_hash → {src, dst, port, count, sni}
-
         for record in stream:
-            if not record.raw_payload:
-                continue
-            # Only inspect traffic on common TLS ports
-            if record.dst_port not in (443, 8443, 4443, 8080, 993, 995, 465) and \
-               record.src_port not in (443, 8443, 4443, 8080, 993, 995, 465):
-                continue
+            self.feed(record)
+        return self.finalize()
 
-            parsed = _parse_client_hello(record.raw_payload)
-            if not parsed:
-                continue
-
-            ja3_hash = _compute_ja3(parsed)
-            if ja3_hash not in ja3_flows:
-                ja3_flows[ja3_hash] = {
-                    "src":   record.src_ip or "",
-                    "dst":   record.dst_ip or "",
-                    "port":  record.dst_port or 443,
-                    "count": 0,
-                    "sni":   parsed.get("sni", ""),
-                    "ts":    record.timestamp,
-                    "raw":   parsed,
-                }
-            ja3_flows[ja3_hash]["count"] += 1
-
+    def finalize(self) -> list[DetectionEvent]:
+        """Build events from accumulated JA3 flows."""
+        blocklist = getattr(self, "blocklist", {})
+        ja3_flows = getattr(self, "ja3_flows", {})
         events: list[DetectionEvent] = []
         for ja3_hash, meta in ja3_flows.items():
             reason = blocklist.get(ja3_hash)

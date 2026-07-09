@@ -6,10 +6,16 @@ graph — no external assets, no internet) from a completed analysis. Determinis
 and AI-free, so it works offline and in CI.
 
 The report is "court-ready": it carries a chain-of-custody header (capture file
-name/size/SHA-256, analysis time, tool version), an executive summary, MITRE
-ATT&CK coverage, per-finding explainability (why each finding was raised and the
-recommended action), and a print stylesheet so "Save as PDF" produces a clean,
-paginated, light-on-white document.
+name/size/SHA-256, analysis time, tool version), an executive summary, a full
+traffic-composition breakdown, top talkers / conversations / services, DNS &
+HTTP activity, observed software banners, MITRE ATT&CK coverage, per-finding
+explainability (why each finding was raised and the recommended action), a
+consolidated analyst action list, and a print stylesheet so "Save as PDF"
+produces a clean, paginated, light-on-white document.
+
+Every section is derived solely from the captured evidence — no value is
+inferred by a language model and nothing external is injected. The same capture
+always yields the same report.
 """
 
 from __future__ import annotations
@@ -18,19 +24,56 @@ import html
 import math
 from datetime import datetime
 
-from packetiq.utils.helpers import format_bytes, format_duration, is_private_ip
+from packetiq.utils.helpers import (
+    format_bytes,
+    format_duration,
+    get_service_name,
+    is_private_ip,
+)
 
 _SEV_COLOR = {"CRITICAL": "#dc2626", "HIGH": "#f59e0b", "MEDIUM": "#06b6d4", "LOW": "#22c55e"}
 _PREC_COLOR = {"Confirmed": "#16a34a", "High": "#16a34a", "Probable": "#d97706", "Tentative": "#64748b"}
+_SEV_RANK = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
 
 
 def _esc(v) -> str:
     return html.escape(str(v if v is not None else ""))
 
 
+def _pct(part: float, whole: float) -> float:
+    return (100.0 * part / whole) if whole else 0.0
+
+
+def _service_for(port) -> str:
+    """Human service name for a port number (falls back to the number)."""
+    try:
+        return get_service_name(int(port))
+    except (TypeError, ValueError):
+        return _esc(port)
+
+
+def _os_hint(ttl) -> str:
+    """Coarse passive OS family hint from an observed initial TTL (p0f-style).
+
+    This is a heuristic lead, not a fact: observed TTLs are decremented per hop,
+    so we bucket by the common initial values (64 / 128 / 255).
+    """
+    if not ttl:
+        return "—"
+    try:
+        t = int(ttl)
+    except (TypeError, ValueError):
+        return "—"
+    if t <= 64:
+        return "Linux/Unix/macOS (TTL≤64)"
+    if t <= 128:
+        return "Windows (TTL≤128)"
+    return "Router/appliance (TTL≤255)"
+
+
 def _network_svg(result, events) -> str:
     """Simple force-free circular network graph of the top talkers + flows."""
-    counts = {}
+    counts: dict = {}
     for ip, c in result.ip_src_counts.items():
         counts[ip] = counts.get(ip, 0) + c
     for ip, c in result.ip_dst_counts.items():
@@ -50,7 +93,7 @@ def _network_svg(result, events) -> str:
         ang = 2 * math.pi * i / n - math.pi / 2
         pos[ip] = (cx + R * math.cos(ang), cy + R * math.sin(ang))
 
-    edges = []
+    edges: list = []
     flows = sorted(result.flows.values(), key=lambda f: -f.bytes_total)
     for fl in flows:
         if fl.src_ip in pos and fl.dst_ip in pos and len(edges) < 40:
@@ -76,6 +119,294 @@ def _network_svg(result, events) -> str:
                  '<span class="dot" style="background:#f59e0b"></span>external '
                  '<span class="dot" style="background:#dc2626"></span>flagged</div>')
     return "".join(parts)
+
+
+# ── Traffic-composition sections (all grounded in ExtractionResult) ───────────
+
+def _traffic_composition(result) -> str:
+    protos = getattr(result, "protocol_counts", {}) or {}
+    total_pkts = getattr(result, "total_packets", 0) or 0
+    total_bytes = getattr(result, "total_bytes", 0) or 0
+    dur = max(0.0, getattr(result, "capture_end", 0.0) - getattr(result, "capture_start", 0.0))
+
+    total = sum(protos.values()) or 1
+    rows = []
+    for proto, cnt in sorted(protos.items(), key=lambda x: -x[1])[:12]:
+        share = _pct(cnt, total)
+        rows.append(
+            f"<tr><td>{_esc(proto)}</td><td class='num'>{cnt:,}</td>"
+            f"<td class='num'>{share:.1f}%</td>"
+            f"<td class='barcell'><span class='bar' style='width:{min(100.0, share):.1f}%'></span></td></tr>"
+        )
+    tbl = (
+        "<table><thead><tr><th>Protocol</th><th class='num'>Packets</th>"
+        "<th class='num'>Share</th><th>Distribution</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+        if rows else "<p class='muted'>No protocol data extracted.</p>"
+    )
+
+    # Derived throughput / size / connection health
+    avg_size = (total_bytes / total_pkts) if total_pkts else 0
+    pps = (total_pkts / dur) if dur else 0.0
+    bps = (total_bytes / dur) if dur else 0.0
+    opened = getattr(result, "open_connections", 0) or 0
+    completed = getattr(result, "completed_connections", 0) or 0
+    attempts = opened + completed
+    metrics = [
+        f"average packet size <b>{avg_size:,.0f}</b> bytes",
+        f"throughput <b>{pps:,.0f}</b> pkt/s (<b>{format_bytes(int(bps))}/s</b>)",
+    ]
+    if attempts:
+        comp = _pct(completed, attempts)
+        metrics.append(
+            f"TCP handshakes <b>{completed:,}</b> completed / <b>{opened:,}</b> unanswered "
+            f"(<b>{comp:.0f}%</b> completion"
+            + (" — a low completion rate is consistent with scanning/SYN floods)" if comp < 40 else ")")
+        )
+    return tbl + f"<p class='muted' style='margin-top:8px'>{' · '.join(metrics)}.</p>"
+
+
+def _top_talkers_table(result) -> str:
+    src = getattr(result, "ip_src_counts", {}) or {}
+    dst = getattr(result, "ip_dst_counts", {}) or {}
+    ttl = getattr(result, "src_ip_ttl", {}) or {}
+    combined: dict = {}
+    for ip, c in src.items():
+        combined[ip] = combined.get(ip, 0) + c
+    for ip, c in dst.items():
+        combined[ip] = combined.get(ip, 0) + c
+    if not combined:
+        return "<p class='muted'>No host activity recorded.</p>"
+    total = sum(combined.values()) or 1
+    rows = []
+    for ip, tot in sorted(combined.items(), key=lambda x: -x[1])[:12]:
+        scope = "internal" if is_private_ip(ip) else "external"
+        rows.append(
+            f"<tr><td>{_esc(ip)}</td>"
+            f"<td><span class='pill'>{scope}</span></td>"
+            f"<td class='num'>{src.get(ip, 0):,}</td>"
+            f"<td class='num'>{dst.get(ip, 0):,}</td>"
+            f"<td class='num'>{_pct(tot, total):.1f}%</td>"
+            f"<td class='muted'>{_esc(_os_hint(ttl.get(ip)))}</td></tr>"
+        )
+    return (
+        "<table><thead><tr><th>Host</th><th>Scope</th><th class='num'>Sent</th>"
+        "<th class='num'>Recv</th><th class='num'>Traffic</th><th>OS hint (passive)</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _conversations_table(result) -> str:
+    flows = getattr(result, "flows", {}) or {}
+    if not flows:
+        return "<p class='muted'>No conversations recorded.</p>"
+    top = sorted(flows.values(), key=lambda f: -getattr(f, "bytes_total", 0))[:15]
+    rows = []
+    for f in top:
+        a = f"{f.src_ip}:{f.src_port}" if f.src_port else f.src_ip
+        b = f"{f.dst_ip}:{f.dst_port}" if f.dst_port else f.dst_ip
+        svc = f.service or _service_for(f.dst_port)
+        rows.append(
+            f"<tr><td>{_esc(a)}</td><td>{_esc(b)}</td><td>{_esc(f.protocol)}</td>"
+            f"<td>{_esc(svc)}</td><td class='num'>{f.packets:,}</td>"
+            f"<td class='num'>{format_bytes(f.bytes_total)}</td>"
+            f"<td class='num'>{format_duration(f.duration)}</td></tr>"
+        )
+    return (
+        "<table><thead><tr><th>Source</th><th>Destination</th><th>Proto</th><th>Service</th>"
+        "<th class='num'>Packets</th><th class='num'>Bytes</th><th class='num'>Duration</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _services_table(result) -> str:
+    ports = getattr(result, "dst_port_counts", {}) or {}
+    if not ports:
+        return ""
+    total = sum(ports.values()) or 1
+    rows = []
+    for p, c in sorted(ports.items(), key=lambda x: -x[1])[:15]:
+        rows.append(
+            f"<tr><td class='num'>{_esc(p)}</td><td>{_esc(_service_for(p))}</td>"
+            f"<td class='num'>{c:,}</td><td class='num'>{_pct(c, total):.1f}%</td></tr>"
+        )
+    return (
+        "<h2>Service &amp; port usage</h2>"
+        "<table><thead><tr><th class='num'>Port</th><th>Service</th>"
+        "<th class='num'>Packets</th><th class='num'>Share</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _dns_table(result) -> str:
+    q = getattr(result, "dns_queries", []) or []
+    counts: dict = {}
+    for item in q:
+        name = item.get("qname", "") if isinstance(item, dict) else ""
+        if name:
+            counts[name] = counts.get(name, 0) + 1
+    if not counts:
+        return ""
+    rows = "".join(
+        f"<tr><td>{_esc(name)}</td><td class='num'>{c:,}</td></tr>"
+        for name, c in sorted(counts.items(), key=lambda x: -x[1])[:20]
+    )
+    return (
+        f"<h2>DNS activity ({len(counts)} unique names, {len(q):,} queries)</h2>"
+        "<table><thead><tr><th>Queried name</th><th class='num'>Count</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
+
+
+def _http_table(result) -> str:
+    reqs = getattr(result, "http_requests", []) or []
+    if not reqs:
+        return ""
+    rows = []
+    for r in reqs[:25]:
+        if not isinstance(r, dict):
+            continue
+        host = r.get("host", "") or ""
+        path = r.get("path", "") or ""
+        rows.append(
+            f"<tr><td>{_esc(r.get('method', ''))}</td><td>{_esc(host)}</td>"
+            f"<td>{_esc(path[:80])}</td><td>{_esc(r.get('src', ''))}</td></tr>"
+        )
+    more = f"<p class='muted'>… and {len(reqs) - 25:,} more request(s).</p>" if len(reqs) > 25 else ""
+    return (
+        f"<h2>HTTP activity ({len(reqs):,} request(s))</h2>"
+        "<table><thead><tr><th>Method</th><th>Host</th><th>Path</th><th>Source</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>{more}"
+    )
+
+
+def _software_table(result) -> str:
+    banners = getattr(result, "software_banners", []) or []
+    if not banners:
+        return ""
+    rows = []
+    for b in banners[:25]:
+        if not isinstance(b, dict):
+            continue
+        ips = ", ".join(b.get("ips", []) or [])
+        rows.append(
+            f"<tr><td>{_esc(b.get('source', ''))}</td><td>{_esc(b.get('value', ''))}</td>"
+            f"<td class='muted'>{_esc(ips)}</td></tr>"
+        )
+    return (
+        "<h2>Observed software (passive banners)</h2>"
+        "<p class='muted'>Version strings seen on the wire — the basis for the CVE lookup. "
+        "Nothing is inferred; only banners actually present in the traffic are listed.</p>"
+        "<table><thead><tr><th>Source</th><th>Banner</th><th>Host(s)</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _attribution_html(attrs) -> str:
+    if not attrs:
+        return ""
+    out = [
+        "<h2>Threat-actor TTP overlap</h2>",
+        "<p class='muted'>Behavioural overlap between the techniques observed here and documented "
+        "threat-actor profiles. This is a <b>similarity score, not an attribution</b> — many actors "
+        "share techniques, so treat this as an investigative lead only.</p>",
+    ]
+    for a in attrs[:5]:
+        name = getattr(a, "actor_name", "?")
+        conf = round((getattr(a, "confidence", 0.0) or 0.0) * 100)
+        origin = getattr(a, "origin", "") or ""
+        motive = getattr(a, "motivation", "") or ""
+        desc = getattr(a, "description", "") or ""
+        ttps = ", ".join(
+            (getattr(t, "value", t) if not isinstance(t, str) else t).replace("_", " ")
+            for t in (getattr(a, "matched_ttps", []) or [])
+        )
+        aliases = ", ".join(getattr(a, "aliases", []) or [])
+        meta = " · ".join(x for x in (origin, motive, (f"aka {aliases}" if aliases else "")) if x)
+        out.append(
+            f"<div class='finding'><h3>{_esc(name)} "
+            f"<span class='pill'>TTP overlap {conf}%</span></h3>"
+            + (f"<p class='muted'>{_esc(meta)}</p>" if meta else "")
+            + (f"<p>{_esc(desc)}</p>" if desc else "")
+            + (f"<p class='muted'>Matched techniques: {_esc(ttps)}</p>" if ttps else "")
+            + "</div>"
+        )
+    return "\n".join(out)
+
+
+def _recommendations(events, chains) -> str:
+    if not events:
+        return (
+            "<div class='summary' style='border-left-color:#22c55e'>No malicious activity was detected. "
+            "Retain this capture and its SHA-256 for the case record; no containment action is indicated "
+            "by this analysis.</div>"
+        )
+    from packetiq import triage
+
+    high = [e for e in events if e.severity.value in ("CRITICAL", "HIGH")]
+    focus = high or events
+    internal = sorted({e.dst_ip for e in focus if e.dst_ip and is_private_ip(e.dst_ip)} |
+                      {e.src_ip for e in focus if e.src_ip and is_private_ip(e.src_ip)})
+    external = sorted({e.dst_ip for e in focus if e.dst_ip and not is_private_ip(e.dst_ip)} |
+                      {e.src_ip for e in focus if e.src_ip and not is_private_ip(e.src_ip)})
+
+    steps = []
+    if internal:
+        steps.append(
+            f"<b>Contain &amp; triage</b> the involved internal host(s) — "
+            f"{_esc(', '.join(internal[:8]))}: isolate from the network, preserve volatile memory, "
+            "and review for persistence and lateral movement."
+        )
+    if external:
+        steps.append(
+            f"<b>Block &amp; hunt</b> the external indicator(s) at the perimeter — "
+            f"{_esc(', '.join(external[:8]))}: add to firewall/EDR blocklists and search historical "
+            "logs for prior contact. Confirm each is not shared infrastructure (CDN/hoster) first."
+        )
+    if chains:
+        steps.append(
+            f"<b>Reconstruct the incident</b>: {len(chains)} multi-stage chain(s) were correlated — "
+            "walk the kill-chain timeline to scope the full intrusion before closing."
+        )
+    steps.append(
+        "<b>Preserve evidence</b>: keep the original capture and this report (with its SHA-256) "
+        "for the case record and any downstream escalation."
+    )
+
+    # Deduplicated per-finding recommendations, highest severity first.
+    tips, seen = [], set()
+    for e in sorted(events, key=lambda ev: -_SEV_RANK.get(ev.severity.value, 0)):
+        et = e.event_type.value
+        if et in seen:
+            continue
+        seen.add(et)
+        rec = triage.explain(e).get("recommendation")
+        if rec:
+            tips.append(f"<b>{_esc(et.replace('_', ' '))}:</b> {_esc(rec)}")
+        if len(tips) >= 8:
+            break
+
+    ol = "".join(f"<li>{s}</li>" for s in steps)
+    ul = "".join(f"<li>{t}</li>" for t in tips)
+    return (
+        f"<ol class='recs'>{ol}</ol>"
+        + (f"<p class='muted'>Recommended handling by finding type:</p><ul class='recs'>{ul}</ul>" if ul else "")
+    )
+
+
+def _methodology() -> str:
+    return (
+        "<div class='summary' style='border-left-color:#3b82f6'>"
+        "<b>Scope &amp; method.</b> Every finding in this report is produced by PacketIQ's "
+        "<i>deterministic</i> detection engine — behavioural heuristics plus threat-intel/IOC, YARA, "
+        "JA3, and protocol-misuse detectors — operating solely on the captured packets. No external "
+        "data was injected and no content was inferred by a language model. Each finding is graded for "
+        "<i>precision</i> (Confirmed / Probable / Tentative), reflecting evidentiary strength, and mapped "
+        "to MITRE ATT&amp;CK where applicable. Threat-actor overlap, when shown, is a behavioural "
+        "similarity score and <b>not</b> a formal attribution. All timestamps are taken from the capture "
+        "itself, and the report is reproducible: the same capture always yields the same report."
+        "</div>"
+    )
 
 
 def _events_rows(events) -> str:
@@ -167,17 +498,41 @@ def _chains_html(chains) -> str:
 
 
 def _iocs_html(events, result) -> str:
-    ips = sorted({e.dst_ip for e in events if e.dst_ip and not is_private_ip(e.dst_ip)})
-    domains = sorted({e.evidence.get("domain") or e.evidence.get("indicator")
-                      for e in events if (e.evidence.get("domain") or
-                                          (e.evidence.get("kind") == "domain" and e.evidence.get("indicator")))})
-    domains = [d for d in domains if d]
-    parts = []
-    if ips:
-        parts.append("<b>IP indicators</b><ul>" + "".join(f"<li>{_esc(i)}</li>" for i in ips) + "</ul>")
-    if domains:
-        parts.append("<b>Domain indicators</b><ul>" + "".join(f"<li>{_esc(d)}</li>" for d in domains) + "</ul>")
-    return "".join(parts) or "<p class='muted'>No external IOCs extracted.</p>"
+    """External indicators extracted from flagged traffic, as a graded table."""
+    if not events:
+        return "<p class='muted'>No external IOCs extracted.</p>"
+    rows, seen = [], set()
+    for e in events:
+        sev = e.severity.value
+        etype = e.event_type.value.replace("_", " ")
+        for ip in (e.dst_ip, e.src_ip):
+            if ip and not is_private_ip(ip) and ("ip", ip) not in seen:
+                seen.add(("ip", ip))
+                rows.append((ip, "IPv4", etype, sev))
+        ev = getattr(e, "evidence", {}) or {}
+        dom = ev.get("domain") or (ev.get("indicator") if ev.get("kind") == "domain" else None)
+        if dom and ("dom", dom) not in seen:
+            seen.add(("dom", dom))
+            rows.append((dom, "Domain", etype, sev))
+        h = ev.get("sha256") or ev.get("md5") or ev.get("hash")
+        if h and ("h", h) not in seen:
+            seen.add(("h", h))
+            rows.append((h, "File hash", etype, sev))
+    if not rows:
+        return "<p class='muted'>No external IOCs extracted.</p>"
+    rows.sort(key=lambda r: -_SEV_RANK.get(r[3], 0))
+    body = "".join(
+        f"<tr><td><code>{_esc(ind)}</code></td><td>{_esc(kind)}</td><td>{_esc(src)}</td>"
+        f"<td><span class='badge' style='background:{_SEV_COLOR.get(sev,'#94a3b8')}'>{_esc(sev)}</span></td></tr>"
+        for ind, kind, src, sev in rows[:60]
+    )
+    return (
+        "<table><thead><tr><th>Indicator</th><th>Type</th><th>First flagged by</th>"
+        "<th>Severity</th></tr></thead>"
+        f"<tbody>{body}</tbody></table>"
+        "<p class='muted'>Indicators are extracted from flagged traffic only. Validate against the raw "
+        "capture before blocking — an external IP may be shared infrastructure (CDN / hoster).</p>"
+    )
 
 
 def _exec_summary(file_meta, result, events, chains, risk) -> str:
@@ -186,9 +541,15 @@ def _exec_summary(file_meta, result, events, chains, risk) -> str:
     top_types = Counter(e.event_type.value.replace("_", " ") for e in events
                         if e.severity.value in ("CRITICAL", "HIGH"))
     top = ", ".join(t for t, _ in top_types.most_common(3)) or "no high-severity findings"
+    protos = getattr(result, "protocol_counts", {}) or {}
+    proto_str = ", ".join(f"{p}" for p, _ in sorted(protos.items(), key=lambda x: -x[1])[:4]) or "—"
+    ext = getattr(result, "external_ips", set()) or set()
     return (
         f"PacketIQ analysed <b>{_esc(file_meta.get('filename',''))}</b> "
-        f"({result.total_packets:,} packets over {format_duration(max(0.0, result.capture_end - result.capture_start))}). "
+        f"({result.total_packets:,} packets, {format_bytes(getattr(result, 'total_bytes', 0))}, over "
+        f"{format_duration(max(0.0, result.capture_end - result.capture_start))}). "
+        f"Traffic was predominantly {_esc(proto_str)} across {len(getattr(result, 'flows', {}) or {}):,} "
+        f"conversation(s) with {len(ext):,} external host(s). "
         f"The overall risk is <b>{risk.score}/100 ({_esc(risk.tier)})</b>. "
         f"A total of <b>{len(events)} finding(s)</b> were raised "
         f"({sev.get('CRITICAL',0)} critical, {sev.get('HIGH',0)} high, "
@@ -285,16 +646,24 @@ def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
   table {{ width:100%; border-collapse:collapse; font-size:13px; }}
   th, td {{ text-align:left; padding:7px 8px; border-bottom:1px solid #1e293b; vertical-align:top; }}
   th {{ color:#94a3b8; font-weight:600; }}
-  .badge {{ color:#fff; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:700; }}
+  td.num, th.num {{ text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }}
+  .barcell {{ width:38%; min-width:120px; }}
+  .bar {{ display:inline-block; height:10px; min-width:2px; background:#3b82f6; border-radius:3px; vertical-align:middle;
+          -webkit-print-color-adjust:exact; print-color-adjust:exact; }}
+  .badge {{ color:#fff; padding:2px 8px; border-radius:6px; font-size:11px; font-weight:700;
+            -webkit-print-color-adjust:exact; print-color-adjust:exact; }}
   .pill {{ background:#1e293b; color:#cbd5e1; padding:2px 8px; border-radius:10px; font-size:11px; border:1px solid #334155; }}
   .chain, .finding {{ background:#111827; border:1px solid #1e293b; border-radius:10px; padding:12px 16px; margin-bottom:10px; }}
   .finding p {{ margin:5px 0; font-size:13px; }} .finding ul {{ margin:4px 0 4px 18px; color:#cbd5e1; font-size:12px; }}
+  ol.recs, ul.recs {{ margin:6px 0 6px 20px; font-size:13px; line-height:1.5; }}
+  ol.recs li, ul.recs li {{ margin:6px 0; }}
   .matrix {{ display:flex; gap:8px; overflow-x:auto; }}
   .tcol {{ min-width:150px; flex:1; }}
   .thead {{ font-size:11px; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:.04em; padding-bottom:6px; border-bottom:1px solid #1e293b; margin-bottom:6px; }}
   .tcell {{ background:#111827; border:1px solid #1e293b; border-radius:5px; padding:6px 8px; margin-bottom:5px; font-size:11px; }}
   .legend {{ font-size:11px; color:#94a3b8; margin-top:6px; }}
   .legend .dot {{ display:inline-block; width:9px; height:9px; border-radius:50%; margin:0 4px 0 10px; vertical-align:middle; }}
+  code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }}
   .foot {{ margin-top:30px; color:#64748b; font-size:11px; }}
   /* Print / Save-as-PDF: clean light document with sensible page breaks */
   @media print {{
@@ -307,6 +676,7 @@ def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
     .muted {{ color:#475569 !important; }} .rec {{ color:#047857 !important; }}
     .pill {{ background:#f1f5f9; color:#0f172a; }}
     .finding, .chain {{ page-break-inside:avoid; }}
+    table {{ page-break-inside:auto; }}
     a {{ color:#1d4ed8; text-decoration:none; }}
     .no-print {{ display:none !important; }}
   }}
@@ -328,10 +698,29 @@ def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
   <h2>Severity breakdown</h2>
   <p>{"".join(f"<span class='pill' style='border-left:4px solid {_SEV_COLOR.get(s,'#888')}'>&nbsp;{_esc(s)}: {sev_counts.get(s,0)}&nbsp;</span> " for s in ('CRITICAL','HIGH','MEDIUM','LOW'))}</p>
 
+  <h2>Traffic composition</h2>
+  {_traffic_composition(result)}
+
+  <h2>Top talkers</h2>
+  {_top_talkers_table(result)}
+
+  <h2>Top conversations</h2>
+  {_conversations_table(result)}
+
+  {_services_table(result)}
+
+  {_dns_table(result)}
+
+  {_http_table(result)}
+
+  {_software_table(result)}
+
   <h2>MITRE ATT&CK coverage</h2>
   {_attack_coverage_html(events)}
 
   {("<h2>Vulnerability assessment (NVD + CISA KEV)</h2>" + _vulns_html(vulns)) if vulns and vulns.get("products") else ""}
+
+  {_attribution_html(attrs)}
 
   <h2>Network graph (top talkers)</h2>
   {_network_svg(result, events)}
@@ -348,6 +737,12 @@ def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
 
   <h2>Indicators of compromise</h2>
   {_iocs_html(events, result)}
+
+  <h2>Analyst recommendations &amp; next steps</h2>
+  {_recommendations(events, chains)}
+
+  <h2>Methodology &amp; interpretation</h2>
+  {_methodology()}
 
   <p class="foot">Generated by PacketIQ v{_esc(tool_version)} · behavioural + threat-intel analysis ·
      all findings are derived from the captured evidence and should be validated against the raw capture.

@@ -28,8 +28,62 @@ def _ips(pkt):
     return "", ""
 
 
+# HTTP request methods (with trailing space) and the response prefix — used to
+# recognise a segment that actually *carries* an HTTP message, the way Wireshark
+# does, rather than labelling every packet on port 80 as "HTTP".
+_HTTP_METHODS = (b"GET ", b"POST ", b"HEAD ", b"PUT ", b"DELETE ", b"OPTIONS ",
+                 b"PATCH ", b"TRACE ", b"CONNECT ", b"PROPFIND ", b"MKCOL ")
+_TLS_VERSIONS = {0x00: "SSL 3.0", 0x01: "TLS 1.0", 0x02: "TLS 1.1",
+                 0x03: "TLS 1.2", 0x04: "TLS 1.3"}
+_TLS_RECORD_TYPES = {0x14: "Change Cipher Spec", 0x15: "Alert",
+                     0x16: "Handshake", 0x17: "Application Data"}
+_TLS_HANDSHAKE_TYPES = {
+    1: "Client Hello", 2: "Server Hello", 4: "New Session Ticket",
+    11: "Certificate", 12: "Server Key Exchange", 13: "Certificate Request",
+    14: "Server Hello Done", 15: "Certificate Verify", 16: "Client Key Exchange",
+    20: "Finished",
+}
+
+
+def _tcp_payload(pkt) -> bytes:
+    """First bytes of the TCP payload (empty for handshake/ACK-only segments)."""
+    try:
+        from scapy.layers.inet import TCP
+        if pkt.haslayer(TCP):
+            return bytes(pkt["TCP"].payload)[:64]
+    except Exception:
+        pass
+    return b""
+
+
+def _looks_http(payload: bytes) -> bool:
+    """True when a TCP segment begins with an HTTP request line or response."""
+    return bool(payload) and (payload.startswith(_HTTP_METHODS) or payload[:5] == b"HTTP/")
+
+
+def _looks_tls(payload: bytes) -> bool:
+    """True when a TCP segment begins with a plausible TLS/SSL record header:
+    content-type 20-23, legacy version 0x03 0x00-0x04, and a sane record length.
+    This mirrors Wireshark's heuristic so port is irrelevant (TLS on any port is
+    detected, and a bare SYN/ACK on :443 is *not* mislabelled as TLS)."""
+    if len(payload) < 5:
+        return False
+    ctype, vmaj, vmin = payload[0], payload[1], payload[2]
+    if ctype not in _TLS_RECORD_TYPES or vmaj != 0x03 or vmin > 0x04:
+        return False
+    rec_len = (payload[3] << 8) | payload[4]
+    return 0 < rec_len <= 0x4800   # max TLS record ≈ 2^14 + expansion
+
+
 def _proto_and_ports(pkt):
-    """Return (proto_label, sport, dport)."""
+    """Return (proto_label, sport, dport).
+
+    The protocol label matches what Wireshark shows in its Protocol column: the
+    *highest layer actually present in this packet*. A TCP segment is only called
+    "HTTP" or "TLS" when its payload really carries that protocol — handshake,
+    ACK and keep-alive segments stay "TCP" (regardless of port), and TLS/HTTP on
+    non-standard ports is still detected.
+    """
     from scapy.layers.dns import DNS
     from scapy.layers.inet import ICMP, TCP, UDP
     sport = dport = None
@@ -46,12 +100,12 @@ def _proto_and_ports(pkt):
         proto = "ARP"
     if pkt.haslayer(DNS):
         proto = "DNS"
-    elif pkt.haslayer("TLS") or dport in (443, 8443) or sport in (443, 8443):
-        if proto == "TCP":
-            proto = "TLS" if (pkt.haslayer("TLS")) else "TCP/443"
-    elif dport in (80, 8080) or sport in (80, 8080):
-        if proto == "TCP":
+    elif proto == "TCP":
+        payload = _tcp_payload(pkt)
+        if _looks_http(payload):
             proto = "HTTP"
+        elif _looks_tls(payload) or pkt.haslayer("TLS"):
+            proto = "TLS"
     return proto, sport, dport
 
 
@@ -87,6 +141,77 @@ def _protocol_tokens(pkt, proto, sport, dport, svc) -> list:
     return sorted(toks)
 
 
+def _tcp_flag_str(pkt) -> str:
+    """Wireshark-style flag list for a TCP segment, e.g. 'SYN, ACK'."""
+    try:
+        raw = str(pkt["TCP"].flags)
+    except Exception:
+        return ""
+    names = {"S": "SYN", "A": "ACK", "F": "FIN", "R": "RST",
+             "P": "PSH", "U": "URG", "E": "ECE", "C": "CWR"}
+    return ", ".join(names[c] for c in raw if c in names)
+
+
+def _tls_info(payload: bytes) -> str:
+    """Describe a TLS record like Wireshark: 'TLS 1.2 Client Hello'."""
+    ver = _TLS_VERSIONS.get(payload[2], "TLS")
+    rec = _TLS_RECORD_TYPES.get(payload[0], "Record")
+    if payload[0] == 0x16 and len(payload) >= 6:               # Handshake
+        return f"{ver} {_TLS_HANDSHAKE_TYPES.get(payload[5], rec)}"
+    return f"{ver} {rec}"
+
+
+_DNS_QTYPES = {1: "A", 2: "NS", 5: "CNAME", 6: "SOA", 12: "PTR", 15: "MX",
+               16: "TXT", 28: "AAAA", 33: "SRV", 65: "HTTPS", 255: "ANY"}
+
+
+def _dns_info(pkt) -> str:
+    """Wireshark-like DNS line: 'Standard query 0x1a2b A example.com'."""
+    from scapy.layers.dns import DNS
+    d = pkt[DNS]
+    kind = "Standard query response" if int(getattr(d, "qr", 0)) else "Standard query"
+    parts = [kind, f"0x{int(getattr(d, 'id', 0)):04x}"]
+    if getattr(d, "qd", None):
+        try:
+            qtype = _DNS_QTYPES.get(int(d.qd.qtype), str(int(d.qd.qtype)))
+            qname = d.qd.qname.decode("latin-1", "replace").rstrip(".")
+            parts.append(f"{qtype} {qname}")
+        except Exception:
+            pass
+    return " ".join(parts)[:120]
+
+
+def _wireshark_info(pkt, proto, sport, dport) -> str:
+    """A concise, Wireshark-like Info string for the packet list."""
+    try:
+        if proto == "DNS":
+            return _dns_info(pkt)
+        if proto in ("HTTP", "TLS"):
+            payload = _tcp_payload(pkt)
+            if proto == "HTTP" and payload:                    # request/status line
+                return payload.split(b"\r\n", 1)[0].decode("latin-1", "replace")[:120]
+            if proto == "TLS" and payload:
+                return _tls_info(payload)
+        if proto == "TCP" and sport is not None:
+            t = pkt["TCP"]
+            flags = _tcp_flag_str(pkt)
+            plen = len(bytes(t.payload))
+            bits = [f"{sport} → {dport}"]
+            if flags:
+                bits.append(f"[{flags}]")
+            bits.append(f"Seq={t.seq}")
+            if "A" in str(t.flags):
+                bits.append(f"Ack={t.ack}")
+            bits.append(f"Win={t.window} Len={plen}")
+            return " ".join(bits)[:120]
+    except Exception:
+        pass
+    try:
+        return pkt.summary()[:160]
+    except Exception:
+        return proto
+
+
 def summarize(pkt, index: int) -> dict:
     """One-line summary row for the packet list."""
     from packetiq.utils.helpers import ts_to_str
@@ -96,10 +221,7 @@ def summarize(pkt, index: int) -> dict:
     if dport:
         s = get_service_name(dport)
         svc = s if s != str(dport) else ""
-    try:
-        info = pkt.summary()
-    except Exception:
-        info = proto
+    info = _wireshark_info(pkt, proto, sport, dport)
     ts = float(getattr(pkt, "time", 0.0) or 0.0)
     return {
         "no": index,

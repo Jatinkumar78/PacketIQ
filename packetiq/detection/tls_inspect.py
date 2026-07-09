@@ -31,58 +31,78 @@ _MAX_FLOW_BYTES = 32 * 1024     # cap reassembly per flow
 _LONG_VALIDITY_DAYS = 825
 
 
-def analyze(pcap_path: str) -> list[DetectionEvent]:
+class TLSCertAccumulator:
+    """Reassembles server-side TLS bytes over a single PCAP pass, then extracts and
+    analyses leaf certificates in finalize(). `feed(pkt)` filters internally, so
+    this can share one PcapReader loop with other packet-level detectors."""
+
+    def __init__(self) -> None:
+        # server flow key (server_ip, server_port, client_ip) -> accumulated bytes
+        self.buffers: dict[tuple, bytearray] = defaultdict(bytearray)
+        self.done: set = set()
+        self.meta: dict[tuple, dict] = {}
+
+    def feed(self, pkt) -> None:
+        if not pkt.haslayer(TCP):
+            return
+        if pkt.haslayer(IP):
+            src, dst = pkt[IP].src, pkt[IP].dst
+        elif pkt.haslayer(IPv6):
+            src, dst = pkt[IPv6].src, pkt[IPv6].dst
+        else:
+            return
+        tcp = pkt[TCP]
+        # server = the side on a TLS port (it sends the certificate)
+        if tcp.sport in _TLS_PORTS:
+            server_ip, server_port, client_ip = src, tcp.sport, dst
+        else:
+            return
+        key = (server_ip, server_port, client_ip)
+        if key in self.done:
+            return
+        payload = bytes(tcp.payload)
+        if not payload:
+            return
+        buf = self.buffers[key]
+        buf += payload
+        self.meta.setdefault(key, {"ts": float(pkt.time)})
+        if len(buf) > _MAX_FLOW_BYTES:
+            self.done.add(key)
+
+    def finalize(self) -> list[DetectionEvent]:
+        events: list[DetectionEvent] = []
+        seen_certs: set = set()
+        for key, buf in self.buffers.items():
+            der = _extract_leaf_cert(bytes(buf))
+            if not der:
+                continue
+            ev = _analyze_cert(der, key, self.meta.get(key, {}).get("ts", 0.0), seen_certs)
+            if ev:
+                events.append(ev)
+        return events
+
+
+def make_accumulator() -> Optional["TLSCertAccumulator"]:
+    """A per-packet accumulator, or None when cert analysis is unavailable
+    (`cryptography` is required — we never guess certificates without it)."""
     try:
         from cryptography import x509  # noqa: F401
     except Exception:
+        return None
+    return TLSCertAccumulator()
+
+
+def analyze(pcap_path: str) -> list[DetectionEvent]:
+    acc = make_accumulator()
+    if acc is None:
         return []   # cert analysis unavailable — never guess
-
-    # server flow key (server_ip, server_port, client_ip) -> accumulated bytes
-    buffers: dict[tuple, bytearray] = defaultdict(bytearray)
-    done: set = set()
-    meta: dict[tuple, dict] = {}
-
     try:
         with PcapReader(pcap_path) as reader:
             for pkt in reader:
-                if not pkt.haslayer(TCP):
-                    continue
-                if pkt.haslayer(IP):
-                    src, dst = pkt[IP].src, pkt[IP].dst
-                elif pkt.haslayer(IPv6):
-                    src, dst = pkt[IPv6].src, pkt[IPv6].dst
-                else:
-                    continue
-                tcp = pkt[TCP]
-                # server = the side on a TLS port (it sends the certificate)
-                if tcp.sport in _TLS_PORTS:
-                    server_ip, server_port, client_ip = src, tcp.sport, dst
-                else:
-                    continue
-                key = (server_ip, server_port, client_ip)
-                if key in done:
-                    continue
-                payload = bytes(tcp.payload)
-                if not payload:
-                    continue
-                buf = buffers[key]
-                buf += payload
-                meta.setdefault(key, {"ts": float(pkt.time)})
-                if len(buf) > _MAX_FLOW_BYTES:
-                    done.add(key)
+                acc.feed(pkt)
     except Exception:
         return []
-
-    events: list[DetectionEvent] = []
-    seen_certs: set = set()
-    for key, buf in buffers.items():
-        der = _extract_leaf_cert(bytes(buf))
-        if not der:
-            continue
-        ev = _analyze_cert(der, key, meta.get(key, {}).get("ts", 0.0), seen_certs)
-        if ev:
-            events.append(ev)
-    return events
+    return acc.finalize()
 
 
 def _extract_leaf_cert(server_bytes: bytes) -> Optional[bytes]:

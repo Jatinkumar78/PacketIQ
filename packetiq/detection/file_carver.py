@@ -45,107 +45,120 @@ _MAGIC = [
 ]
 
 
-def analyze(pcap_path: str) -> list[DetectionEvent]:
-    # flow direction key (src, sport, dst, dport) -> list[(seq, payload)]
-    segments: dict[tuple, list] = defaultdict(list)
-    sizes: dict[tuple, int] = defaultdict(int)
-    meta: dict[tuple, dict] = {}
+class FileCarverAccumulator:
+    """Collects server→client TCP segments over a single PCAP pass, then reassembles
+    and carves files in finalize(). `feed(pkt)` filters internally, so this can share
+    one PcapReader loop with other packet-level detectors."""
 
+    def __init__(self) -> None:
+        # flow direction key (src, sport, dst, dport) -> list[(seq, payload)]
+        self.segments: dict[tuple, list] = defaultdict(list)
+        self.sizes: dict[tuple, int] = defaultdict(int)
+        self.meta: dict[tuple, dict] = {}
+
+    def feed(self, pkt) -> None:
+        if not pkt.haslayer(TCP):
+            return
+        if pkt.haslayer(IP):
+            src, dst = pkt[IP].src, pkt[IP].dst
+        elif pkt.haslayer(IPv6):
+            src, dst = pkt[IPv6].src, pkt[IPv6].dst
+        else:
+            return
+        tcp = pkt[TCP]
+        # we want server->client (download) streams on file-bearing ports
+        if tcp.sport not in (_HTTP_PORTS | _FTP_DATA_PORTS):
+            return
+        payload = bytes(tcp.payload)
+        if not payload:
+            return
+        key = (src, tcp.sport, dst, tcp.dport)
+        if self.sizes[key] >= _MAX_STREAM_BYTES:
+            return
+        self.segments[key].append((int(tcp.seq), payload))
+        self.sizes[key] += len(payload)
+        self.meta.setdefault(key, {"ts": float(pkt.time)})
+
+    def finalize(self) -> list[DetectionEvent]:
+        events: list[DetectionEvent] = []
+        seen_hashes: set = set()
+        seen_yara: set = set()
+
+        store = _load_store()
+        from packetiq.detection import yara_scan
+        yara_on = yara_scan.available()
+
+        for key, segs in self.segments.items():
+            stream = _reassemble(segs)
+            if len(stream) < _MIN_FILE_BYTES:
+                continue
+            src, sport, dst, dport = key
+
+            # ── YARA over the reassembled stream (first 512 KB) ─────────────
+            if yara_on:
+                for hit in yara_scan.scan_bytes(stream[:512 * 1024]):
+                    k = (src, dst, hit["rule"])
+                    if k in seen_yara:
+                        continue
+                    seen_yara.add(k)
+                    try:
+                        sev = Severity[hit["severity"]]
+                    except KeyError:
+                        sev = Severity.HIGH
+                    events.append(_event(
+                        sev, dst, src, sport,
+                        f"YARA rule '{hit['rule']}' matched traffic from {src} — {hit['description']}",
+                        {"yara_rule": hit["rule"], "description": hit["description"],
+                         "tags": hit["tags"], "server": src},
+                        self.meta.get(key, {}).get("ts", 0.0),
+                    ))
+
+            is_http = sport in _HTTP_PORTS
+            body = _http_body(stream) if is_http else stream
+            if not body or len(body) < _MIN_FILE_BYTES:
+                continue
+
+            ftype, is_exe = _identify(body)
+            if ftype is None:
+                continue
+
+            sha = hashlib.sha256(body).hexdigest()
+            if sha in seen_hashes:
+                continue
+            seen_hashes.add(sha)
+
+            rep = store.lookup_hash(sha) if store else None
+            client = dst   # server is src here (download direction)
+            if rep:
+                events.append(_event(
+                    Severity.CRITICAL, client, src, sport,
+                    f"Known-malicious file downloaded from {src} — {rep.label} "
+                    f"({ftype}, {len(body):,} bytes)",
+                    {"sha256": sha, "file_type": ftype, "size": len(body),
+                     "source": rep.source, "label": rep.label, "server": src},
+                    self.meta.get(key, {}).get("ts", 0.0),
+                ))
+            elif is_exe and not is_private_ip(src):
+                events.append(_event(
+                    Severity.MEDIUM, client, src, sport,
+                    f"Executable file transfer over cleartext from {src} "
+                    f"({ftype}, {len(body):,} bytes) — review SHA-256",
+                    {"sha256": sha, "file_type": ftype, "size": len(body), "server": src},
+                    self.meta.get(key, {}).get("ts", 0.0),
+                ))
+
+        return events
+
+
+def analyze(pcap_path: str) -> list[DetectionEvent]:
+    acc = FileCarverAccumulator()
     try:
         with PcapReader(pcap_path) as reader:
             for pkt in reader:
-                if not pkt.haslayer(TCP):
-                    continue
-                if pkt.haslayer(IP):
-                    src, dst = pkt[IP].src, pkt[IP].dst
-                elif pkt.haslayer(IPv6):
-                    src, dst = pkt[IPv6].src, pkt[IPv6].dst
-                else:
-                    continue
-                tcp = pkt[TCP]
-                # we want server->client (download) streams on file-bearing ports
-                if tcp.sport not in (_HTTP_PORTS | _FTP_DATA_PORTS):
-                    continue
-                payload = bytes(tcp.payload)
-                if not payload:
-                    continue
-                key = (src, tcp.sport, dst, tcp.dport)
-                if sizes[key] >= _MAX_STREAM_BYTES:
-                    continue
-                segments[key].append((int(tcp.seq), payload))
-                sizes[key] += len(payload)
-                meta.setdefault(key, {"ts": float(pkt.time)})
+                acc.feed(pkt)
     except Exception:
         return []
-
-    events: list[DetectionEvent] = []
-    seen_hashes: set = set()
-    seen_yara: set = set()
-
-    store = _load_store()
-    from packetiq.detection import yara_scan
-    yara_on = yara_scan.available()
-
-    for key, segs in segments.items():
-        stream = _reassemble(segs)
-        if len(stream) < _MIN_FILE_BYTES:
-            continue
-        src, sport, dst, dport = key
-
-        # ── YARA over the reassembled stream (first 512 KB) ─────────────
-        if yara_on:
-            for hit in yara_scan.scan_bytes(stream[:512 * 1024]):
-                k = (src, dst, hit["rule"])
-                if k in seen_yara:
-                    continue
-                seen_yara.add(k)
-                try:
-                    sev = Severity[hit["severity"]]
-                except KeyError:
-                    sev = Severity.HIGH
-                events.append(_event(
-                    sev, dst, src, sport,
-                    f"YARA rule '{hit['rule']}' matched traffic from {src} — {hit['description']}",
-                    {"yara_rule": hit["rule"], "description": hit["description"],
-                     "tags": hit["tags"], "server": src},
-                    meta.get(key, {}).get("ts", 0.0),
-                ))
-
-        is_http = sport in _HTTP_PORTS
-        body = _http_body(stream) if is_http else stream
-        if not body or len(body) < _MIN_FILE_BYTES:
-            continue
-
-        ftype, is_exe = _identify(body)
-        if ftype is None:
-            continue
-
-        sha = hashlib.sha256(body).hexdigest()
-        if sha in seen_hashes:
-            continue
-        seen_hashes.add(sha)
-
-        hit = store.lookup_hash(sha) if store else None
-        client = dst   # server is src here (download direction)
-        if hit:
-            events.append(_event(
-                Severity.CRITICAL, client, src, sport,
-                f"Known-malicious file downloaded from {src} — {hit.label} "
-                f"({ftype}, {len(body):,} bytes)",
-                {"sha256": sha, "file_type": ftype, "size": len(body),
-                 "source": hit.source, "label": hit.label, "server": src},
-                meta.get(key, {}).get("ts", 0.0),
-            ))
-        elif is_exe and not is_private_ip(src):
-            events.append(_event(
-                Severity.MEDIUM, client, src, sport,
-                f"Executable file transfer over cleartext from {src} "
-                f"({ftype}, {len(body):,} bytes) — review SHA-256",
-                {"sha256": sha, "file_type": ftype, "size": len(body), "server": src},
-                meta.get(key, {}).get("ts", 0.0),
-            ))
-
-    return events
+    return acc.finalize()
 
 
 def _load_store():

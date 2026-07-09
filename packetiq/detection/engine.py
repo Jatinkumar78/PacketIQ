@@ -70,34 +70,62 @@ class DetectionEngine:
         _step("http_inspection")
         events.extend(http_inspect.detect(result))
 
-        # ── Pass 2: Payload-based detectors (second PCAP stream) ─────────
+        # ── Pass 2: RawPacketRecord detectors — ONE shared PCAP stream ───
+        # credential exposure + JA3 both consume RawPacketRecord, so we parse the
+        # capture once and feed both, instead of parsing it twice.
         _step("credential_exposure")
+        cred_events: list[DetectionEvent] = []
+        cred_seen: set = set()
+        ja3_det = ja3.JA3Detector().begin()
         try:
-            parser = PCAPParser(pcap_path)
-            events.extend(credential.detect_from_stream(parser.stream()))
+            for record in PCAPParser(pcap_path).stream():
+                credential.scan_record(record, cred_seen, cred_events)
+                ja3_det.feed(record)
+            events.extend(cred_events)
         except Exception:
             pass
 
         _step("ja3_fingerprinting")
         try:
-            parser2 = PCAPParser(pcap_path)
-            events.extend(ja3.JA3Detector().detect_from_stream(parser2.stream()))
+            events.extend(ja3_det.finalize())
         except Exception:
             pass
 
+        # ── Pass 3: Raw-packet detectors — ONE shared scapy stream ───────
+        # TLS certificate inspection + file carving both stream raw packets;
+        # share a single PcapReader pass rather than reading the file twice.
         _step("tls_inspection")
         try:
             from packetiq.detection import tls_inspect
-            events.extend(tls_inspect.analyze(pcap_path))
+            tls_acc = tls_inspect.make_accumulator()
         except Exception:
-            pass
-
+            tls_acc = None
         _step("file_carving")
         try:
             from packetiq.detection import file_carver
-            events.extend(file_carver.analyze(pcap_path))
+            carver_acc = file_carver.FileCarverAccumulator()
+        except Exception:
+            carver_acc = None
+        try:
+            from scapy.all import PcapReader
+            with PcapReader(pcap_path) as reader:
+                for pkt in reader:
+                    if tls_acc is not None:
+                        tls_acc.feed(pkt)
+                    if carver_acc is not None:
+                        carver_acc.feed(pkt)
         except Exception:
             pass
+        if tls_acc is not None:
+            try:
+                events.extend(tls_acc.finalize())
+            except Exception:
+                pass
+        if carver_acc is not None:
+            try:
+                events.extend(carver_acc.finalize())
+            except Exception:
+                pass
 
         # ── Threat-intel enrichment (real OSINT feeds) ───────────────────
         _step("ioc_enrichment")

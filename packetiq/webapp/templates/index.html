@@ -4,8 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PacketIQ — Network Intelligence Platform</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+<!-- Front-end libraries are bundled locally (no CDN) so the app runs fully offline. -->
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/vendor/marked.min.js"></script>
 <style>
 /* ── Reset & Variables ── */
 *{box-sizing:border-box;margin:0;padding:0}
@@ -835,11 +836,11 @@ tbody tr:hover td{background:var(--surface2)}
           <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6H16a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
         </svg>
         <h3>Drop a PCAP / PCAPNG file here</h3>
-        <p style="margin-top:6px">Supports .pcap · .pcapng · .cap · Zeek conn.log &nbsp;·&nbsp; Max 10 GB</p>
+        <p style="margin-top:6px">Supports .pcap · .pcapng · .cap · Zeek conn.log · NetFlow/IPFIX &nbsp;·&nbsp; Max 10 GB</p>
         <p style="margin-top:4px;font-size:12px;opacity:.7">Select 2+ captures for a fused campaign analysis</p>
         <p style="margin-top:10px;font-size:12px;color:rgba(139,163,191,.5)">or click to browse</p>
       </div>
-      <input type="file" id="file-input" accept=".pcap,.pcapng,.cap,.log,.tsv,.json" multiple style="display:none">
+      <input type="file" id="file-input" accept=".pcap,.pcapng,.cap,.log,.tsv,.json,.netflow,.nfcapd,.nf,.ipfix,.flows" multiple style="display:none">
 
       <div class="sel-file" id="sel-file">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="color:var(--success);flex-shrink:0">
@@ -1262,12 +1263,13 @@ tbody tr:hover td{background:var(--surface2)}
             <span class="result-count" id="notify-channels">checking channels…</span>
           </div>
           <div style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-primary" onclick="openTelegram()">✈️ Connect Telegram</button>
             <button class="btn btn-secondary" onclick="testNotify()">🔔 Send test alert</button>
-            <button class="btn btn-primary" onclick="sendFindings()">📣 Send these findings to alerts</button>
+            <button class="btn btn-secondary" onclick="sendFindings()">📣 Send these findings</button>
             <span id="notify-result" style="font-size:12px;color:var(--text-sub)"></span>
           </div>
           <div style="padding:0 16px 14px;font-size:12px;color:var(--text-sub)">
-            Configure channels in <code>.env</code>: <code>SLACK_WEBHOOK_URL</code>, <code>TELEGRAM_BOT_TOKEN</code>+<code>TELEGRAM_CHAT_ID</code>, SMTP (<code>SMTP_HOST</code>, <code>ALERT_EMAIL_TO</code>…), or <code>ALERT_WEBHOOK_URL</code>.
+            One-click <strong>Connect Telegram</strong> above — no file editing. Other channels (Slack, SMTP e-mail, generic webhook) are set in <code>.env</code>: <code>SLACK_WEBHOOK_URL</code>, <code>SMTP_HOST</code>+<code>ALERT_EMAIL_TO</code>, or <code>ALERT_WEBHOOK_URL</code>.
           </div>
         </div>
       </div>
@@ -1438,6 +1440,65 @@ tbody tr:hover td{background:var(--surface2)}
 <!-- ══════════════════════════════════════════════
      AI CHAT PANEL
 ══════════════════════════════════════════════ -->
+<!-- AI provider / API-key settings modal (top-level so it isn't clipped by the chat panel) -->
+<div id="ai-settings-overlay" onclick="if(event.target===this)closeAiSettings()"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:var(--bg-1,#0d1117);border:1px solid var(--border);border-radius:12px;max-width:540px;width:92%;max-height:88vh;overflow:auto;padding:20px 22px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <h3 style="margin:0;font-size:16px">AI Copilot — Providers &amp; Keys</h3>
+      <button onclick="closeAiSettings()" title="Close" style="background:none;border:none;color:var(--text-sub);font-size:22px;line-height:1;cursor:pointer">×</button>
+    </div>
+    <p style="color:var(--text-sub);font-size:12px;margin:0 0 14px">Enter a key below — it applies <strong>immediately, no restart</strong>. The core analysis is 100% offline; the AI copilot is optional.</p>
+    <div id="ai-settings-body"></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-sub);margin-top:12px">
+      <input type="checkbox" id="ai-key-persist" checked> Remember on this machine (save to <code>.env</code>)
+    </label>
+    <div id="ai-settings-msg" style="font-size:12px;margin-top:10px;min-height:16px"></div>
+  </div>
+</div>
+
+<!-- Telegram guided-setup modal -->
+<div id="tg-overlay" onclick="if(event.target===this)closeTelegram()"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:var(--bg-1,#0d1117);border:1px solid var(--border);border-radius:12px;max-width:560px;width:94%;max-height:90vh;overflow:auto;padding:20px 22px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <h3 style="margin:0;font-size:16px">✈️ Connect Telegram Alerts</h3>
+      <button onclick="closeTelegram()" title="Close" style="background:none;border:none;color:var(--text-sub);font-size:22px;line-height:1;cursor:pointer">×</button>
+    </div>
+    <p style="color:var(--text-sub);font-size:12px;margin:0 0 12px">Get HIGH/CRITICAL findings pushed to your phone. Setup takes ~1 minute — no file editing.</p>
+
+    <div id="tg-status" style="font-size:12px;margin:0 0 12px;padding:8px 10px;border-radius:8px;background:var(--surface2,#161b22);color:var(--text-sub)">Checking…</div>
+
+    <ol style="font-size:12.5px;color:var(--text-sub);line-height:1.6;margin:0 0 14px;padding-left:20px">
+      <li>In Telegram, open <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:#3b82f6">@BotFather</a> → send <code>/newbot</code> → copy the <strong>token</strong> it gives you.</li>
+      <li>Paste the token below, then open your new bot and send it any message (e.g. “hi”).</li>
+      <li>Click <strong>Detect chat</strong> to fill your chat ID automatically, then <strong>Save &amp; test</strong>.</li>
+    </ol>
+
+    <label style="display:block;font-size:12px;color:var(--text-sub);margin-bottom:4px">Bot token</label>
+    <input id="tg-token" type="text" spellcheck="false" autocomplete="off" placeholder="123456789:AA…"
+           style="width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2,#161b22);color:var(--text);font-family:monospace;font-size:12px;margin-bottom:10px">
+
+    <label style="display:block;font-size:12px;color:var(--text-sub);margin-bottom:4px">Chat ID</label>
+    <div style="display:flex;gap:8px;margin-bottom:6px">
+      <input id="tg-chat" type="text" spellcheck="false" autocomplete="off" placeholder="e.g. 123456789 — or click Detect →"
+             style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2,#161b22);color:var(--text);font-family:monospace;font-size:12px">
+      <button class="btn btn-secondary btn-sm" onclick="detectChat()" id="tg-detect-btn" style="white-space:nowrap">🔍 Detect chat</button>
+    </div>
+    <div id="tg-chats" style="font-size:12px;margin:0 0 10px"></div>
+
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-sub);margin-bottom:12px">
+      <input type="checkbox" id="tg-persist" checked> Remember on this machine (save to <code>.env</code>)
+    </label>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-primary" onclick="saveTelegram()" id="tg-save-btn">💾 Save &amp; test</button>
+      <button class="btn btn-secondary btn-sm" onclick="removeTelegram()" id="tg-remove-btn" style="display:none">🗑 Remove</button>
+      <span id="tg-msg" style="font-size:12px;min-height:16px"></span>
+    </div>
+  </div>
+</div>
+
 <button class="chat-fab" id="chat-fab" onclick="openChat()" title="AI Copilot">
   <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
     <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
@@ -1471,6 +1532,8 @@ tbody tr:hover td{background:var(--surface2)}
       <option value="ollama">Local (Ollama)</option>
     </select>
     <span id="ai-provider-active" style="color:var(--text-sub);flex:1"></span>
+    <button onclick="openAiSettings()" title="Enter API keys / configure AI providers"
+      style="background:var(--bg-2,#11161c);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 9px;font-size:12px;cursor:pointer;white-space:nowrap">⚙ Keys</button>
   </div>
 
   <div class="chat-quick">
@@ -1482,17 +1545,12 @@ tbody tr:hover td{background:var(--surface2)}
   </div>
 
   <div id="chat-no-key" class="chat-no-key" style="display:none">
-    ⚠ <strong>No AI API key configured.</strong><br>
-    Add one of these <strong>free</strong> options to your <code>.env</code> file, then restart:<br><br>
-    <strong>Option 1 — Google Gemini (free):</strong><br>
-    Get key at <strong>aistudio.google.com</strong> → API Keys<br>
-    <code>GEMINI_API_KEY=AIzaxxxxxxxxxx</code><br><br>
-    <strong>Option 2 — Groq (free, super fast):</strong><br>
-    Get key at <strong>console.groq.com</strong> → API Keys<br>
-    <code>GROQ_API_KEY=gsk_xxxxxxxxxx</code><br><br>
-    <strong>Option 3 — Local model (no key, fully offline):</strong><br>
-    Install <strong>Ollama</strong> → <code>ollama pull qwen2.5:7b-instruct</code> → <code>ollama serve</code><br>
-    Your PCAPs never leave your machine. No key, no rate limits.
+    ⚠ <strong>The AI copilot isn't configured yet.</strong> It's optional — the full analysis already ran offline.<br><br>
+    <button onclick="openAiSettings()" class="btn btn-primary btn-sm">🔑 Add an API key</button>
+    &nbsp;— paste a <strong>free</strong> Gemini or Groq key right in the app (applies instantly, no restart).<br><br>
+    Or stay fully offline with a <strong>local model</strong>: install <strong>Ollama</strong>, then
+    <code>ollama pull qwen2.5:7b-instruct</code>. Your captures never leave your machine.<br>
+    <span style="font-size:12px;color:var(--text-sub)">Free keys: aistudio.google.com (Gemini) · console.groq.com (Groq)</span>
   </div>
 
   <div class="chat-messages" id="chat-messages">
@@ -1554,7 +1612,7 @@ function pickFile(f){
   if(!f) return;
   selectedFiles = [];
   const ext = f.name.split('.').pop().toLowerCase();
-  if(!['pcap','pcapng','cap','log','tsv','json'].includes(ext)) return showErr('Upload a capture (.pcap/.pcapng/.cap) or a Zeek conn.log (.log/.tsv/.json).');
+  if(!['pcap','pcapng','cap','log','tsv','json','netflow','nfcapd','nf','ipfix','flows'].includes(ext)) return showErr('Upload a capture (.pcap/.pcapng/.cap), a Zeek conn.log (.log/.tsv/.json), or a NetFlow/IPFIX export (.netflow/.nfcapd/.ipfix).');
   if(f.size > 10*1024*1024*1024) return showErr('File exceeds 10 GB limit.');
   hideErr(); selectedFile = f;
   document.getElementById('sel-name').textContent = f.name;
@@ -2381,22 +2439,22 @@ async function _fetchPackets(append){
 /* Wireshark-style per-protocol row colouring (subtle tints that work on dark+light). */
 function pkColor(p){
   const pr=(p.proto||'').toUpperCase(), info=(p.info||'');
-  if(/(\bRST\b|\bR\s*$|\bRA\s*$)/.test(info)) return {bg:'rgba(239,68,68,.16)', fg:'#ef4444'};   // reset / error
+  if(/\bRST\b/.test(info))          return {bg:'rgba(239,68,68,.16)', fg:'#ef4444'};   // reset / error
   if(pr==='DNS')                    return {bg:'rgba(59,130,246,.15)', fg:'#3b82f6'};
   if(pr==='HTTP')                   return {bg:'rgba(16,185,129,.14)', fg:'#10b981'};
-  if(pr==='TLS'||pr==='TCP/443')    return {bg:'rgba(139,92,246,.15)', fg:'#8b5cf6'};
+  if(pr==='TLS')                    return {bg:'rgba(139,92,246,.15)', fg:'#8b5cf6'};
   if(pr==='ARP')                    return {bg:'rgba(234,179,8,.16)',  fg:'#eab308'};
   if(pr==='ICMP')                   return {bg:'rgba(244,114,182,.15)',fg:'#f472b6'};
   if(pr==='UDP')                    return {bg:'rgba(6,182,212,.13)',  fg:'#06b6d4'};
   if(pr==='TCP'){
-    if(/(\bS\s*$|\bSA\s*$)/.test(info))  return {bg:'rgba(148,163,184,.16)', fg:'#94a3b8'};  // handshake
-    if(/(\bF\s*$|\bFA\s*$)/.test(info))  return {bg:'rgba(100,116,139,.13)', fg:'#64748b'};  // teardown
+    if(/\bSYN\b/.test(info))  return {bg:'rgba(148,163,184,.16)', fg:'#94a3b8'};  // handshake
+    if(/\bFIN\b/.test(info))  return {bg:'rgba(100,116,139,.13)', fg:'#64748b'};  // teardown
     return {bg:'rgba(148,163,184,.06)', fg:'#94a3b8'};
   }
   return {bg:'transparent', fg:'var(--text-sub)'};
 }
 const PK_LEGEND = [
-  ['HTTP','rgba(16,185,129,.14)','#10b981'], ['TLS / 443','rgba(139,92,246,.15)','#8b5cf6'],
+  ['HTTP','rgba(16,185,129,.14)','#10b981'], ['TLS','rgba(139,92,246,.15)','#8b5cf6'],
   ['DNS','rgba(59,130,246,.15)','#3b82f6'], ['UDP','rgba(6,182,212,.13)','#06b6d4'],
   ['ICMP','rgba(244,114,182,.15)','#f472b6'], ['ARP','rgba(234,179,8,.16)','#eab308'],
   ['TCP SYN/FIN','rgba(148,163,184,.16)','#94a3b8'], ['TCP RST','rgba(239,68,68,.16)','#ef4444'],
@@ -2497,6 +2555,68 @@ async function sendFindings(){
     const ok=Object.entries(j.results).map(([k,v])=>k+(v?' ✓':' ✗')).join(', ');
     out.style.color='var(--success)'; out.textContent='Sent → '+(ok||'no channels');
   }catch(e){ out.style.color='var(--critical)'; out.textContent='✗ '+e.message; }
+}
+
+/* ── Telegram guided setup ─────────────────────────────────────────── */
+function tgMsg(t, ok){ const m=document.getElementById('tg-msg'); if(!m) return; m.textContent=t||''; m.style.color=ok?'var(--success)':'var(--high)'; }
+function openTelegram(){ const o=document.getElementById('tg-overlay'); if(o){ o.style.display='flex'; } tgMsg(''); document.getElementById('tg-chats').innerHTML=''; loadTelegramStatus(); }
+function closeTelegram(){ const o=document.getElementById('tg-overlay'); if(o) o.style.display='none'; tgMsg(''); }
+async function loadTelegramStatus(){
+  const st=document.getElementById('tg-status'), rm=document.getElementById('tg-remove-btn');
+  try{
+    const j=await (await fetch('/api/notify/telegram')).json();
+    if(j.configured){
+      st.innerHTML='<span style="color:var(--success)">● Connected</span> — token '+ (j.token_hint||'set') +', chat <code>'+ (j.chat_id||'') +'</code>. Alerts are on.';
+      if(rm) rm.style.display='';
+      if(!document.getElementById('tg-chat').value) document.getElementById('tg-chat').value=j.chat_id||'';
+    }else{
+      st.innerHTML='<span style="color:var(--text-sub)">○ Not connected yet</span> — follow the 3 steps below.';
+      if(rm) rm.style.display='none';
+    }
+  }catch(e){ st.textContent='—'; }
+}
+async function detectChat(){
+  const btn=document.getElementById('tg-detect-btn'), box=document.getElementById('tg-chats');
+  const token=document.getElementById('tg-token').value.trim();
+  btn.disabled=true; tgMsg('Looking for chats…',true);
+  try{
+    const r=await fetch('/api/notify/telegram/detect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
+    tgMsg('');
+    if(!j.chats||!j.chats.length){ box.innerHTML='<span style="color:var(--high)">No chats found — message your bot first, then Detect.</span>'; return; }
+    box.innerHTML='<div style="color:var(--text-sub);margin-bottom:4px">Pick your chat:</div>'+j.chats.map(c=>
+      '<button class="btn btn-secondary btn-sm" style="margin:2px 4px 2px 0" onclick="pickChat(\''+c.chat_id+'\')">'+
+      (c.name||'chat').replace(/</g,'&lt;')+' <span style="color:var(--text-sub)">('+c.chat_id+')</span></button>').join('');
+    if(j.chats.length===1) pickChat(j.chats[0].chat_id);
+  }catch(e){ tgMsg('✗ '+e.message); }
+  finally{ btn.disabled=false; }
+}
+function pickChat(id){ document.getElementById('tg-chat').value=id; tgMsg('Chat selected — now Save & test.',true); }
+async function saveTelegram(){
+  const btn=document.getElementById('tg-save-btn');
+  const token=document.getElementById('tg-token').value.trim();
+  const chat_id=document.getElementById('tg-chat').value.trim();
+  const persist=document.getElementById('tg-persist').checked;
+  btn.disabled=true; tgMsg('Saving & sending a test message…',true);
+  try{
+    const r=await fetch('/api/notify/telegram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,chat_id,persist,test:true})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
+    if(j.tested===false){ tgMsg('Saved, but test failed: '+(j.message||'check token/chat')); }
+    else{ tgMsg('✓ '+(j.message||'Connected')+' — check Telegram for the test message.',true); }
+    document.getElementById('tg-token').value='';   // don't keep the secret in the field
+    loadTelegramStatus(); loadNotifyStatus();
+  }catch(e){ tgMsg('✗ '+e.message); }
+  finally{ btn.disabled=false; }
+}
+async function removeTelegram(){
+  tgMsg('Removing…',true);
+  try{
+    const r=await fetch('/api/notify/telegram',{method:'DELETE'});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
+    document.getElementById('tg-chat').value=''; document.getElementById('tg-token').value='';
+    document.getElementById('tg-chats').innerHTML='';
+    tgMsg('Removed.',true); loadTelegramStatus(); loadNotifyStatus();
+  }catch(e){ tgMsg('✗ '+e.message); }
 }
 async function downloadAiReport(){
   if(!jobId) return;
@@ -2903,10 +3023,12 @@ function closeChat(){
 const AI_OPT = {auto:'Auto (smart switch)', gemini:'Google Gemini', groq:'Groq', anthropic:'Anthropic', ollama:'Local (Ollama)'};
 const AI_SHORT = {gemini:'Gemini', groq:'Groq', anthropic:'Anthropic', ollama:'Local'};
 async function loadAIStatus(){
+  try{ applyAIStatus(await (await fetch('/api/ai/status')).json()); }
+  catch(e){ /* leave as-is */ }
+}
+function applyAIStatus(j){
   const sel=document.getElementById('ai-provider-sel'), act=document.getElementById('ai-provider-active');
-  if(!sel||!act) return;
-  try{
-    const j = await (await fetch('/api/ai/status')).json();
+  if(sel&&act){
     sel.value = j.forced || 'auto';
     (j.providers||[]).forEach(p=>{
       const opt = sel.querySelector('option[value="'+p.name+'"]');
@@ -2914,14 +3036,83 @@ async function loadAIStatus(){
         const missing = (p.name==='ollama') ? ' (not running)' : ' (no key)';
         opt.textContent = (AI_OPT[p.name]||p.name) + (p.configured?'':missing); }
     });
-    if(!j.available){ act.textContent='— no AI key in .env'; act.style.color='var(--high)'; return; }
-    let txt = (j.mode==='auto')
-      ? ('using '+(j.active? (AI_SHORT[j.active]||j.active) : '—'))
-      : ('locked to '+(AI_SHORT[j.forced]||j.forced));
-    const cd=(j.providers||[]).filter(p=>p.cooldown>0).map(p=>(AI_SHORT[p.name]||p.name)+' '+p.cooldown+'s');
-    if(cd.length) txt += ' · cooling down: '+cd.join(', ');
-    act.textContent=txt; act.style.color='var(--text-sub)';
-  }catch(e){ /* leave as-is */ }
+    if(!j.available){ act.textContent='— no AI configured (click ⚙ Keys)'; act.style.color='var(--high)'; }
+    else{
+      let txt = (j.mode==='auto')
+        ? ('using '+(j.active? (AI_SHORT[j.active]||j.active) : '—'))
+        : ('locked to '+(AI_SHORT[j.forced]||j.forced));
+      const cd=(j.providers||[]).filter(p=>p.cooldown>0).map(p=>(AI_SHORT[p.name]||p.name)+' '+p.cooldown+'s');
+      if(cd.length) txt += ' · cooling down: '+cd.join(', ');
+      act.textContent=txt; act.style.color='var(--text-sub)';
+    }
+  }
+  // keep the no-key banner in sync (it may show while the chat panel is open)
+  const nk=document.getElementById('chat-no-key'); if(nk && jobId) nk.style.display = j.available ? 'none':'block';
+  // refresh the settings modal if it's open
+  const ov=document.getElementById('ai-settings-overlay');
+  if(ov && ov.style.display!=='none') renderAiSettings(j);
+}
+
+/* ── AI key entry (in-app, no .env editing / no restart) ── */
+const AI_KEY_META = {
+  gemini:    {label:'Google Gemini',       hint:'AIza…',    url:'https://aistudio.google.com/apikey',           free:'Free'},
+  groq:      {label:'Groq',                hint:'gsk_…',    url:'https://console.groq.com/keys',                free:'Free · very fast'},
+  anthropic: {label:'Anthropic (Claude)',  hint:'sk-ant-…', url:'https://console.anthropic.com/settings/keys',  free:'Paid'},
+};
+function openAiSettings(){ const ov=document.getElementById('ai-settings-overlay'); if(ov){ ov.style.display='flex'; } setAiMsg(''); loadAIStatus(); }
+function closeAiSettings(){ const ov=document.getElementById('ai-settings-overlay'); if(ov) ov.style.display='none'; setAiMsg(''); }
+function setAiMsg(t, ok){ const m=document.getElementById('ai-settings-msg'); if(!m) return; m.textContent=t||''; m.style.color=ok?'var(--success)':'var(--high)'; }
+function renderAiSettings(j){
+  const body=document.getElementById('ai-settings-body'); if(!body) return;
+  let html='';
+  (j.providers||[]).filter(p=>p.needs_key).forEach(p=>{
+    const m=AI_KEY_META[p.name]||{label:p.name,hint:'',url:'#',free:''};
+    const dot=p.configured?'<span style="color:var(--success)">●</span>':'<span style="color:var(--text-sub)">○</span>';
+    html+='<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+      +dot+' <strong style="font-size:13px">'+esc(m.label)+'</strong>'
+      +'<span style="font-size:11px;color:var(--text-sub)">'+esc(m.free)+'</span>'
+      +'<a href="'+m.url+'" target="_blank" rel="noopener" style="margin-left:auto;font-size:11px;color:var(--accent2,#7aa2f7)">Get key ↗</a></div>'
+      +'<div style="display:flex;gap:6px">'
+      +'<input type="password" id="aikey-'+p.name+'" onkeydown="if(event.key===\'Enter\')saveAIKey(\''+p.name+'\')" '
+      +'placeholder="'+(p.configured?('configured '+esc(p.key_hint||'')+' — paste a new key to replace'):('Paste key ('+esc(m.hint)+')'))+'" '
+      +'style="flex:1;background:var(--bg-2,#11161c);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px">'
+      +'<button onclick="saveAIKey(\''+p.name+'\')" class="btn btn-primary btn-sm">Save</button>'
+      +(p.configured?'<button onclick="removeAIKey(\''+p.name+'\')" class="btn btn-secondary btn-sm" title="Remove key">✕</button>':'')
+      +'</div></div>';
+  });
+  const o=j.ollama||{};
+  const oStatus = o.available
+    ? '<span style="color:var(--success)">● Running</span> · model <code>'+esc(o.model||'')+'</code>'+((o.models&&o.models.length)?(' · '+o.models.length+' installed'):'')
+    : '<span style="color:var(--text-sub)">○ Not running</span> — install <strong>Ollama</strong>, then <code>ollama pull qwen2.5:7b-instruct</code> &amp; <code>ollama serve</code>';
+  html+='<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><strong style="font-size:13px">Local model (Ollama)</strong>'
+    +'<span style="font-size:11px;color:var(--text-sub)">No key · fully offline · private</span>'
+    +'<a href="https://ollama.com" target="_blank" rel="noopener" style="margin-left:auto;font-size:11px;color:var(--accent2,#7aa2f7)">Get Ollama ↗</a></div>'
+    +'<div style="font-size:12px;color:var(--text-sub)">'+oStatus+'</div></div>';
+  body.innerHTML=html;
+}
+async function saveAIKey(provider){
+  const inp=document.getElementById('aikey-'+provider); const key=((inp&&inp.value)||'').trim();
+  if(!key){ setAiMsg('Enter a key first.'); return; }
+  const persist=document.getElementById('ai-key-persist').checked;
+  setAiMsg('Saving…', true);
+  try{
+    const r=await fetch('/api/ai/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider,key,persist})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
+    if(inp) inp.value='';
+    setAiMsg('✓ '+((AI_KEY_META[provider]||{}).label||provider)+' key saved — ready to use.', true);
+    applyAIStatus(j);
+    if(typeof checkChatAvailability==='function') checkChatAvailability();
+  }catch(e){ setAiMsg('✗ '+e.message); }
+}
+async function removeAIKey(provider){
+  setAiMsg('Removing…', true);
+  try{
+    const r=await fetch('/api/ai/key/'+provider,{method:'DELETE'});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
+    setAiMsg('Key removed.', true); applyAIStatus(j);
+  }catch(e){ setAiMsg('✗ '+e.message); }
 }
 async function setAIProvider(v){
   const act=document.getElementById('ai-provider-active');

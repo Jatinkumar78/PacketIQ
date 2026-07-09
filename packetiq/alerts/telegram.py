@@ -133,6 +133,54 @@ class TelegramSender:
         self._last_sent = time.time()
 
 
+# ── Credential helpers ─────────────────────────────────────────────────────────
+
+def valid_token(token: str) -> bool:
+    """A Telegram bot token looks like '123456789:AA<35 url-safe chars>'."""
+    import re
+    return bool(re.match(r"^\d{5,}:[A-Za-z0-9_-]{20,}$", (token or "").strip()))
+
+
+def valid_chat_id(chat_id: str) -> bool:
+    """Accept a numeric id (user or -100… group) or an @channelusername."""
+    import re
+    c = (chat_id or "").strip()
+    return bool(re.match(r"^-?\d{3,}$", c) or re.match(r"^@[A-Za-z0-9_]{4,}$", c))
+
+
+def detect_chat_ids(token: str, timeout: int = 10) -> tuple[bool, object]:
+    """
+    Look up recent chats that have messaged the bot, so the user never has to
+    hunt for a numeric chat ID by hand. The flow is: create a bot with
+    @BotFather → send it any message → click "Detect". We call getUpdates and
+    return the distinct chats seen. Returns (ok, list[{chat_id, name, type}]) or
+    (False, error_string).
+    """
+    url = BASE_URL.format(token=token.strip(), method="getUpdates")
+    try:
+        resp = requests.get(url, timeout=timeout)
+        data = resp.json()
+    except Exception as e:
+        return False, f"Network error: {e}"
+    if not data.get("ok"):
+        return False, data.get("description", "Invalid bot token")
+
+    seen: dict[str, dict] = {}
+    for upd in data.get("result", []):
+        msg = (upd.get("message") or upd.get("edited_message")
+               or upd.get("channel_post") or upd.get("my_chat_member") or {})
+        chat = msg.get("chat") or {}
+        cid = chat.get("id")
+        if cid is None:
+            continue
+        name = (chat.get("title")
+                or " ".join(filter(None, [chat.get("first_name"), chat.get("last_name")]))
+                or (f"@{chat['username']}" if chat.get("username") else None)
+                or chat.get("type", "chat"))
+        seen[str(cid)] = {"chat_id": str(cid), "name": name, "type": chat.get("type", "")}
+    return True, list(seen.values())
+
+
 # ── Credential loading ────────────────────────────────────────────────────────
 
 def load_credentials() -> tuple[Optional[str], Optional[str]]:

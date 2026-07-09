@@ -67,50 +67,41 @@ CRED_PORTS = {
 }
 
 
+def scan_record(record: RawPacketRecord, seen: set, events: list) -> None:
+    """Inspect one packet record for plaintext credentials, appending any finding
+    to `events` (deduplicated via `seen`). Filters internally, so it is safe to
+    call for every packet and can share a single PCAP pass with other detectors."""
+    if not record.raw_payload or len(record.raw_payload) < 4:
+        return
+
+    src = record.src_ip or ""
+    dst = record.dst_ip or ""
+    dport = record.dst_port or 0
+    sport = record.src_port or 0
+
+    if dport in (80, 8080, 8000) or sport in (80, 8080, 8000):
+        _check_http(record, src, dst, dport, seen, events)
+    if dport == 21 or sport == 21:
+        _check_ftp(record, src, dst, seen, events)
+    if dport in (25, 587) or sport in (25, 587):
+        _check_smtp(record, src, dst, seen, events)
+    if dport == 143 or sport == 143:
+        _check_imap(record, src, dst, seen, events)
+    if dport == 110 or sport == 110:
+        _check_pop3(record, src, dst, seen, events)
+    if dport == 23 or sport == 23:
+        _check_telnet(record, src, dst, seen, events)
+
+
 def detect_from_stream(packet_stream: Generator[RawPacketRecord, None, None]) -> list[DetectionEvent]:
     """
     Stream packets from a PCAPParser and flag any that contain plaintext credentials.
     Call this as a second pass after the extractor has already run.
     """
     events: list[DetectionEvent] = []
-    # Deduplicate: (src, dst, port, credential_type) → already flagged
-    seen: set[tuple] = set()
-
+    seen: set[tuple] = set()          # (src, dst, port, cred_type) → already flagged
     for record in packet_stream:
-        if not record.raw_payload or len(record.raw_payload) < 4:
-            continue
-
-        src = record.src_ip or ""
-        dst = record.dst_ip or ""
-
-        # Determine which protocol handler to use based on destination port
-        dport = record.dst_port or 0
-        sport = record.src_port or 0
-
-        # ── HTTP ──────────────────────────────────────────────────────────
-        if dport in (80, 8080, 8000) or sport in (80, 8080, 8000):
-            _check_http(record, src, dst, dport, seen, events)
-
-        # ── FTP ───────────────────────────────────────────────────────────
-        if dport == 21 or sport == 21:
-            _check_ftp(record, src, dst, seen, events)
-
-        # ── SMTP ──────────────────────────────────────────────────────────
-        if dport in (25, 587) or sport in (25, 587):
-            _check_smtp(record, src, dst, seen, events)
-
-        # ── IMAP ──────────────────────────────────────────────────────────
-        if dport == 143 or sport == 143:
-            _check_imap(record, src, dst, seen, events)
-
-        # ── POP3 ──────────────────────────────────────────────────────────
-        if dport == 110 or sport == 110:
-            _check_pop3(record, src, dst, seen, events)
-
-        # ── TELNET (generic printable payload over port 23) ────────────────
-        if dport == 23 or sport == 23:
-            _check_telnet(record, src, dst, seen, events)
-
+        scan_record(record, seen, events)
     return events
 
 
