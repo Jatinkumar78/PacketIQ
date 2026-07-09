@@ -8,15 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Professional AI packet analysis, richer Telegram alerts + PDF & a faster local LLM
 
 **Added**
-- **Professional per-packet AI analysis.** The "Explain this packet" copilot now
-  reads a **decoded analyst fact sheet** (`inspect.analyst_brief`) instead of a raw
-  scapy field dump — so it reasons like a senior analyst: host roles (internal vs
-  external), **TTL → OS fingerprint** and hop distance, **port direction** (client vs
-  server, service vs ephemeral, shown as *numbers* — no more obscure aliases like
-  `ifsf_hb_port`), TCP flags / handshake state, **payload Shannon entropy** (encrypted
-  vs plaintext), and decoded app-layer (**TLS SNI**, HTTP request line, DNS query). The
-  output is structured (Verdict · What it is · Key fields · Indicators · Next step) and
-  strictly grounded. 7 new tests.
+- **Professional per-packet AI analysis, rendered as a triage card.** The "Explain this
+  packet" copilot now reads a **decoded analyst fact sheet** (`inspect.analyst_facts` /
+  `analyst_brief`) instead of a raw scapy field dump — so it reasons like a senior
+  analyst: host roles (internal vs external), **TTL → OS fingerprint** and hop distance,
+  **port direction** (client vs server, service vs ephemeral, shown as *numbers* — no
+  more obscure aliases like `ifsf_hb_port`), TCP flags / handshake state, **payload
+  Shannon entropy** (encrypted vs plaintext), and decoded app-layer (**TLS SNI**, HTTP
+  request line, DNS query).
+  The model now answers in **plain labelled sections** (Verdict · What this packet is ·
+  Where it comes from · Is it suspicious? · Recommended action), which the web UI renders
+  as a **styled triage card** with a colour-coded verdict badge and a separate
+  **"Evidence from the packet"** panel built from the deterministic facts — not from the
+  model. Previously the panel printed the model's raw Markdown (literal `**Verdict**`);
+  a server-side parser now strips any stray Markdown, and falls back to cleaned prose if
+  the model ignores the format. 15 new tests.
 - **Detailed Telegram findings + full PDF report.** The **📣 Send report + PDF** button
   now sends a proper SOC brief (risk, severity breakdown, top talkers, attack chains
   with MITRE, and every key finding with one-line evidence) instead of a two-line list,

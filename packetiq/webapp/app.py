@@ -1625,29 +1625,84 @@ async def _stream_ai_raw(provider: str, key: str, model: str,
 _AI_LABEL = {"gemini": "Google Gemini", "groq": "Groq", "anthropic": "Anthropic",
              "ollama": "Local (Ollama)"}
 
-# System prompt for the per-packet AI explainer. The packet is supplied as a
-# pre-decoded analyst fact sheet (see inspect.analyst_brief), so the model reads
-# like a senior network-forensics analyst rather than paraphrasing raw fields.
+# System prompt for the per-packet AI explainer. The packet arrives as a decoded
+# analyst fact sheet (see inspect.analyst_brief), so the model reasons like a
+# senior network-forensics analyst instead of paraphrasing raw scapy fields.
+# It must answer plain text in five labelled sections — the UI renders those into
+# a styled triage card, so any Markdown the model emitted would leak as literal
+# asterisks. _parse_explanation() still strips stray Markdown defensively.
 _PACKET_EXPLAIN_SYSTEM = (
-    "You are PacketIQ Copilot, a senior network-forensics analyst reviewing ONE packet "
-    "for a SOC colleague. You are given a decoded fact sheet for the packet. Write a crisp, "
-    "professional analysis — the way an expert reads a packet in Wireshark — using this exact "
-    "structure with these Markdown headings:\n\n"
-    "**Verdict** — one line: Benign / Informational / Worth a look / Suspicious, with a short reason.\n"
-    "**What this packet is** — protocol stack and what the endpoints are doing, in 1–2 sentences.\n"
-    "**Key fields that matter** — 3–6 bullets on the security-relevant details actually present: "
-    "host roles (internal vs external), TTL/OS fingerprint and hop distance, port direction "
-    "(client vs server, ephemeral vs service), TCP flags / handshake state, and payload character "
-    "(entropy → encrypted/compressed/plaintext, any decoded app-layer such as TLS SNI, HTTP request, "
-    "or DNS query).\n"
-    "**Indicators & context** — what a threat hunter would note (e.g. cleartext protocol, unusual "
-    "port, external destination, high-entropy payload). If nothing stands out, say so plainly.\n"
-    "**Recommended next step** — one concrete analyst action (e.g. follow the TCP stream, check the "
-    "destination against threat intel, or 'no action — normal traffic').\n\n"
-    "Rules: Use ONLY facts in the fact sheet. Never invent IPs, ports, domains, payload or intent "
-    "the data doesn't support. Refer to ports by number. TTL and entropy are hints — say 'consistent "
-    "with', not 'is'. Be concise and concrete; no filler, no restating the whole sheet. "
-    "A single benign packet is normal — don't manufacture threat where there is none.")
+    "You are PacketIQ Copilot, a senior network-forensics analyst writing a triage note on ONE "
+    "packet for a SOC colleague. You are given a decoded fact sheet for that packet.\n\n"
+    "OUTPUT FORMAT — plain text only. Emit exactly these five labels, each starting a new line, "
+    "in this order. Do NOT use Markdown: no asterisks, no bold, no bullet characters, no headings, "
+    "no blank lines between sections.\n\n"
+    "VERDICT: one of Benign, Informational, Worth a look, or Suspicious — that single label only.\n"
+    "SUMMARY: two or three sentences stating what this packet is and what the two endpoints are "
+    "doing, naming the protocol and the service involved.\n"
+    "ORIGIN: where it came from and where it is going — which side is internal and which is "
+    "external, which is the client and which is the server, the service port in use, and what the "
+    "TTL suggests about the sender's operating system and how many hops away it is.\n"
+    "ASSESSMENT: whether this is suspicious and why or why not, citing the concrete evidence — "
+    "encrypted versus cleartext, payload entropy, whether the port matches the protocol, exposure "
+    "to an external host, TCP handshake state, and any decoded name (TLS SNI, HTTP host, DNS query). "
+    "State plainly if it is ordinary traffic.\n"
+    "ACTION: one concrete next step for the analyst. If nothing is wrong, say 'No action — normal "
+    "traffic' and name the single check that would confirm it.\n\n"
+    "RULES: Use ONLY facts from the fact sheet. Never invent IP addresses, ports, domains, payload "
+    "or intent the data does not support. Refer to ports by number. TTL and entropy are hints — say "
+    "'consistent with', never 'is'. Write full sentences in precise SOC language: no filler, no "
+    "restating the sheet verbatim. One packet in isolation is usually normal — do not manufacture "
+    "threat where there is none.")
+
+# The five labels the explainer must emit, and a tolerant parser for them.
+_EXPLAIN_LABELS = ("VERDICT", "SUMMARY", "ORIGIN", "ASSESSMENT", "ACTION")
+_EXPLAIN_LABEL_RE = re.compile(
+    r"^\s*[#*\-•\s]*(" + "|".join(_EXPLAIN_LABELS) + r")\s*[*_]*\s*[:\-–—]\s*(.*)$",
+    re.IGNORECASE)
+# Verdict → UI badge class. Anything unrecognised falls back to informational.
+_VERDICT_KEYS = (("benign", "benign"), ("informational", "informational"),
+                 ("worth", "review"), ("suspicious", "suspicious"), ("malicious", "suspicious"))
+
+
+def _strip_markdown(s: str) -> str:
+    """Remove Markdown decoration a model may add despite the plain-text rule."""
+    s = re.sub(r"\*\*(.+?)\*\*", r"\1", s)
+    s = re.sub(r"[*_`]{1,3}", "", s)
+    s = re.sub(r"^\s*[#>\-•]+\s*", "", s, flags=re.MULTILINE)
+    return " ".join(s.split()).strip()
+
+
+def _verdict_key(verdict: str) -> str:
+    low = (verdict or "").strip().lower()
+    for needle, key in _VERDICT_KEYS:
+        if low.startswith(needle):
+            return key
+    return "informational"
+
+
+def _parse_explanation(text: str) -> dict:
+    """Split the model's labelled triage note into sections the UI can style.
+    Returns {} if the model ignored the format, so callers can fall back to prose."""
+    out: dict = {}
+    current = None
+    buf: list = []
+    for line in (text or "").splitlines():
+        m = _EXPLAIN_LABEL_RE.match(line)
+        if m:
+            if current:
+                out[current] = _strip_markdown(" ".join(buf))
+            current = m.group(1).lower()
+            buf = [m.group(2)]
+        elif current:
+            buf.append(line)
+    if current:
+        out[current] = _strip_markdown(" ".join(buf))
+    out = {k: v for k, v in out.items() if v}
+    if out.get("verdict"):
+        out["verdict"] = out["verdict"].rstrip(".")
+        out["verdict_key"] = _verdict_key(out["verdict"])
+    return out
 
 # Shown when no provider is usable — covers both the cloud-key and local-LLM paths.
 _NO_PROVIDER_HINT = (
@@ -1964,19 +2019,19 @@ def create_app() -> FastAPI:
             raise HTTPException(410, "The capture for this job is no longer available.")
         if not _detect_provider()["provider"]:
             raise HTTPException(503, _NO_PROVIDER_HINT)
-        from packetiq.inspect import analyst_brief, summarize
+        from packetiq.inspect import analyst_brief, analyst_facts, summarize
 
         def _find():
             for idx, pkt in _iter_packets(paths):
                 if idx == index:
-                    return analyst_brief(pkt, idx), summarize(pkt, idx)
+                    return analyst_brief(pkt, idx), analyst_facts(pkt, idx), summarize(pkt, idx)
             return None
 
         loop = asyncio.get_event_loop()
         found = await loop.run_in_executor(None, _find)
         if found is None:
             raise HTTPException(404, "Packet not found.")
-        pkt_text, summary = found
+        pkt_text, facts, summary = found
         try:
             text = await _collect_ai_with_fallback(
                 _PACKET_EXPLAIN_SYSTEM, pkt_text,
@@ -1984,7 +2039,10 @@ def create_app() -> FastAPI:
                 max_tokens=900)
         except RuntimeError as exc:
             raise HTTPException(502, str(exc)) from exc
-        return {"explanation": text, "summary": summary}
+        # `sections` drives the styled triage card; `facts` is the deterministic
+        # evidence panel (straight from the packet, never from the model).
+        return {"explanation": text, "sections": _parse_explanation(text),
+                "facts": facts, "summary": summary}
 
     # ── Live capture ────────────────────────────────────────────────────
     @app.get("/api/live/interfaces")

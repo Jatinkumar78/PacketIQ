@@ -771,6 +771,25 @@ tbody tr:hover td{background:var(--surface2)}
   98%{transform:perspective(600px) rotateX(0deg) translateY(0);filter:none}
 }
 .hero-title{animation:float3d 8s ease-in-out infinite,glitch 12s linear infinite}
+
+/* ── AI packet triage card ─────────────────────────────────────────── */
+.ai-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.ai-badge{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;
+  padding:4px 10px;border-radius:999px;border:1px solid currentColor}
+.ai-badge.benign{color:var(--success);background:rgba(16,185,129,.10)}
+.ai-badge.informational{color:#3b82f6;background:rgba(59,130,246,.10)}
+.ai-badge.review{color:var(--medium);background:rgba(234,179,8,.10)}
+.ai-badge.suspicious{color:var(--critical);background:rgba(239,68,68,.10)}
+.ai-head-sub{font-size:11px;color:var(--text-sub)}
+.ai-sec{margin:0 0 11px}
+.ai-sec-t{font-size:10.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;
+  color:var(--text-sub);margin-bottom:3px}
+.ai-sec p{margin:0;font-size:13px;line-height:1.6;color:var(--text,#e2e8f0)}
+.ai-ev{margin-top:14px;padding-top:12px;border-top:1px solid var(--border,#1e293b)}
+.ai-ev-grid{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:12px}
+.ai-ev-k{color:var(--text-sub);white-space:nowrap}
+.ai-ev-v{color:var(--text,#e2e8f0);word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
+.ai-foot{margin-top:12px;font-size:10.5px;color:var(--text-sub);line-height:1.5}
 </style>
 </head>
 <body>
@@ -1429,7 +1448,7 @@ tbody tr:hover td{background:var(--surface2)}
     <div style="margin-bottom:12px">
       <button class="btn btn-primary btn-sm" id="pkt-explain-btn" onclick="explainPacket()">🤖 Explain with AI</button>
     </div>
-    <div id="pkt-ai" style="display:none;background:var(--card,#111827);border:1px solid var(--border,#1e293b);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;line-height:1.6;white-space:pre-wrap"></div>
+    <div id="pkt-ai" style="display:none;background:var(--card,#111827);border:1px solid var(--border,#1e293b);border-radius:10px;padding:14px;margin-bottom:14px;font-size:13px;line-height:1.6"></div>
     <div class="card-title" style="margin:6px 0">Layers</div>
     <div id="pkt-layers"></div>
     <div class="card-title" style="margin:14px 0 6px">Bytes (hex)</div>
@@ -2512,9 +2531,65 @@ async function explainPacket(){
     const r=await fetch('/api/packets/'+jobId+'/'+pkCurrent+'/explain',{method:'POST'});
     const j=await r.json();
     if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
-    ai.textContent = j.explanation || '(no explanation)';
+    ai.innerHTML = renderPacketAI(j);
   }catch(e){ ai.textContent='✗ '+e.message; }
   finally{ btn.disabled=false; loadAIStatus(); }
+}
+
+/* Strip any Markdown the model leaked, so the panel never shows raw asterisks. */
+function stripMd(s){
+  return String(s||'').replace(/\*\*(.+?)\*\*/g,'$1').replace(/[*_`]{1,3}/g,'')
+                      .replace(/^\s*[#>\-•]+\s*/gm,'').trim();
+}
+
+/* Deterministic evidence rows — straight from the packet, never from the model. */
+function packetEvidenceRows(f){
+  const rows=[];
+  const add=(k,v)=>{ if(v!==undefined && v!==null && v!=='') rows.push([k,v]); };
+  add('Protocol', f.protocol + (f.info ? ' — ' + f.info : ''));
+  if(f.src) add('Source', f.src + (f.src_role ? '  ['+f.src_role+']' : ''));
+  if(f.dst) add('Destination', f.dst + (f.dst_role ? '  ['+f.dst_role+']' : ''));
+  if(f.sport_desc) add('Ports', f.sport_desc + '  →  ' + f.dport_desc);
+  add('Direction', f.direction);
+  if(f.ttl!==undefined) add('TTL', f.ttl+' → initial '+f.ttl_initial+', ~'+f.hops+' hops · consistent with '+f.os_hint);
+  if(f.hop_limit!==undefined) add('Hop limit', f.hop_limit);
+  if(f.tcp_flags) add('TCP flags', f.tcp_flags + (f.window!==undefined ? '  · Window '+f.window : ''));
+  if(f.icmp_type!==undefined) add('ICMP', 'type '+f.icmp_type+', code '+f.icmp_code);
+  add('Application', f.app_decoded);
+  add('TLS SNI', f.sni);
+  if(f.payload_size) add('Payload', f.payload_size+' bytes · entropy '+f.entropy+'/8.00 ('+f.entropy_note+') · '+f.printable_pct+'% printable');
+  else add('Payload', 'none (control segment — handshake/ACK)');
+  add('Frame length', f.frame_len + ' bytes');
+  return rows;
+}
+
+function renderPacketAI(j){
+  const s=j.sections||{}, f=j.facts||{};
+  const ev=packetEvidenceRows(f).map(([k,v])=>
+    '<div class="ai-ev-k">'+esc(k)+'</div><div class="ai-ev-v">'+esc(v)+'</div>').join('');
+  const evidence='<div class="ai-ev"><div class="ai-sec-t">Evidence from the packet</div>'
+                +'<div class="ai-ev-grid">'+ev+'</div></div>';
+
+  // The model ignored the format — show its prose, cleaned, rather than nothing.
+  if(!s.verdict){
+    const raw=stripMd(j.explanation||'(no explanation)');
+    return '<div class="ai-sec"><div class="ai-sec-t">AI triage</div><p>'+esc(raw)+'</p></div>'+evidence;
+  }
+
+  const sec=(title,body)=> body ? '<div class="ai-sec"><div class="ai-sec-t">'+title
+                                 +'</div><p>'+esc(body)+'</p></div>' : '';
+  return '<div class="ai-head">'
+       +   '<span class="ai-badge '+esc(s.verdict_key||'informational')+'">'+esc(s.verdict)+'</span>'
+       +   '<span class="ai-head-sub">AI triage verdict</span>'
+       + '</div>'
+       + sec('What this packet is', s.summary)
+       + sec('Where it comes from', s.origin)
+       + sec('Is it suspicious?', s.assessment)
+       + sec('Recommended action', s.action)
+       + evidence
+       + '<div class="ai-foot">The evidence above is decoded directly from the packet. '
+       + 'The verdict and narrative are AI-generated from that evidence — TTL and entropy are '
+       + 'indicators, not proof.</div>';
 }
 
 /* ══════════════════════════════════════════════════════════

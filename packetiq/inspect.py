@@ -417,9 +417,41 @@ def _int(v, default: int = 0) -> int:
         return default
 
 
-def analyst_brief(pkt, index: int = 0) -> str:
-    """A clean, security-oriented fact sheet for one packet, for the AI explainer.
-    All facts are read straight from the packet — no interpretation, no invention."""
+def _payload_bytes(pkt) -> bytes:
+    """Transport payload, falling back to a bare Raw layer."""
+    body = _full_tcp_payload(pkt)
+    if body:
+        return body
+    try:
+        from scapy.layers.inet import UDP
+        if pkt.haslayer(UDP):
+            return bytes(pkt["UDP"].payload)
+    except Exception:
+        pass
+    try:
+        from scapy.packet import Raw
+        if pkt.haslayer(Raw):
+            return bytes(pkt[Raw].load)
+    except Exception:
+        pass
+    return b""
+
+
+def _entropy_note(ent: float) -> str:
+    if ent >= 7.2:
+        return "high — consistent with encrypted, compressed or random data"
+    if ent >= 5.0:
+        return "medium — mixed binary/text"
+    return "low — looks like text or structured/repetitive data"
+
+
+def analyst_facts(pkt, index: int = 0) -> dict:
+    """Deterministic, security-oriented facts about one packet.
+
+    This is the single source of truth for both the AI explainer's fact sheet and
+    the UI's evidence panel. Every value is read straight from the packet — no
+    interpretation, no invention. Keys are absent (or None) when not applicable.
+    """
     from scapy.layers.inet import ICMP, IP, TCP, UDP
     from scapy.layers.inet6 import IPv6
 
@@ -431,118 +463,150 @@ def analyst_brief(pkt, index: int = 0) -> str:
         pass
 
     proto, sport, dport = _proto_and_ports(pkt)
-    src, dst = _ips(pkt)
-    lines = [
-        f"PACKET #{index}",
-        f"Wireshark protocol: {proto}",
-        f"Info: {_wireshark_info(pkt, proto, sport, dport)}",
-        f"Frame length: {len(pkt)} bytes",
-        "",
-    ]
+    f: dict = {
+        "index":     index,
+        "protocol":  proto,
+        "info":      _wireshark_info(pkt, proto, sport, dport),
+        "frame_len": len(pkt),
+    }
 
-    # ── Link layer ───────────────────────────────────────────────────────────
     try:
         from scapy.layers.l2 import Ether
         if pkt.haslayer(Ether):
-            e = pkt[Ether]
-            lines += ["ETHERNET",
-                      f"  Source MAC: {e.src}",
-                      f"  Dest MAC:   {e.dst}", ""]
+            f["eth_src"] = pkt[Ether].src
+            f["eth_dst"] = pkt[Ether].dst
     except Exception:
         pass
 
-    # ── Network layer ────────────────────────────────────────────────────────
     if pkt.haslayer(IP):
         ip = pkt[IP]
         i_ttl, hops, os_family = _ttl_analysis(_int(ip.ttl))
-        lines += [
-            "NETWORK (IPv4)",
-            f"  Source IP:      {ip.src}  [{_ip_role(ip.src)}]",
-            f"  Destination IP: {ip.dst}  [{_ip_role(ip.dst)}]",
-            f"  TTL:            {_int(ip.ttl)}  (likely initial {i_ttl}, ~{hops} hops away; "
-            f"consistent with {os_family})",
-            f"  Total length:   {_int(ip.len)} bytes, header {_int(ip.ihl, 5) * 4} bytes",
-            f"  IP ID:          {_int(ip.id)}   Flags: {ip.flags}   Frag offset: {_int(ip.frag)}",
-            "",
-        ]
+        f.update(ip_version="IPv4", src=ip.src, dst=ip.dst,
+                 src_role=_ip_role(ip.src), dst_role=_ip_role(ip.dst),
+                 ttl=_int(ip.ttl), ttl_initial=i_ttl, hops=hops, os_hint=os_family,
+                 ip_len=_int(ip.len), ip_hdr_len=_int(ip.ihl, 5) * 4,
+                 ip_id=_int(ip.id), ip_flags=str(ip.flags), ip_frag=_int(ip.frag))
     elif pkt.haslayer(IPv6):
         ip6 = pkt[IPv6]
-        lines += ["NETWORK (IPv6)",
-                  f"  Source IP:      {ip6.src}  [{_ip_role(ip6.src)}]",
-                  f"  Destination IP: {ip6.dst}  [{_ip_role(ip6.dst)}]",
-                  f"  Hop limit:      {_int(ip6.hlim)}", ""]
+        f.update(ip_version="IPv6", src=ip6.src, dst=ip6.dst,
+                 src_role=_ip_role(ip6.src), dst_role=_ip_role(ip6.dst),
+                 hop_limit=_int(ip6.hlim))
 
-    # ── Transport layer ──────────────────────────────────────────────────────
     if pkt.haslayer(TCP):
         t = pkt[TCP]
-        lines += [
-            "TRANSPORT (TCP)",
-            f"  Source port:      {_port_role(sport)}",
-            f"  Destination port: {_port_role(dport)}",
-            f"  Likely role:      {_direction_hint(sport, dport)}",
-            f"  Flags:            {_tcp_flag_str(pkt) or str(t.flags)}",
-            f"  Seq: {_int(t.seq)}   Ack: {_int(t.ack)}   Window: {_int(t.window)}",
-            "",
-        ]
+        f.update(transport="TCP", sport=sport, dport=dport,
+                 sport_desc=_port_role(sport), dport_desc=_port_role(dport),
+                 direction=_direction_hint(sport, dport),
+                 tcp_flags=_tcp_flag_str(pkt) or str(t.flags),
+                 seq=_int(t.seq), ack=_int(t.ack), window=_int(t.window))
     elif pkt.haslayer(UDP):
         u = pkt[UDP]
-        lines += [
-            "TRANSPORT (UDP)",
-            f"  Source port:      {_port_role(sport)}",
-            f"  Destination port: {_port_role(dport)}",
-            f"  Likely role:      {_direction_hint(sport, dport)}",
-            f"  Length:           {_int(u.len)} bytes",
-            "",
-        ]
+        f.update(transport="UDP", sport=sport, dport=dport,
+                 sport_desc=_port_role(sport), dport_desc=_port_role(dport),
+                 direction=_direction_hint(sport, dport), udp_len=_int(u.len))
     elif pkt.haslayer(ICMP):
         ic = pkt[ICMP]
-        lines += ["TRANSPORT (ICMP)",
-                  f"  Type: {_int(ic.type)}   Code: {_int(ic.code)}", ""]
+        f.update(transport="ICMP", icmp_type=_int(ic.type), icmp_code=_int(ic.code))
 
-    # ── Application layer ────────────────────────────────────────────────────
-    app = []
+    # Application layer
     if proto == "DNS":
-        app.append(f"  Decoded: {_dns_info(pkt)}")
+        f["app_decoded"] = _dns_info(pkt)
     elif proto in ("HTTP", "TLS"):
         head = _tcp_payload(pkt)
         if proto == "HTTP":
-            req_line = head.split(b"\r", 1)[0].decode("latin-1", "replace")[:120]
-            app.append(f"  Decoded: HTTP — {req_line}")
+            f["app_decoded"] = "HTTP — " + head.split(b"\r", 1)[0].decode("latin-1", "replace")[:120]
         else:
-            app.append(f"  Decoded: {_tls_info(head)}")
+            f["app_decoded"] = _tls_info(head)
             sni = _tls_sni(_full_tcp_payload(pkt))
             if sni:
-                app.append(f"  TLS SNI (server name requested): {sni}")
-    if app:
-        lines += ["APPLICATION", *app, ""]
+                f["sni"] = sni
 
-    # ── Payload character (entropy tells encrypted/compressed vs text) ────────
-    body = _full_tcp_payload(pkt)
-    if not body:
-        try:
-            from scapy.packet import Raw
-            if pkt.haslayer(Raw):
-                body = bytes(pkt[Raw].load)
-        except Exception:
-            body = b""
+    # Payload character — entropy separates encrypted/compressed from plaintext.
+    body = _payload_bytes(pkt)
     if body:
-        ent = _entropy(body[:2048])
-        pr = _printable_ratio(body[:2048])
-        if ent >= 7.2:
-            ent_note = "high — consistent with encrypted, compressed or random data"
-        elif ent >= 5.0:
-            ent_note = "medium — mixed binary/text"
-        else:
-            ent_note = "low — looks like text or structured/repetitive data"
-        head_hex = " ".join(f"{b:02x}" for b in body[:24])
-        ascii_prev = "".join(chr(b) if 32 <= b < 127 else "." for b in body[:48])
+        sample = body[:2048]
+        ent = _entropy(sample)
+        f.update(payload_size=len(body),
+                 entropy=round(ent, 2),
+                 entropy_note=_entropy_note(ent),
+                 printable_pct=round(_printable_ratio(sample) * 100),
+                 payload_hex=" ".join(f"{b:02x}" for b in body[:24]),
+                 payload_ascii="".join(chr(b) if 32 <= b < 127 else "." for b in body[:48]))
+    else:
+        f["payload_size"] = 0
+    return f
+
+
+def analyst_brief(pkt, index: int = 0) -> str:
+    """The packet fact sheet as plain text, for the AI explainer's context."""
+    f = analyst_facts(pkt, index)
+    lines = [
+        f"PACKET #{f['index']}",
+        f"Wireshark protocol: {f['protocol']}",
+        f"Info: {f['info']}",
+        f"Frame length: {f['frame_len']} bytes",
+        "",
+    ]
+
+    if f.get("eth_src"):
+        lines += ["ETHERNET",
+                  f"  Source MAC: {f['eth_src']}",
+                  f"  Dest MAC:   {f['eth_dst']}", ""]
+
+    if f.get("ip_version") == "IPv4":
+        lines += [
+            "NETWORK (IPv4)",
+            f"  Source IP:      {f['src']}  [{f['src_role']}]",
+            f"  Destination IP: {f['dst']}  [{f['dst_role']}]",
+            f"  TTL:            {f['ttl']}  (likely initial {f['ttl_initial']}, "
+            f"~{f['hops']} hops away; consistent with {f['os_hint']})",
+            f"  Total length:   {f['ip_len']} bytes, header {f['ip_hdr_len']} bytes",
+            f"  IP ID:          {f['ip_id']}   Flags: {f['ip_flags']}   Frag offset: {f['ip_frag']}",
+            "",
+        ]
+    elif f.get("ip_version") == "IPv6":
+        lines += ["NETWORK (IPv6)",
+                  f"  Source IP:      {f['src']}  [{f['src_role']}]",
+                  f"  Destination IP: {f['dst']}  [{f['dst_role']}]",
+                  f"  Hop limit:      {f['hop_limit']}", ""]
+
+    if f.get("transport") == "TCP":
+        lines += [
+            "TRANSPORT (TCP)",
+            f"  Source port:      {f['sport_desc']}",
+            f"  Destination port: {f['dport_desc']}",
+            f"  Likely role:      {f['direction']}",
+            f"  Flags:            {f['tcp_flags']}",
+            f"  Seq: {f['seq']}   Ack: {f['ack']}   Window: {f['window']}",
+            "",
+        ]
+    elif f.get("transport") == "UDP":
+        lines += [
+            "TRANSPORT (UDP)",
+            f"  Source port:      {f['sport_desc']}",
+            f"  Destination port: {f['dport_desc']}",
+            f"  Likely role:      {f['direction']}",
+            f"  Length:           {f['udp_len']} bytes",
+            "",
+        ]
+    elif f.get("transport") == "ICMP":
+        lines += ["TRANSPORT (ICMP)",
+                  f"  Type: {f['icmp_type']}   Code: {f['icmp_code']}", ""]
+
+    if f.get("app_decoded"):
+        lines += ["APPLICATION", f"  Decoded: {f['app_decoded']}"]
+        if f.get("sni"):
+            lines.append(f"  TLS SNI (server name requested): {f['sni']}")
+        lines.append("")
+
+    if f.get("payload_size"):
         lines += [
             "PAYLOAD",
-            f"  Size: {len(body)} bytes",
-            f"  Printable ASCII: {pr * 100:.0f}%",
-            f"  Shannon entropy: {ent:.2f} / 8.00  ({ent_note})",
-            f"  First bytes (hex): {head_hex}",
-            f"  ASCII preview: {ascii_prev}",
+            f"  Size: {f['payload_size']} bytes",
+            f"  Printable ASCII: {f['printable_pct']}%",
+            f"  Shannon entropy: {f['entropy']:.2f} / 8.00  ({f['entropy_note']})",
+            f"  First bytes (hex): {f['payload_hex']}",
+            f"  ASCII preview: {f['payload_ascii']}",
             "",
         ]
     else:
