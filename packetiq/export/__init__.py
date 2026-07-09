@@ -5,7 +5,8 @@ from packetiq.export.attack_navigator import coverage as attack_coverage
 from packetiq.export.html_report import build_html
 from packetiq.export.misp import push_to_misp, to_misp_event
 from packetiq.export.pcap_slicer import PcapFilter, slice_pcap
+from packetiq.export.pdf_report import build_pdf
 from packetiq.export.stix_export import to_stix_bundle
 
-__all__ = ["slice_pcap", "PcapFilter", "to_stix_bundle", "build_html",
+__all__ = ["slice_pcap", "PcapFilter", "to_stix_bundle", "build_html", "build_pdf",
            "to_misp_event", "push_to_misp", "build_navigator_layer", "attack_coverage"]

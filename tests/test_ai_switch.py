@@ -68,7 +68,7 @@ def test_forced_still_falls_back_when_skipped(monkeypatch):
 def test_collect_marks_cooldown_on_rate_limit(monkeypatch):
     _two_providers(monkeypatch)
 
-    async def _stream(provider, key, model, system, context, messages):
+    async def _stream(provider, key, model, system, context, messages, max_tokens=2048):
         if provider == "gemini":
             raise RuntimeError("429 RESOURCE_EXHAUSTED retry in 42s")
         yield "ok from groq"

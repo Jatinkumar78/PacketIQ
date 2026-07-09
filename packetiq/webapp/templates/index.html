@@ -1265,11 +1265,11 @@ tbody tr:hover td{background:var(--surface2)}
           <div style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
             <button class="btn btn-primary" onclick="openTelegram()">✈️ Connect Telegram</button>
             <button class="btn btn-secondary" onclick="testNotify()">🔔 Send test alert</button>
-            <button class="btn btn-secondary" onclick="sendFindings()">📣 Send these findings</button>
+            <button class="btn btn-secondary" onclick="sendFindings()" title="Sends a detailed SOC brief plus a full professional PDF report to Telegram">📣 Send report + PDF</button>
             <span id="notify-result" style="font-size:12px;color:var(--text-sub)"></span>
           </div>
           <div style="padding:0 16px 14px;font-size:12px;color:var(--text-sub)">
-            One-click <strong>Connect Telegram</strong> above — no file editing. Other channels (Slack, SMTP e-mail, generic webhook) are set in <code>.env</code>: <code>SLACK_WEBHOOK_URL</code>, <code>SMTP_HOST</code>+<code>ALERT_EMAIL_TO</code>, or <code>ALERT_WEBHOOK_URL</code>.
+            <strong>Send report + PDF</strong> delivers a full SOC brief — risk, severity breakdown, top talkers, attack chains with MITRE, and every key finding — plus a professional <strong>PDF report</strong> attached to Telegram. One-click <strong>Connect Telegram</strong> above (no file editing). Slack, SMTP e-mail and generic webhook are set in <code>.env</code>: <code>SLACK_WEBHOOK_URL</code>, <code>SMTP_HOST</code>+<code>ALERT_EMAIL_TO</code>, or <code>ALERT_WEBHOOK_URL</code>.
           </div>
         </div>
       </div>
@@ -2548,11 +2548,12 @@ async function testNotify(){
 }
 async function sendFindings(){
   if(!jobId) return;
-  const out=document.getElementById('notify-result'); out.style.color='var(--text-sub)'; out.textContent='Dispatching findings…';
+  const out=document.getElementById('notify-result'); out.style.color='var(--text-sub)'; out.textContent='Building SOC brief + PDF…';
   try{
     const r=await fetch('/api/notify/'+jobId+'/send',{method:'POST'}); const j=await r.json();
     if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
-    const ok=Object.entries(j.results).map(([k,v])=>k+(v?' ✓':' ✗')).join(', ');
+    const label={telegram_pdf:'PDF report'};
+    const ok=Object.entries(j.results).map(([k,v])=>(label[k]||k)+(v?' ✓':' ✗')).join(', ');
     out.style.color='var(--success)'; out.textContent='Sent → '+(ok||'no channels');
   }catch(e){ out.style.color='var(--critical)'; out.textContent='✗ '+e.message; }
 }

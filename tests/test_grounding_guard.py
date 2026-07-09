@@ -142,7 +142,7 @@ def _drain(agen):
 def test_stream_ai_applies_guard(monkeypatch):
     """End-to-end through _stream_ai: a raw provider that emits an invented
     technique has it stripped before the caller sees it."""
-    async def fake_raw(provider, key, model, system, context, messages):
+    async def fake_raw(provider, key, model, system, context, messages, max_tokens=2048):
         for piece in ["Techniques:\n", "- T1110 Brute Force\n",
                       "- T1505 Invented Thing\n", "- T1046 Discovery\n"]:
             yield piece
@@ -156,7 +156,7 @@ def test_stream_ai_applies_guard(monkeypatch):
 
 
 def test_guard_can_be_disabled(monkeypatch):
-    async def fake_raw(provider, key, model, system, context, messages):
+    async def fake_raw(provider, key, model, system, context, messages, max_tokens=2048):
         yield "- T1505 Invented\n"
 
     monkeypatch.setattr(A, "_stream_ai_raw", fake_raw)
@@ -228,7 +228,7 @@ def test_tld_gate_leaves_filenames_and_fields_untouched():
 
 
 def test_domain_grounding_via_stream(monkeypatch):
-    async def fake_raw(provider, key, model, system, context, messages):
+    async def fake_raw(provider, key, model, system, context, messages, max_tokens=2048):
         for piece in ["Beacon to cdn.evil-c2.top", " then to sneaky-c2.club.\n"]:
             yield piece
 

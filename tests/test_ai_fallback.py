@@ -19,7 +19,7 @@ def _clean_ai_state():
 
 def _make_stream(behaviour):
     """behaviour: dict provider -> ('ok', text) | ('raise', exc_msg)"""
-    async def _stream(provider, key, model, system, context, messages):
+    async def _stream(provider, key, model, system, context, messages, max_tokens=2048):
         kind, payload = behaviour[provider]
         if kind == "raise":
             raise RuntimeError(payload)

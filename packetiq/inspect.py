@@ -7,9 +7,10 @@ Used by the web "Packets" browser and the AI "explain this packet" feature.
 
 from __future__ import annotations
 
+import math
 import re
 
-from packetiq.utils.helpers import get_service_name
+from packetiq.utils.helpers import get_service_name, is_private_ip
 
 
 def _ips(pkt):
@@ -283,6 +284,271 @@ def dissect(pkt, index: int = 0) -> dict:
         "hex": _hexdump(raw),
         "length": len(raw),
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Analyst brief — a professional, security-oriented view of a single packet,
+# fed to the AI "explain this packet" feature. It surfaces the things a SOC
+# analyst actually reads a packet for (host roles, TTL/OS fingerprint, port
+# direction, payload entropy, decoded app-layer) as clean grounded facts, so the
+# model reasons over analysis instead of re-describing raw scapy field names
+# (which render ports as obscure service aliases like "ifsf_hb_port").
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _entropy(data: bytes) -> float:
+    """Shannon entropy (bits/byte, 0–8). High (>7.2) ⇒ encrypted/compressed/random."""
+    if not data:
+        return 0.0
+    counts = [0] * 256
+    for b in data:
+        counts[b] += 1
+    n = len(data)
+    ent = 0.0
+    for c in counts:
+        if c:
+            p = c / n
+            ent -= p * math.log2(p)
+    return ent
+
+
+def _printable_ratio(data: bytes) -> float:
+    """Fraction of bytes that are printable ASCII (text vs binary heuristic)."""
+    if not data:
+        return 0.0
+    printable = sum(1 for b in data if 32 <= b < 127 or b in (9, 10, 13))
+    return printable / len(data)
+
+
+def _ttl_analysis(ttl: int):
+    """Map an observed TTL to a likely initial TTL, hop count and OS family.
+    Standard stack defaults: 64 (Linux/Unix/macOS/BSD/Android), 128 (Windows),
+    255 (network gear / some Unix), 32 (legacy/embedded). Phrased as 'consistent
+    with' — TTL is a hint, not proof."""
+    for initial, os_family in ((64, "Linux / Unix / macOS / BSD / Android"),
+                               (128, "Windows"),
+                               (255, "a network device (router/firewall) or some Unix"),
+                               (32, "a legacy or embedded stack")):
+        if 0 < ttl <= initial:
+            return initial, initial - ttl, os_family
+    return ttl, 0, "an unusual stack"
+
+
+def _ip_role(ip: str) -> str:
+    if not ip:
+        return ""
+    try:
+        return "private / internal (RFC1918)" if is_private_ip(ip) else "public / external"
+    except Exception:
+        return ""
+
+
+def _port_role(port: int) -> str:
+    """Describe a port the way an analyst reads it — a named service, or the
+    IANA range it falls in — instead of scapy's obscure service aliases."""
+    if port is None:
+        return ""
+    svc = get_service_name(port)
+    if svc and svc != str(port):
+        return f"{port} ({svc})"
+    if port < 1024:
+        return f"{port} (system/well-known, unassigned here)"
+    if port >= 49152:
+        return f"{port} (dynamic/ephemeral range — typical client source port)"
+    return f"{port} (registered range, no common service)"
+
+
+def _direction_hint(sport, dport) -> str:
+    """Guess client→server direction from which side holds the well-known port."""
+    def _serverish(p):
+        if p is None:
+            return False
+        svc = get_service_name(p)
+        return p < 1024 or (svc and svc != str(p))
+    s_srv, d_srv = _serverish(sport), _serverish(dport)
+    if d_srv and not s_srv:
+        return "client → server (destination holds the service port)"
+    if s_srv and not d_srv:
+        return "server → client (source holds the service port)"
+    return "direction unclear from ports alone"
+
+
+def _tls_sni(payload: bytes) -> str:
+    """Best-effort SNI (server name) extraction from a TLS ClientHello. Returns
+    '' on any malformed/partial record — never raises."""
+    try:
+        if len(payload) < 45 or payload[0] != 0x16 or payload[5] != 0x01:
+            return ""                                   # not a handshake ClientHello
+        pos = 43                                        # after record(5)+hs hdr(4)+ver(2)+random(32)
+        sid_len = payload[pos]; pos += 1 + sid_len      # session id
+        cs_len = (payload[pos] << 8) | payload[pos + 1]; pos += 2 + cs_len   # cipher suites
+        comp_len = payload[pos]; pos += 1 + comp_len    # compression methods
+        if pos + 2 > len(payload):
+            return ""
+        ext_total = (payload[pos] << 8) | payload[pos + 1]; pos += 2
+        end = min(len(payload), pos + ext_total)
+        while pos + 4 <= end:
+            etype = (payload[pos] << 8) | payload[pos + 1]
+            elen = (payload[pos + 2] << 8) | payload[pos + 3]
+            pos += 4
+            if etype == 0x0000 and pos + 5 <= len(payload):        # server_name
+                name_len = (payload[pos + 3] << 8) | payload[pos + 4]
+                start = pos + 5
+                return payload[start:start + name_len].decode("latin-1", "replace")
+            pos += elen
+    except Exception:
+        return ""
+    return ""
+
+
+def _full_tcp_payload(pkt) -> bytes:
+    try:
+        from scapy.layers.inet import TCP
+        if pkt.haslayer(TCP):
+            return bytes(pkt["TCP"].payload)
+    except Exception:
+        pass
+    return b""
+
+
+def _int(v, default: int = 0) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def analyst_brief(pkt, index: int = 0) -> str:
+    """A clean, security-oriented fact sheet for one packet, for the AI explainer.
+    All facts are read straight from the packet — no interpretation, no invention."""
+    from scapy.layers.inet import ICMP, IP, TCP, UDP
+    from scapy.layers.inet6 import IPv6
+
+    # Rebuild through bytes so scapy fills computed fields (length, ihl, checksums)
+    # — captured packets have them, freshly-built ones don't. Harmless if it fails.
+    try:
+        pkt = pkt.__class__(bytes(pkt))
+    except Exception:
+        pass
+
+    proto, sport, dport = _proto_and_ports(pkt)
+    src, dst = _ips(pkt)
+    lines = [
+        f"PACKET #{index}",
+        f"Wireshark protocol: {proto}",
+        f"Info: {_wireshark_info(pkt, proto, sport, dport)}",
+        f"Frame length: {len(pkt)} bytes",
+        "",
+    ]
+
+    # ── Link layer ───────────────────────────────────────────────────────────
+    try:
+        from scapy.layers.l2 import Ether
+        if pkt.haslayer(Ether):
+            e = pkt[Ether]
+            lines += ["ETHERNET",
+                      f"  Source MAC: {e.src}",
+                      f"  Dest MAC:   {e.dst}", ""]
+    except Exception:
+        pass
+
+    # ── Network layer ────────────────────────────────────────────────────────
+    if pkt.haslayer(IP):
+        ip = pkt[IP]
+        i_ttl, hops, os_family = _ttl_analysis(_int(ip.ttl))
+        lines += [
+            "NETWORK (IPv4)",
+            f"  Source IP:      {ip.src}  [{_ip_role(ip.src)}]",
+            f"  Destination IP: {ip.dst}  [{_ip_role(ip.dst)}]",
+            f"  TTL:            {_int(ip.ttl)}  (likely initial {i_ttl}, ~{hops} hops away; "
+            f"consistent with {os_family})",
+            f"  Total length:   {_int(ip.len)} bytes, header {_int(ip.ihl, 5) * 4} bytes",
+            f"  IP ID:          {_int(ip.id)}   Flags: {ip.flags}   Frag offset: {_int(ip.frag)}",
+            "",
+        ]
+    elif pkt.haslayer(IPv6):
+        ip6 = pkt[IPv6]
+        lines += ["NETWORK (IPv6)",
+                  f"  Source IP:      {ip6.src}  [{_ip_role(ip6.src)}]",
+                  f"  Destination IP: {ip6.dst}  [{_ip_role(ip6.dst)}]",
+                  f"  Hop limit:      {_int(ip6.hlim)}", ""]
+
+    # ── Transport layer ──────────────────────────────────────────────────────
+    if pkt.haslayer(TCP):
+        t = pkt[TCP]
+        lines += [
+            "TRANSPORT (TCP)",
+            f"  Source port:      {_port_role(sport)}",
+            f"  Destination port: {_port_role(dport)}",
+            f"  Likely role:      {_direction_hint(sport, dport)}",
+            f"  Flags:            {_tcp_flag_str(pkt) or str(t.flags)}",
+            f"  Seq: {_int(t.seq)}   Ack: {_int(t.ack)}   Window: {_int(t.window)}",
+            "",
+        ]
+    elif pkt.haslayer(UDP):
+        u = pkt[UDP]
+        lines += [
+            "TRANSPORT (UDP)",
+            f"  Source port:      {_port_role(sport)}",
+            f"  Destination port: {_port_role(dport)}",
+            f"  Likely role:      {_direction_hint(sport, dport)}",
+            f"  Length:           {_int(u.len)} bytes",
+            "",
+        ]
+    elif pkt.haslayer(ICMP):
+        ic = pkt[ICMP]
+        lines += ["TRANSPORT (ICMP)",
+                  f"  Type: {_int(ic.type)}   Code: {_int(ic.code)}", ""]
+
+    # ── Application layer ────────────────────────────────────────────────────
+    app = []
+    if proto == "DNS":
+        app.append(f"  Decoded: {_dns_info(pkt)}")
+    elif proto in ("HTTP", "TLS"):
+        head = _tcp_payload(pkt)
+        if proto == "HTTP":
+            req_line = head.split(b"\r", 1)[0].decode("latin-1", "replace")[:120]
+            app.append(f"  Decoded: HTTP — {req_line}")
+        else:
+            app.append(f"  Decoded: {_tls_info(head)}")
+            sni = _tls_sni(_full_tcp_payload(pkt))
+            if sni:
+                app.append(f"  TLS SNI (server name requested): {sni}")
+    if app:
+        lines += ["APPLICATION", *app, ""]
+
+    # ── Payload character (entropy tells encrypted/compressed vs text) ────────
+    body = _full_tcp_payload(pkt)
+    if not body:
+        try:
+            from scapy.packet import Raw
+            if pkt.haslayer(Raw):
+                body = bytes(pkt[Raw].load)
+        except Exception:
+            body = b""
+    if body:
+        ent = _entropy(body[:2048])
+        pr = _printable_ratio(body[:2048])
+        if ent >= 7.2:
+            ent_note = "high — consistent with encrypted, compressed or random data"
+        elif ent >= 5.0:
+            ent_note = "medium — mixed binary/text"
+        else:
+            ent_note = "low — looks like text or structured/repetitive data"
+        head_hex = " ".join(f"{b:02x}" for b in body[:24])
+        ascii_prev = "".join(chr(b) if 32 <= b < 127 else "." for b in body[:48])
+        lines += [
+            "PAYLOAD",
+            f"  Size: {len(body)} bytes",
+            f"  Printable ASCII: {pr * 100:.0f}%",
+            f"  Shannon entropy: {ent:.2f} / 8.00  ({ent_note})",
+            f"  First bytes (hex): {head_hex}",
+            f"  ASCII preview: {ascii_prev}",
+            "",
+        ]
+    else:
+        lines += ["PAYLOAD", "  No transport payload (control segment — e.g. TCP handshake/ACK).", ""]
+
+    return "\n".join(lines)[:4000]
 
 
 # Tokens treated as protocol filters (exact, not substring) so 'http' ≠ 'https'.

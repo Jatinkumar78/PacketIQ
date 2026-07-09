@@ -119,6 +119,100 @@ def format_summary(
     return "\n".join(lines)
 
 
+def format_webapp_findings(res: dict) -> str:
+    """
+    Professional Telegram summary built from the web app's *serialised* analysis
+    result (plain dicts), so it needs no domain objects. This is what the
+    "Notify" button sends — a proper SOC brief (risk, severity breakdown, top
+    talkers, attack chains with MITRE, and the key findings with evidence),
+    instead of a two-line list. A full PDF report is attached separately.
+    """
+    meta = res.get("meta", {}) or {}
+    risk = res.get("risk", {}) or {}
+    events = res.get("events", []) or []
+    chains = res.get("chains", []) or []
+    bd = risk.get("breakdown", {}) or {}
+    tier = str(risk.get("tier", "—")).upper()
+    fname = meta.get("filename", "capture")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    lines = [
+        f"{SEV_EMOJI.get(tier, '⚪')} <b>PacketIQ Security Report</b>",
+        "",
+        f"📁 <b>File:</b> <code>{esc(fname)}</code>",
+        f"🎯 <b>Risk:</b> <b>{esc(risk.get('score', 0))}/100 [{esc(tier)}]</b>",
+        f"📅 <b>Analysed:</b> {now}",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+    if risk.get("summary"):
+        lines += [f"<i>{esc(risk['summary'])}</i>", ""]
+
+    # Severity breakdown (single compact line)
+    brk = "  ".join(
+        f"{SEV_EMOJI[s]} {bd.get(s, 0)}"
+        for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW") if bd.get(s, 0)
+    ) or "🟢 none"
+    lines.append(f"📊 <b>Findings:</b> {len(events)}  ({brk})  ·  ⛓ <b>{len(chains)}</b> chain(s)")
+
+    # Capture context
+    lines.append(
+        f"📦 {esc(meta.get('total_packets', 0))} pkts · "
+        f"{esc(meta.get('bytes_fmt', '—'))} · {esc(meta.get('duration', '—'))} · "
+        f"🌐 {esc(meta.get('external_ips', 0))} external IPs"
+    )
+
+    # Top talkers
+    top_src = res.get("top_src_ips", [])[:3]
+    if top_src:
+        lines.append("")
+        lines.append("🕵 <b>Top sources:</b> " + ", ".join(
+            f"<code>{esc(s.get('ip', ''))}</code>" for s in top_src))
+
+    # Attack chains (with MITRE)
+    if chains:
+        lines.append("")
+        lines.append(f"⛓ <b>Attack chain{'s' if len(chains) > 1 else ''}:</b>")
+        for c in sorted(chains, key=lambda c: len(c.get("target_ips", [])), reverse=True)[:4]:
+            sev_e = SEV_EMOJI.get(str(c.get("severity", "")).upper(), "⚪")
+            atk = ", ".join(c.get("attacker_ips", [])[:2]) or "?"
+            tgt = ", ".join(c.get("target_ips", [])[:2]) or "?"
+            lines.append(f"  {sev_e} <b>{esc(c.get('name', 'Chain'))}</b>")
+            lines.append(f"     <code>{esc(atk)}</code> → <code>{esc(tgt)}</code>")
+            mitre = c.get("mitre", []) or []
+            if mitre:
+                ids = ", ".join(m.get("id", "") for m in mitre[:5] if m.get("id"))
+                if ids:
+                    lines.append(f"     🛡 {esc(ids)}")
+
+    # Key findings (CRITICAL/HIGH first, with one-line evidence)
+    order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    ranked = sorted(events, key=lambda e: (order.get(e.get("severity", ""), 9),
+                                          -int(e.get("confidence", 0) or 0)))
+    top = [e for e in ranked if e.get("severity") in ("CRITICAL", "HIGH")][:6] or ranked[:4]
+    if top:
+        lines.append("")
+        lines.append("🚨 <b>Key findings:</b>")
+        for e in top:
+            sev = str(e.get("severity", "")).upper()
+            sev_e = SEV_EMOJI.get(sev, "⚪")
+            ev_e = EVENT_EMOJI.get(e.get("event_type", ""), "•")
+            name = str(e.get("event_type", "")).replace("_", " ")
+            dst = esc(e.get("dst_ip", "") or "—")
+            if e.get("dst_port"):
+                dst += f":{esc(e['dst_port'])}"
+            lines.append(
+                f"  {sev_e}{ev_e} <b>[{esc(sev)}] {esc(name)}</b> "
+                f"({esc(e.get('confidence', 0))}%)")
+            lines.append(f"     <code>{esc(e.get('src_ip', '') or '?')}</code> → <code>{dst}</code>")
+            desc = (e.get("description", "") or "")[:140]
+            if desc:
+                lines.append(f"     <i>{esc(desc)}</i>")
+
+    lines.append("")
+    lines.append("📄 <b>Full professional SOC report attached as PDF ↓</b>")
+    return "\n".join(lines)
+
+
 def format_chain_alert(chain: AttackChain, index: int, total: int) -> str:
     """
     Detailed alert for a single attack chain.

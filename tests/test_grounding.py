@@ -26,6 +26,6 @@ def test_low_temperature_everywhere():
 
 def test_packet_explain_prompt_is_grounded():
     # The single-packet explainer must not invent fields it wasn't shown.
-    import inspect
-    src = inspect.getsource(webapp.create_app)
-    assert "do not invent" in src.lower()
+    prompt = webapp._PACKET_EXPLAIN_SYSTEM.lower()
+    assert "never invent" in prompt or "do not invent" in prompt
+    assert "only facts" in prompt or "only from" in prompt

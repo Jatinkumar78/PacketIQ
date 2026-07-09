@@ -17,6 +17,7 @@ import os
 import re
 import struct
 import tempfile
+import threading
 import uuid
 import zipfile
 from collections.abc import AsyncGenerator
@@ -1018,6 +1019,8 @@ _AI_TEMPERATURE = float(os.environ.get("PACKETIQ_AI_TEMPERATURE", "0.15"))
 _OLLAMA_DEFAULT_MODEL = "qwen2.5:7b-instruct"
 # Cached reachability probe so we don't hit the daemon on every request.
 _OLLAMA_PROBE: dict = {"at": 0.0, "up": False, "models": []}
+# Models we've already fired a warm-up load for (once per process, per model).
+_OLLAMA_WARMED: set = set()
 
 
 def _ollama_host() -> str:
@@ -1069,6 +1072,81 @@ def _ollama_model() -> str:
     if _OLLAMA_DEFAULT_MODEL in models:
         return _OLLAMA_DEFAULT_MODEL
     return models[0] if models else _OLLAMA_DEFAULT_MODEL
+
+
+def _ollama_keep_alive() -> str:
+    """How long Ollama keeps the model resident after a request. The default of
+    5 minutes makes every occasional query pay a multi-second cold reload of a
+    7B model; keeping it warm for 30m is the single biggest latency win for the
+    local copilot. Override with OLLAMA_KEEP_ALIVE (e.g. '5m', '-1' = forever)."""
+    env = _read_env()
+    return (os.environ.get("OLLAMA_KEEP_ALIVE") or env.get("OLLAMA_KEEP_ALIVE")
+            or "30m").strip()
+
+
+def _ollama_num_ctx(prompt_chars: int, reply_tokens: int) -> int:
+    """Pick a context window that fits the prompt without wasting memory.
+
+    Ollama's default context is small (2048 tokens on many builds), so a large
+    grounded PCAP context gets silently truncated — that *drops evidence* and is
+    a real accuracy bug for the local model, not just a speed one. We size the
+    window to the actual prompt (≈4 chars/token) plus headroom for the reply,
+    snapped to a sane ladder and capped so a 7B model still fits on a laptop.
+    Override the cap with OLLAMA_NUM_CTX."""
+    est = (prompt_chars // 4) + reply_tokens + 256
+    env = _read_env()
+    try:
+        cap = int((os.environ.get("OLLAMA_NUM_CTX") or env.get("OLLAMA_NUM_CTX") or "8192").strip())
+    except ValueError:
+        cap = 8192
+    for size in (2048, 4096, 8192, 16384, 32768):
+        if est <= size:
+            return min(size, cap)
+    return cap
+
+
+def _ollama_should_warm() -> bool:
+    """Only preload the local model when it's actually the provider that will
+    serve requests — i.e. Ollama is force-selected, or no cloud key is present.
+    Checks env directly (never _detect_provider) to avoid probe recursion."""
+    forced = _AI_FORCED.get("provider")
+    if forced == "ollama":
+        return True
+    if forced in ("gemini", "groq", "anthropic"):
+        return False
+    env = _read_env()
+    for n, envname, _ in _PROVIDER_SPECS:
+        if n != "ollama" and (os.environ.get(envname) or env.get(envname)):
+            return False
+    return True
+
+
+def _ollama_warm(model: str, host: str) -> None:
+    """Fire-and-forget preload so the *first* real query isn't slow. Loads the
+    model into memory with the configured keep-alive; runs once per model per
+    process and swallows every error (a down daemon just means no warm-up)."""
+    if not model or model in _OLLAMA_WARMED:
+        return
+    _OLLAMA_WARMED.add(model)
+
+    def _run() -> None:
+        try:
+            import httpx
+            httpx.post(
+                host.rstrip("/") + "/api/chat",
+                json={
+                    "model":      model,
+                    "messages":   [{"role": "user", "content": "hi"}],
+                    "stream":     False,
+                    "keep_alive": _ollama_keep_alive(),
+                    "options":    {"num_predict": 1},
+                },
+                timeout=httpx.Timeout(120.0, connect=5.0),
+            )
+        except Exception:  # noqa: BLE001 — best-effort warm-up
+            pass
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _provider_key(name: str) -> Optional[str]:
@@ -1172,6 +1250,10 @@ def _ai_status_payload() -> dict:
     configured = _configured_providers()
     active = _detect_provider()
     probe = _ollama_probe()
+    # If the local model is what we'll actually use, preload it now (once) so the
+    # user's first query doesn't wait on a cold model load.
+    if probe["up"] and _ollama_should_warm():
+        _ollama_warm(_ollama_model(), _ollama_host())
     return {
         "available": bool(configured),
         "mode": "auto" if not _AI_FORCED.get("provider") else "manual",
@@ -1401,15 +1483,15 @@ class _GroundingFilter:
 
 async def _stream_ai(provider: str, key: str, model: str,
                      system: str, context: str,
-                     messages: list) -> "AsyncGenerator[str, None]":
+                     messages: list, max_tokens: int = 2048) -> "AsyncGenerator[str, None]":
     """Unified async streaming across all providers, with the grounding guardrail
     applied so no ungrounded IP/technique/CVE ever reaches the caller."""
     if not _gg_enabled():
-        async for chunk in _stream_ai_raw(provider, key, model, system, context, messages):
+        async for chunk in _stream_ai_raw(provider, key, model, system, context, messages, max_tokens):
             yield chunk
         return
     gf = _GroundingFilter(_grounding_allowed(context, messages))
-    async for chunk in _stream_ai_raw(provider, key, model, system, context, messages):
+    async for chunk in _stream_ai_raw(provider, key, model, system, context, messages, max_tokens):
         out = gf.feed(chunk)
         if out:
             yield out
@@ -1420,8 +1502,11 @@ async def _stream_ai(provider: str, key: str, model: str,
 
 async def _stream_ai_raw(provider: str, key: str, model: str,
                          system: str, context: str,
-                         messages: list) -> "AsyncGenerator[str, None]":
-    """Unified async streaming across all providers. Yields raw text chunks."""
+                         messages: list, max_tokens: int = 2048) -> "AsyncGenerator[str, None]":
+    """Unified async streaming across all providers. Yields raw text chunks.
+    `max_tokens` caps the reply length; keep it small for short tasks (e.g. a
+    single-packet explanation) so generation — the slow part on a local model —
+    stays fast."""
     import warnings
 
     if provider == "gemini":
@@ -1444,7 +1529,7 @@ async def _stream_ai_raw(provider: str, key: str, model: str,
             contents= gemini_msgs,
             config  = _gtypes.GenerateContentConfig(
                 system_instruction = system_full,
-                max_output_tokens  = 2048,
+                max_output_tokens  = max_tokens,
                 temperature        = _AI_TEMPERATURE,
             ),
         ):
@@ -1460,7 +1545,7 @@ async def _stream_ai_raw(provider: str, key: str, model: str,
         stream = await client.chat.completions.create(
             model      = model,
             messages   = groq_messages,
-            max_tokens = 2048,
+            max_tokens = max_tokens,
             temperature= _AI_TEMPERATURE,
             stream     = True,
         )
@@ -1479,7 +1564,7 @@ async def _stream_ai_raw(provider: str, key: str, model: str,
         ]
         async with client.messages.stream(
             model       = model,
-            max_tokens  = 2048,
+            max_tokens  = max_tokens,
             temperature = _AI_TEMPERATURE,
             system      = system_blocks,
             messages    = messages,
@@ -1494,15 +1579,22 @@ async def _stream_ai_raw(provider: str, key: str, model: str,
 
         import httpx
         host = (key or _ollama_host()).rstrip("/")
-        ollama_messages = [
-            {"role": "system",
-             "content": system + "\n\n<pcap_analysis>\n" + context + "\n</pcap_analysis>"}
-        ] + messages
+        sys_full = system + "\n\n<pcap_analysis>\n" + context + "\n</pcap_analysis>"
+        ollama_messages = [{"role": "system", "content": sys_full}] + messages
+        prompt_chars = len(sys_full) + sum(len(m.get("content", "")) for m in messages)
         payload = {
-            "model":    model,
-            "messages": ollama_messages,
-            "stream":   True,
-            "options":  {"temperature": _AI_TEMPERATURE, "num_predict": 2048},
+            "model":      model,
+            "messages":   ollama_messages,
+            "stream":     True,
+            # Keep the model resident between requests — avoids the cold-reload
+            # that makes an idle local copilot feel slow.
+            "keep_alive": _ollama_keep_alive(),
+            "options": {
+                "temperature": _AI_TEMPERATURE,
+                "num_predict": max_tokens,
+                # Size the window to the prompt so grounding isn't truncated.
+                "num_ctx":     _ollama_num_ctx(prompt_chars, max_tokens),
+            },
         }
         timeout = httpx.Timeout(300.0, connect=5.0)
         async with httpx.AsyncClient(timeout=timeout) as hc:
@@ -1533,6 +1625,30 @@ async def _stream_ai_raw(provider: str, key: str, model: str,
 _AI_LABEL = {"gemini": "Google Gemini", "groq": "Groq", "anthropic": "Anthropic",
              "ollama": "Local (Ollama)"}
 
+# System prompt for the per-packet AI explainer. The packet is supplied as a
+# pre-decoded analyst fact sheet (see inspect.analyst_brief), so the model reads
+# like a senior network-forensics analyst rather than paraphrasing raw fields.
+_PACKET_EXPLAIN_SYSTEM = (
+    "You are PacketIQ Copilot, a senior network-forensics analyst reviewing ONE packet "
+    "for a SOC colleague. You are given a decoded fact sheet for the packet. Write a crisp, "
+    "professional analysis — the way an expert reads a packet in Wireshark — using this exact "
+    "structure with these Markdown headings:\n\n"
+    "**Verdict** — one line: Benign / Informational / Worth a look / Suspicious, with a short reason.\n"
+    "**What this packet is** — protocol stack and what the endpoints are doing, in 1–2 sentences.\n"
+    "**Key fields that matter** — 3–6 bullets on the security-relevant details actually present: "
+    "host roles (internal vs external), TTL/OS fingerprint and hop distance, port direction "
+    "(client vs server, ephemeral vs service), TCP flags / handshake state, and payload character "
+    "(entropy → encrypted/compressed/plaintext, any decoded app-layer such as TLS SNI, HTTP request, "
+    "or DNS query).\n"
+    "**Indicators & context** — what a threat hunter would note (e.g. cleartext protocol, unusual "
+    "port, external destination, high-entropy payload). If nothing stands out, say so plainly.\n"
+    "**Recommended next step** — one concrete analyst action (e.g. follow the TCP stream, check the "
+    "destination against threat intel, or 'no action — normal traffic').\n\n"
+    "Rules: Use ONLY facts in the fact sheet. Never invent IPs, ports, domains, payload or intent "
+    "the data doesn't support. Refer to ports by number. TTL and entropy are hints — say 'consistent "
+    "with', not 'is'. Be concise and concrete; no filler, no restating the whole sheet. "
+    "A single benign packet is normal — don't manufacture threat where there is none.")
+
 # Shown when no provider is usable — covers both the cloud-key and local-LLM paths.
 _NO_PROVIDER_HINT = (
     "No AI provider available. Either add a free API key (GEMINI_API_KEY or "
@@ -1545,7 +1661,8 @@ def _is_rate_limit(msg: str) -> bool:
     return "429" in msg or "resource_exhausted" in m or "quota" in m or "rate limit" in m
 
 
-async def _collect_ai_with_fallback(system: str, context: str, messages: list) -> str:
+async def _collect_ai_with_fallback(system: str, context: str, messages: list,
+                                    max_tokens: int = 2048) -> str:
     """
     Collect a full (non-streamed) AI response, automatically falling back across
     configured providers (Gemini → Groq → Anthropic) when one is rate-limited or
@@ -1561,7 +1678,8 @@ async def _collect_ai_with_fallback(system: str, context: str, messages: list) -
         try:
             text = ""
             async for chunk in _stream_ai(current["provider"], current["key"],
-                                          current["model"], system, context, messages):
+                                          current["model"], system, context, messages,
+                                          max_tokens):
                 text += chunk
             if text.strip():
                 return text
@@ -1846,38 +1964,27 @@ def create_app() -> FastAPI:
             raise HTTPException(410, "The capture for this job is no longer available.")
         if not _detect_provider()["provider"]:
             raise HTTPException(503, _NO_PROVIDER_HINT)
-        from packetiq.inspect import dissect
+        from packetiq.inspect import analyst_brief, summarize
 
         def _find():
             for idx, pkt in _iter_packets(paths):
                 if idx == index:
-                    return dissect(pkt, idx)
+                    return analyst_brief(pkt, idx), summarize(pkt, idx)
             return None
 
         loop = asyncio.get_event_loop()
-        d = await loop.run_in_executor(None, _find)
-        if d is None:
+        found = await loop.run_in_executor(None, _find)
+        if found is None:
             raise HTTPException(404, "Packet not found.")
-
-        lines = [f"Packet #{index}: {d['summary'].get('info', '')}", ""]
-        for layer in d["layers"]:
-            lines.append(f"[{layer['name']}]")
-            for f in layer["fields"][:25]:
-                lines.append(f"  {f['name']} = {f['value']}")
-        pkt_text = "\n".join(lines)[:4000]
-        system = ("You are PacketIQ Copilot. Explain a single network packet to a SOC analyst in "
-                  "plain, friendly language: what protocol/layers it has, what it is doing, notable "
-                  "fields, and whether anything looks suspicious. Be concise and concrete. If nothing "
-                  "is suspicious, say so. Describe ONLY the fields shown below — do not invent "
-                  "addresses, ports or payload that aren't in the packet, and don't guess at intent "
-                  "the fields don't support.")
+        pkt_text, summary = found
         try:
             text = await _collect_ai_with_fallback(
-                system, pkt_text,
-                [{"role": "user", "content": "Explain this packet:\n\n" + pkt_text}])
+                _PACKET_EXPLAIN_SYSTEM, pkt_text,
+                [{"role": "user", "content": "Analyse this packet:\n\n" + pkt_text}],
+                max_tokens=900)
         except RuntimeError as exc:
             raise HTTPException(502, str(exc)) from exc
-        return {"explanation": text, "summary": d["summary"]}
+        return {"explanation": text, "summary": summary}
 
     # ── Live capture ────────────────────────────────────────────────────
     @app.get("/api/live/interfaces")
@@ -2043,6 +2150,52 @@ def create_app() -> FastAPI:
             results["telegram"] = bool(ok)
         return results
 
+    def _send_findings(res: dict) -> dict:
+        """Send a professional findings brief across all channels and attach a
+        full PDF SOC report to Telegram. Telegram gets rich HTML; Slack/e-mail
+        get the same content tag-stripped to plain text."""
+        import os
+        import re
+        import shutil
+        import tempfile
+
+        from packetiq.alerts import channels, formatter
+        from packetiq.alerts.telegram import TelegramSender, esc, load_credentials
+        from packetiq.export import build_pdf
+
+        meta = res.get("meta", {}) or {}
+        fname = meta.get("filename", "capture")
+        rich = formatter.format_webapp_findings(res)
+        plain = re.sub(r"<[^>]+>", "", rich)             # HTML → plain for other channels
+        subject = f"PacketIQ findings — {fname}"
+
+        results: dict = {}
+        for chan, (ok, _err) in channels.broadcast(subject, plain).items():
+            results[chan] = bool(ok)
+
+        tok, cid = load_credentials()
+        if tok and cid:
+            sender = TelegramSender(tok, cid)
+            ok, _ = sender.send(rich)
+            results["telegram"] = bool(ok)
+            # Build + attach a professional PDF report (best-effort).
+            tmpdir = tempfile.mkdtemp(prefix="packetiq_")
+            try:
+                safe = (re.sub(r"[^A-Za-z0-9_.-]+", "_", str(fname)).rsplit(".", 1)[0]
+                        or "capture")[:60]
+                pdf_path = os.path.join(tmpdir, f"PacketIQ_Report_{safe}.pdf")
+                if build_pdf(pdf_path, res):
+                    risk = res.get("risk", {}) or {}
+                    caption = (f"📄 <b>PacketIQ SOC Report</b> — {esc(fname)}\n"
+                               f"Risk {esc(risk.get('score', 0))}/100 "
+                               f"[{esc(risk.get('tier', ''))}] · "
+                               f"{len(res.get('events', []))} findings")
+                    dok, _ = sender.send_document(pdf_path, caption)
+                    results["telegram_pdf"] = bool(dok)
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+        return results
+
     @app.post("/api/notify/test")
     async def notify_test():
         if not _notify_channels():
@@ -2059,14 +2212,9 @@ def create_app() -> FastAPI:
         if not _notify_channels():
             raise HTTPException(400, "No channels configured.")
         res = _jobs[job_id]["result"]
-        m, r, ev = res["meta"], res["risk"], res["events"]
-        top = [e for e in ev if e["severity"] in ("CRITICAL", "HIGH")][:6]
-        lines = [f"<b>{m['filename']}</b> — Risk {r['score']}/100 [{r['tier']}]",
-                 f"{len(ev)} findings · {len(res['chains'])} attack chain(s)", ""]
-        lines += [f"• [{e['severity']}] {e['event_type']} {e['src_ip']}→{e['dst_ip']}" for e in top]
         loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(None, _send_all, "PacketIQ findings", "\n".join(lines))
-        return {"results": results, "sent_for": m["filename"]}
+        results = await loop.run_in_executor(None, _send_findings, res)
+        return {"results": results, "sent_for": res["meta"]["filename"]}
 
     # ── Telegram guided setup (token + chat-id in the web UI) ────────────
     @app.get("/api/notify/telegram")

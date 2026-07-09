@@ -35,6 +35,7 @@ dependencies = [
     "groq>=0.11.0",
     "tomli>=2.0.0; python_version < '3.11'",
     "cryptography>=44.0.1",          # GHSA-537c-gmf6-5ccf and prior
+    "reportlab>=4.0.0",              # professional PDF SOC reports (offline, pure-Python)
 ]
 
 classifiers = [

@@ -5,6 +5,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Professional AI packet analysis, richer Telegram alerts + PDF & a faster local LLM
+
+**Added**
+- **Professional per-packet AI analysis.** The "Explain this packet" copilot now
+  reads a **decoded analyst fact sheet** (`inspect.analyst_brief`) instead of a raw
+  scapy field dump — so it reasons like a senior analyst: host roles (internal vs
+  external), **TTL → OS fingerprint** and hop distance, **port direction** (client vs
+  server, service vs ephemeral, shown as *numbers* — no more obscure aliases like
+  `ifsf_hb_port`), TCP flags / handshake state, **payload Shannon entropy** (encrypted
+  vs plaintext), and decoded app-layer (**TLS SNI**, HTTP request line, DNS query). The
+  output is structured (Verdict · What it is · Key fields · Indicators · Next step) and
+  strictly grounded. 7 new tests.
+- **Detailed Telegram findings + full PDF report.** The **📣 Send report + PDF** button
+  now sends a proper SOC brief (risk, severity breakdown, top talkers, attack chains
+  with MITRE, and every key finding with one-line evidence) instead of a two-line list,
+  and attaches a **professional multi-section PDF report** (`export.build_pdf`, ReportLab,
+  offline). Slack/e-mail get the same content as plain text. 10 new tests.
+
+**Changed**
+- **Faster, more accurate local LLM (Ollama).** The offline copilot now keeps the model
+  **resident between requests** (`keep_alive`, default 30 min — no more multi-second cold
+  reloads), **sizes the context window to the prompt** so large grounded PCAP context is
+  no longer silently truncated (a real accuracy fix), caps output tokens per task
+  (a single-packet explanation no longer generates up to 2048 tokens), and **pre-loads
+  the model** in the background when it's the active provider so the first query is fast.
+  Tunable via `OLLAMA_KEEP_ALIVE` / `OLLAMA_NUM_CTX`. 5 new tests.
+
 ### Wireshark-accurate packets, 1-click Telegram & a faster pipeline
 
 **Fixed**
