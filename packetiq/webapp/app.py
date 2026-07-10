@@ -1009,6 +1009,17 @@ _PROVIDER_SPECS = [
     ("anthropic", "ANTHROPIC_API_KEY", "claude-sonnet-4-6"),
     ("ollama",    "OLLAMA_MODEL",      "qwen2.5:7b-instruct"),
 ]
+
+# Google grants free-tier quota *per model*, not per key. A project can therefore
+# hold a perfectly valid key that answers `limit: 0` for gemini-2.0-flash while
+# newer models reply normally. That is a wrong-model problem, not a dead-provider
+# problem, so we walk a candidate list instead of benching Gemini for an hour.
+# Order = preference; the first entry is the documented free-tier model.
+_MODEL_CANDIDATES = {
+    "gemini": ["gemini-2.0-flash", "gemini-flash-lite-latest", "gemini-3-flash-preview"],
+}
+# "provider:model" pairs this process has proven unusable — never retried.
+_MODEL_DEAD: set = set()
 # Manual override from the GUI: None => fully automatic.
 _AI_FORCED: dict = {"provider": None}
 # Sticky auto-switch memory: provider name -> epoch time it's healthy again.
@@ -1021,6 +1032,8 @@ _AI_TEMPERATURE = float(os.environ.get("PACKETIQ_AI_TEMPERATURE", "0.15"))
 # evidence-only rules, and qwen2.5-7b-instruct follows instructions well and is
 # strong at the structured extraction the copilot needs (IOC lists, MITRE tables).
 _OLLAMA_DEFAULT_MODEL = "qwen2.5:7b-instruct"
+# Any fixed value works; what matters is that it does not change between runs.
+_OLLAMA_DEFAULT_SEED = 42
 # Cached reachability probe so we don't hit the daemon on every request.
 _OLLAMA_PROBE: dict = {"at": 0.0, "up": False, "models": []}
 # Models we've already fired a warm-up load for (once per process, per model).
@@ -1086,6 +1099,26 @@ def _ollama_keep_alive() -> str:
     env = _read_env()
     return (os.environ.get("OLLAMA_KEEP_ALIVE") or env.get("OLLAMA_KEEP_ALIVE")
             or "30m").strip()
+
+
+def _ollama_seed() -> Optional[int]:
+    """Fixed sampling seed so identical evidence yields identical prose.
+
+    Ollama seeds randomly by default, so re-running the same analysis reworded
+    the answer every time. For an evidence-handling tool that is a liability: a
+    report the analyst cannot regenerate verbatim is hard to defend. Pinning the
+    seed makes the local copilot reproducible. `OLLAMA_SEED=random` opts out.
+    """
+    env = _read_env()
+    raw = (os.environ.get("OLLAMA_SEED") or env.get("OLLAMA_SEED") or "").strip().lower()
+    if raw in ("random", "none", "off"):
+        return None
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return _OLLAMA_DEFAULT_SEED
 
 
 def _ollama_num_ctx(prompt_chars: int, reply_tokens: int) -> int:
@@ -1183,10 +1216,14 @@ def _cooldown_left(name: str) -> int:
     return max(0, round(_AI_COOLDOWN.get(name, 0) - time.time()))
 
 
-def _mark_cooldown(name: str, seconds: float) -> None:
-    """Put a provider on a short cooldown so auto-switch stops retrying it."""
+_MAX_COOLDOWN_SECS = 600.0          # ordinary per-minute throttling
+_LONG_COOLDOWN_SECS = 3600.0        # a quota that won't come back this hour
+
+
+def _mark_cooldown(name: str, seconds: float, max_secs: float = _MAX_COOLDOWN_SECS) -> None:
+    """Put a provider on cooldown so auto-switch stops retrying it."""
     import time
-    _AI_COOLDOWN[name] = time.time() + max(5.0, min(float(seconds), 600.0))
+    _AI_COOLDOWN[name] = time.time() + max(5.0, min(float(seconds), max_secs))
 
 
 def _retry_after_seconds(msg: str, default: float = 60.0) -> float:
@@ -1200,8 +1237,39 @@ def _retry_after_seconds(msg: str, default: float = 60.0) -> float:
 
 
 def _model_for(name: str) -> str:
+    """The model id to call `name` with.
+
+    `<PROVIDER>_MODEL` in the environment or .env always wins — without it there
+    was no way to move off a model whose free-tier quota Google had zeroed short
+    of editing this file. Otherwise use the first candidate not already proven
+    unusable, falling back to the provider's declared default.
+    """
+    env = _read_env()
+    envname = f"{name.upper()}_MODEL"
+    override = (os.environ.get(envname) or env.get(envname) or "").strip()
+    if override:
+        return override
+    for model in _MODEL_CANDIDATES.get(name, []):
+        if _model_alive(name, model):
+            return model
     for n, _, model in _PROVIDER_SPECS:
         if n == name:
+            return model
+    return ""
+
+
+def _model_alive(provider: str, model: str) -> bool:
+    return f"{provider}:{model}" not in _MODEL_DEAD
+
+
+def _mark_model_dead(provider: str, model: str) -> None:
+    _MODEL_DEAD.add(f"{provider}:{model}")
+
+
+def _next_model(provider: str, current: str) -> str:
+    """Another model of the same provider worth trying, or '' if none is left."""
+    for model in _MODEL_CANDIDATES.get(provider, []):
+        if model != current and _model_alive(provider, model):
             return model
     return ""
 
@@ -1586,6 +1654,17 @@ async def _stream_ai_raw(provider: str, key: str, model: str,
         sys_full = system + "\n\n<pcap_analysis>\n" + context + "\n</pcap_analysis>"
         ollama_messages = [{"role": "system", "content": sys_full}] + messages
         prompt_chars = len(sys_full) + sum(len(m.get("content", "")) for m in messages)
+        options: dict = {
+            "temperature": _AI_TEMPERATURE,
+            "num_predict": max_tokens,
+            # Size the window to the prompt so grounding isn't truncated.
+            "num_ctx":     _ollama_num_ctx(prompt_chars, max_tokens),
+        }
+        seed = _ollama_seed()
+        if seed is not None:
+            # Same evidence in, same words out — the copilot's prose is part of a
+            # forensic report and must survive being regenerated.
+            options["seed"] = seed
         payload = {
             "model":      model,
             "messages":   ollama_messages,
@@ -1593,12 +1672,7 @@ async def _stream_ai_raw(provider: str, key: str, model: str,
             # Keep the model resident between requests — avoids the cold-reload
             # that makes an idle local copilot feel slow.
             "keep_alive": _ollama_keep_alive(),
-            "options": {
-                "temperature": _AI_TEMPERATURE,
-                "num_predict": max_tokens,
-                # Size the window to the prompt so grounding isn't truncated.
-                "num_ctx":     _ollama_num_ctx(prompt_chars, max_tokens),
-            },
+            "options":    options,
         }
         timeout = httpx.Timeout(300.0, connect=5.0)
         async with httpx.AsyncClient(timeout=timeout) as hc:
@@ -1805,6 +1879,73 @@ def _is_rate_limit(msg: str) -> bool:
     return "429" in msg or "resource_exhausted" in m or "quota" in m or "rate limit" in m
 
 
+# A rejected key does not fix itself in a few seconds, so bench that provider for
+# a while rather than re-failing on every single message.
+_AUTH_COOLDOWN_SECS = 300.0
+_AUTH_MARKERS = ("401", "403", "api key not valid", "api_key_invalid", "invalid api key",
+                 "invalid_api_key", "unauthorized", "permission denied", "authentication")
+
+
+def _is_auth_error(msg: str) -> bool:
+    """A credential problem — wrong, revoked or unauthorised key."""
+    m = (msg or "").lower()
+    return any(marker in m for marker in _AUTH_MARKERS)
+
+
+def _is_exhausted_quota(msg: str) -> bool:
+    """A quota that will not recover in the next few seconds — a *per-day* limit, or
+    a free tier of literally zero. Google reports 'Please retry in 8s' even in this
+    case, so honouring its retryDelay makes us re-fail on every single message."""
+    m = (msg or "").lower()
+    return "perday" in m.replace(" ", "") or "limit: 0" in m or "limit:0" in m
+
+
+def _is_model_unusable(msg: str) -> bool:
+    """The failure is specific to the *model*, so another model of the same
+    provider may well work: a zero free-tier allowance (`limit: 0`, which Google
+    reports per model), or a model id this key cannot address at all."""
+    m = (msg or "").lower()
+    if "limit: 0" in m or "limit:0" in m:
+        return True
+    if "not_found" in m or ("404" in m and "model" in m):
+        return True
+    return "is not found for api version" in m or "does not exist" in m
+
+
+def _note_provider_failure(name: str, msg: str) -> None:
+    """Record why a provider failed so the next request skips it instead of
+    repeating the same doomed call. Transient/unknown errors are not cooled down."""
+    if _is_rate_limit(msg):
+        if _is_exhausted_quota(msg):
+            _mark_cooldown(name, _LONG_COOLDOWN_SECS, _LONG_COOLDOWN_SECS)
+        else:
+            _mark_cooldown(name, _retry_after_seconds(msg))
+    elif _is_auth_error(msg):
+        _mark_cooldown(name, _AUTH_COOLDOWN_SECS)
+
+
+def _failure_reason(msg: str) -> str:
+    """A short phrase for the switch notice, e.g. 'Google Gemini quota reached'."""
+    if _is_rate_limit(msg):
+        return "daily quota used up" if _is_exhausted_quota(msg) else "quota reached"
+    if _is_auth_error(msg):
+        return "key rejected"
+    return "unavailable"
+
+
+def _friendly_ai_error(label: str, msg: str, exhausted: bool) -> str:
+    """The message shown once *every* provider has failed."""
+    if exhausted and _is_rate_limit(msg):
+        return ("**All AI providers have hit their rate limits.**\n\n"
+                "Wait a minute and try again, or add another key in `.env`. "
+                "A local Ollama model has no rate limit at all.")
+    if _is_auth_error(msg):
+        return (f"**{label} rejected its API key.**\n\n"
+                "Check the key in `.env` — and note that a key exported in your shell "
+                "overrides `.env`. Restart the server after fixing it.")
+    return f"**AI error ({label}):** {msg[:200]}"
+
+
 async def _collect_ai_with_fallback(system: str, context: str, messages: list,
                                     max_tokens: int = 2048) -> str:
     """
@@ -1830,10 +1971,17 @@ async def _collect_ai_with_fallback(system: str, context: str, messages: list,
             last_err = f"{_AI_LABEL.get(current['provider'])} returned an empty response."
         except Exception as exc:  # noqa: BLE001
             last_err = str(exc)
-            if _is_rate_limit(last_err):
-                # Sticky auto-switch: remember this provider is exhausted so the
-                # next request goes straight to a healthy one (no wasted retry).
-                _mark_cooldown(current["provider"], _retry_after_seconds(last_err))
+            # A model-scoped failure means "wrong model", not "dead provider":
+            # retry the same provider on its next candidate before giving up on it.
+            if _is_model_unusable(last_err):
+                _mark_model_dead(current["provider"], current["model"])
+                alt = _next_model(current["provider"], current["model"])
+                if alt:
+                    current = {**current, "model": alt}
+                    continue
+            # Sticky auto-switch: remember this provider is exhausted or its key was
+            # rejected, so the next request goes straight to a healthy one.
+            _note_provider_failure(current["provider"], last_err)
         # try the next configured provider
         skipped.add(current["provider"])
         current = _detect_provider(skip=skipped)
@@ -2794,35 +2942,37 @@ def create_app() -> FastAPI:
                     yield "data: [DONE]\n\n"
                     return
                 except Exception as exc:
+                    # Any failure — exhausted quota, a rejected key, a missing SDK,
+                    # a network blip — means "try the next provider", exactly as the
+                    # non-streaming path does. Giving up here would strand the user
+                    # even when a working provider (e.g. the local Ollama model) is
+                    # sitting right there.
                     msg = str(exc)
-                    is_rate_limit = "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower()
-
-                    if is_rate_limit:
-                        # Sticky auto-switch: cooldown the dead provider, then
-                        # try the next configured one automatically.
-                        _mark_cooldown(current["provider"], _retry_after_seconds(msg))
-                        skipped.add(current["provider"])
-                        fallback = _detect_provider(skip=skipped)
-                        if fallback["provider"]:
-                            fallback_label = _LABEL.get(fallback["provider"], fallback["provider"])
-                            notice = f"*({label} quota reached — switching to {fallback_label}...)*\n\n"
-                            yield f"data: {json.dumps({'text': notice})}\n\n"
-                            current = fallback
+                    # A model-scoped failure (zero free-tier quota for that model,
+                    # or an unaddressable model id) means the provider is fine and
+                    # only the model is wrong. Switch model silently and retry —
+                    # no cooldown, no notice, because nothing the analyst cares
+                    # about has actually changed.
+                    if _is_model_unusable(msg):
+                        _mark_model_dead(current["provider"], current["model"])
+                        alt = _next_model(current["provider"], current["model"])
+                        if alt:
+                            current = {**current, "model": alt}
                             continue
-                        # All providers exhausted
-                        friendly = (
-                            "**All AI providers have hit their rate limits.**\n\n"
-                            "Wait a minute and try again, or check your API keys in `.env`."
-                        )
-                    elif "401" in msg or "invalid" in msg.lower() or "authentication" in msg.lower():
-                        friendly = (
-                            f"**{label} API key is invalid.**\n\n"
-                            "Check your API key in the `.env` file and restart the server."
-                        )
-                    elif "403" in msg or "permission" in msg.lower():
-                        friendly = f"**{label} permission denied.** Check your API key has the correct permissions."
-                    else:
-                        friendly = f"**AI error ({label}):** {msg[:200]}"
+                    _note_provider_failure(current["provider"], msg)
+                    skipped.add(current["provider"])
+                    fallback = _detect_provider(skip=skipped)
+                    if fallback["provider"]:
+                        fallback_label = _LABEL.get(fallback["provider"], fallback["provider"])
+                        # A `notice`, not `text`: the UI shows it as a quiet status line
+                        # so it never lands inside the answer the analyst reads or copies.
+                        notice = (f"{label} {_failure_reason(msg)} — answered by "
+                                  f"{fallback_label}")
+                        yield f"data: {json.dumps({'notice': notice})}\n\n"
+                        current = fallback
+                        continue
+                    # Every configured provider has now failed.
+                    friendly = _friendly_ai_error(label, msg, exhausted=True)
                     yield f"data: {json.dumps({'error': friendly})}\n\n"
                     return
 

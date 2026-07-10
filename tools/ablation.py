@@ -83,10 +83,14 @@ def to_markdown(results: list, cap_name: str, trials: int) -> str:
         "`tools/eval_copilot.py`: **faithfulness** = share of the copilot's specific "
         "claims (IPs, MITRE technique IDs, CVE IDs) grounded in the evidence; a "
         "hallucination is any invented entity.", "",
-        "Guardrail **OFF** = the raw model (non-deterministic — the raw column shows "
-        "the min–max faithfulness across the trials). Guardrail **ON** = what "
-        "PacketIQ ships: a deterministic post-filter that redacts any ungrounded "
-        "entity, so it is 100% faithful by construction on *every* model.", "",
+        "Guardrail **OFF** = the raw model (the raw column shows the min–max "
+        "faithfulness across the trials). Guardrail **ON** = what PacketIQ ships: "
+        "a deterministic post-filter that redacts any ungrounded entity, so it is "
+        "100% faithful by construction on *every* model.", "",
+        "PacketIQ pins the Ollama sampling seed (`OLLAMA_SEED`, default 42), so "
+        "repeated trials of the same model reproduce exactly. Set "
+        "`OLLAMA_SEED=random` to sample the raw model's run-to-run variance "
+        "instead.", "",
         "| Local model | Raw faithfulness (min–max) | Raw hallucinated claims | "
         "Guarded faithfulness | Guarded hallucinated |",
         "|---|--:|--:|--:|--:|",
@@ -105,8 +109,8 @@ def to_markdown(results: list, cap_name: str, trials: int) -> str:
         reading = (
             f"**Reading it.** Across the raw trials the local models produced "
             f"**{total_raw_hall} hallucinated claim(s)** in total — invented MITRE "
-            f"techniques or CVEs not in the evidence — and the exact count wobbles "
-            f"between runs because the models are non-deterministic. With the "
+            f"techniques or CVEs not in the evidence — and the count grows sharply "
+            f"as the model gets smaller. With the "
             f"guardrail on, every model is at 100% with **{total_guard_hall}** "
             f"hallucinated claims: the filter removes each ungrounded entity "
             f"identically regardless of which model produced the prose. That "

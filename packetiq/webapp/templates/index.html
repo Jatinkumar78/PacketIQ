@@ -517,6 +517,12 @@ tbody tr:hover td{background:var(--surface2)}
 }
 .chat-msg{display:flex;gap:8px;align-items:flex-start}
 .chat-msg.user{flex-direction:row-reverse}
+/* Quiet status line when a provider is unavailable and another one answered.
+   Kept outside the message bubble so it never ends up in copied answer text. */
+.chat-notice{
+  font-size:11px;color:var(--text-sub);font-style:italic;
+  padding:2px 0 2px 36px;opacity:.75;
+}
 .msg-avatar{
   width:28px;height:28px;border-radius:50%;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;
@@ -3292,6 +3298,17 @@ function appendMsg(role, htmlContent, streaming){
   return div.querySelector('.msg-bubble');
 }
 
+/* A provider-switch status line, inserted above the answer it belongs to. */
+function appendNotice(text, bubble){
+  const msgs = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'chat-notice';
+  div.textContent = text;
+  const row = bubble && bubble.closest ? bubble.closest('.chat-msg') : null;
+  if(row) msgs.insertBefore(div, row); else msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
 function showTyping(){
   const msgs = document.getElementById('chat-messages');
   const div = document.createElement('div');
@@ -3354,6 +3371,7 @@ async function sendChat(){
           bubble.innerHTML = '<div style="color:var(--medium)">'+errMd+'</div>';
           break;
         }
+        if(obj.notice){ appendNotice(obj.notice, bubble); continue; }
         if(obj.text){ fullText += obj.text; }
         // Render markdown progressively
         if(typeof marked !== 'undefined'){

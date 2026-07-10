@@ -20,7 +20,7 @@ model emits that is not present in the evidence the model was given. The filter 
 *sound* (it never removes a grounded entity), *deterministic* (identical output for
 identical input, independent of the model), and operates on the streaming token
 path so it covers chat, explain-with-AI, and generated reports uniformly. On a
-multi-model ablation over three local LLMs, the raw models produced **95 hallucinated
+multi-model ablation over three local LLMs, the raw models produced **47 hallucinated
 entities**; with the guardrail enabled, **0** — on every model. The guarantee is
 structural rather than statistical: it does not make the model better, it makes a
 class of unsafe output *impossible to surface*.
@@ -119,22 +119,30 @@ is counted as a hallucination. The guardrail is toggled with an environment flag
 the same generation path is measured with it off (the raw model) and on.
 
 **Multi-model ablation.** `tools/ablation.py` runs the battery across three local
-Ollama models on a real botnet capture (`donbot.pcap`), three trials each with the
-guardrail off, once with it on (deterministic). Results:
+Ollama models on a real botnet capture (`donbot.pcap`), with the guardrail off and
+then on. The generation seed is pinned (`OLLAMA_SEED`, default 42), so each row
+reproduces exactly rather than being one draw from a distribution. Results:
 
-| Local model | Raw faithfulness (min–max) | Raw hallucinated entities | Guarded |
+| Local model | Raw faithfulness | Raw hallucinated entities | Guarded |
 |---|--:|--:|--:|
-| `llama3.1:8b` | 69.0–93.3% | 26 | **100% / 0** |
-| `llama3.2:3b` | 15.0–20.0% | 55 | **100% / 0** |
-| `qwen2.5:7b-instruct` | 33.3–94.9% | 14 | **100% / 0** |
+| `qwen2.5:7b-instruct` | 62.5% | 9 | **100% / 0** |
+| `llama3.1:8b` | 32.0% | 17 | **100% / 0** |
+| `llama3.2:3b` | 0.0% | 21 | **100% / 0** |
 
-Across the raw trials the three models emitted **95** ungrounded entities in total,
-with wide run-to-run variance (the smallest model, `llama3.2:3b`, was faithful only
-15–20% of the time). With the guardrail enabled every model reached a deterministic
-**100% faithfulness / 0 hallucinations** — the filter removed each ungrounded entity
-identically regardless of which model produced the prose. That *model-independence*
-is the generalisation claim: the guarantee is a property of the output filter, not
-of any model's training.
+Across the raw runs the three models emitted **47** ungrounded entities in total,
+and raw faithfulness degrades sharply with model size — the smallest model,
+`llama3.2:3b`, grounded none of its 21 specific claims. With the guardrail enabled
+every model reached **100% faithfulness / 0 hallucinations** — the filter removed
+each ungrounded entity identically regardless of which model produced the prose.
+That *model-independence* is the generalisation claim: the guarantee is a property
+of the output filter, not of any model's training.
+
+Two caveats bound the claim. First, guarded faithfulness is a **safety** measure,
+not a quality one: a weaker model reaches 100% partly by having more of its output
+deleted, so the filter bounds the damage rather than repairing the answer. Second,
+the effect is **capture-dependent** — on a small synthetic capture the raw model
+scores 100% simply because there is little to invent, so the guardrail's value must
+be measured on evidence-rich traffic, as it is here.
 
 **Detection grounding (context.)** The entities in `C` are themselves real: they
 come from PacketIQ's deterministic detectors, evaluated on real Stratosphere CTU-13

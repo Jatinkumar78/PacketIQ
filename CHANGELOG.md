@@ -5,6 +5,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Reliable AI provider selection & a reproducible local copilot
+
+**Fixed**
+- **Gemini could not be used at all on projects with no free-tier allowance.**
+  Google grants free-tier quota *per model and per project*, not per key: a valid
+  key answers `429 … limit: 0` for the default `gemini-2.0-flash` while newer
+  models reply normally, so issuing a fresh key changed nothing. PacketIQ now
+  tells a model-scoped failure apart from a dead provider — it marks that model
+  unusable, silently retries the same provider on its next candidate model
+  (`_MODEL_CANDIDATES`), and only benches the provider once every candidate is
+  exhausted. Verified against the live API on both the streaming chat path and
+  the non-streaming explain/report path.
+
+**Added**
+- **`GEMINI_MODEL` / `GROQ_MODEL` / `ANTHROPIC_MODEL` overrides.** Previously the
+  model was hard-coded, so there was no way to move off a model whose quota
+  Google had zeroed without editing the source.
+- **The local copilot is now reproducible.** Ollama seeds its sampler randomly, so
+  the same capture was reworded on every run — indefensible for prose that goes
+  into a forensic report. `OLLAMA_SEED` (default `42`) pins it; `random` opts out.
+
+**Changed**
+- **Faithfulness figures re-measured on `donbot.pcap` and corrected.** The
+  previously published raw-model numbers do not reproduce on current code, and the
+  built-in `--demo` capture turns out to be too small to expose hallucination at
+  all (the raw model scores 100% on it). Measured on evidence-rich traffic with
+  the seed pinned: raw `qwen2.5:7b-instruct` 62.5% (9 hallucinated claims) →
+  100% / 0 guarded; across three local models, 47 raw hallucinations → 0 guarded.
+  `reports/` and `docs/ollama_integration.md` now carry these numbers, and note
+  that guarded faithfulness is a safety measure rather than a quality one.
+
 ### Professional AI packet analysis, richer Telegram alerts + PDF & a faster local LLM
 
 **Added**
