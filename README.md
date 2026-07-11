@@ -33,6 +33,16 @@
 [**Architecture**](#-architecture) ·
 [**Config**](#-configuration)
 
+<br/><br/>
+
+<img src="docs/screenshots/01-dashboard.png" alt="PacketIQ analyst dashboard — risk score, kill-chain coverage, protocol and severity breakdowns" width="100%"/>
+
+<sub>⬆︎ <i>The live web app analysing a capture. <b>Every screenshot in this README is the real running app</b> — nothing mocked, nothing staged.</i></sub>
+
+<br/><br/>
+
+**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`15`** detection types · **`7,600+`** live threat-intel indicators · **`304`** tests · **`ruff`-clean**
+
 </div>
 
 ---
@@ -50,6 +60,67 @@
 
 > [!IMPORTANT]
 > **Built to be real, not flashy.** Threat-intel matches come from *actual* abuse.ch/Tor/Spamhaus feeds bundled in the repo — no invented hashes or IOCs. Threat-actor output is framed as **behavioural TTP overlap, not confirmed attribution**. The core analysis runs **fully offline**; AI is optional. No detector is perfect — always validate findings against the raw capture.
+
+---
+
+## 🎬 See It In Action
+
+<div align="center"><sub>A guided tour of the browser app analysing the bundled <code>samples/demo_attack.pcap</code> — real screenshots, not mockups.</sub></div>
+
+<br/>
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/02-threat-events.png" alt="Threat events with an expanded 'why was this flagged' explainability panel"/>
+<b>🔍 Threat Events → “Why was this flagged?”</b><br/>
+<sub>Every detection expands into <b>what · why · evidence · recommended action · MITRE</b>. No black box — each alert defends itself.</sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/screenshots/03-attack-chains.png" alt="Attack-chain correlation with MITRE ATT&CK coverage heatmap and kill-chain pipeline"/>
+<b>🔗 Attack-Chain Correlation</b><br/>
+<sub>A <b>MITRE ATT&CK coverage heatmap</b> (techniques × tactics) plus a visual kill-chain pipeline per attacker, with a one-click ATT&CK Navigator layer.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/04-network-graph.png" alt="Interactive force-directed connection graph"/>
+<b>🌐 Interactive Connection Graph</b><br/>
+<sub>Force-directed, draggable, colour-coded <b>internal / external / flagged</b> — the attacker lights up as the hub instantly.</sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/screenshots/05-packet-inspector.png" alt="Wireshark-style packet inspector"/>
+<b>🧬 Wireshark-style Packet Inspector</b><br/>
+<sub>Every packet, searchable, colour-by-protocol. Protocol/Info decided by <b>payload inspection like Wireshark</b>, not by port alone — click any packet for layers, fields, hex + “Explain with AI”.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/07-threat-intel.png" alt="Real OSINT threat-intelligence feeds panel"/>
+<b>📡 Real OSINT Threat Intel</b><br/>
+<sub><b>7,600+ live indicators</b> from abuse.ch, Spamhaus & Tor — cross-referenced against every capture, refreshable from source. <b>Nothing fabricated.</b></sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/screenshots/09-attribution.png" alt="Threat-actor TTP overlap panel with disclaimers"/>
+<b>🎯 Threat-Actor TTP Overlap</b><br/>
+<sub>Behavioural similarity to known APT / crime-group profiles — <b>clearly labelled an investigative lead, <i>not</i> confirmed attribution</b>. Honesty over hype.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/06-sigma-rules.png" alt="Deployable SIGMA detection rules"/>
+<b>📜 Deployable SIGMA Rules</b><br/>
+<sub>Auto-generated, <b>pySigma-valid</b> (validated in CI), compatible with Splunk / Elastic / Sentinel / QRadar — exported as a ZIP.</sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/screenshots/10-exports.png" alt="Export and share panel"/>
+<b>📤 Export & Share</b><br/>
+<sub><b>Court-ready PDF</b> (chain-of-custody + SHA-256), STIX 2.1, MISP push, ATT&CK Navigator, evidence PCAP carving, Telegram / Slack / email.</sub>
+</td>
+</tr>
+</table>
+
+<div align="center"><sub>…plus an <b>AI SOC copilot</b>, a <b>live-capture monitor</b>, a version-aware <b>NVD/CVE + CISA-KEV</b> panel, a timeline, and analysis history — all in the browser.</sub></div>
 
 ---
 
@@ -134,6 +205,27 @@ Every detector emits a structured event with severity, confidence, evidence and 
 | **File Carving** | TCP reassembly → magic-byte ID → SHA-256 → **MalwareBazaar** + **YARA** | T1105 / T1204 | MEDIUM → CRITICAL |
 | **IOC Match** | External IP/CIDR/domain vs real threat-intel feeds | T1071 / T1090 | MEDIUM → CRITICAL |
 | **Passive OS Fingerprint** | TTL-based OS inference (informational) | — | info |
+
+---
+
+## 📊 Validated on *Real* Malware — Not Just Self-Made Fixtures
+
+PacketIQ is measured against the **Stratosphere CTU-13 / Malware Capture Facility** dataset — genuine botnet captures with authoritative third-party ground-truth labels — by running the exact same detection pipeline the CLI and web app use.
+
+| Metric | Score | What it actually means |
+|---|:--:|---|
+| **Recall** | **100%** | every one of **9 real malware captures** (6 families, ~1.7 M packets) was caught — **zero misses** |
+| **Precision** | **90%** | there is **1** "false positive" — and it is itself a *correct* detection of real inbound internet scanning, on a host the dataset labels host-benign |
+| **F1** | **94.7%** | balanced score across the confusion matrix |
+| **Per-detector recall** | transparent | every decision traces to a specific, inspectable detector carrying its own evidence — the opposite of a black box |
+
+> [!NOTE]
+> **The precision is an honest 90%, not a fabricated 100%.** The single false alarm is [documented and analysed openly](reports/detection_real.md) rather than suppressed — because a triage tool that stays silent on real inbound scanning would be *worse*, not better. Recall is the priority for forensic triage, and it is 100%. Reproduce it yourself:
+> ```bash
+> bash datasets/fetch_ctu.sh
+> python tools/validate.py --manifest datasets/ctu13_manifest.json
+> ```
+> Full breakdown, per-capture and per-detector: [`reports/detection_real.md`](reports/detection_real.md).
 
 ---
 
@@ -271,7 +363,7 @@ Override any default with `GEMINI_MODEL`, `GROQ_MODEL`, `ANTHROPIC_MODEL` or `OL
 
 **Grounded, low-hallucination prompts** — the system prompts enforce evidence-only answers (*never invent an IP/domain/technique/CVE; say "not present in this capture" when there's no evidence*) at temperature `0.15`. The detectors, not the LLM, decide what was found — the AI only explains it. Copilot groundedness is measured quantitatively by `tools/eval_copilot.py` (see [Validation harnesses](#validation-harnesses)).
 
-**Grounding guardrail (a guarantee, not just a prompt)** — a deterministic post-filter sits on the copilot's output stream and checks every specific claim it makes — IP, MITRE technique ID, CVE, **domain and file hash (MD5/SHA-1/SHA-256)** — against the exact evidence it was given, redacting anything ungrounded before it reaches you (and dropping a wholly-invented list item). It only ever *removes* an invented entity, never adds or changes a real one, so a faithful answer is untouched. This is what makes even a small local model hit **0 hallucinations**: on the built-in evaluation, raw `qwen2.5:7b-instruct` scores ~45–75% faithful (it varies run-to-run — LLMs are non-deterministic), and a deterministic **100.0%** with the guardrail on — and the [multi-model ablation](#validation-harnesses) shows the same 100% on `llama3.1:8b` and `llama3.2:3b` too. On by default (`PACKETIQ_GROUNDING_GUARD=0` disables it, used only to measure the raw model). Covers chat, "Explain with AI", AI reports and the CLI. Full methodology: [docs/grounding_guardrail.md](docs/grounding_guardrail.md); formal write-up with the multi-model ablation in [docs/paper/deterministic_output_grounding.md](docs/paper/deterministic_output_grounding.md).
+**Grounding guardrail (a guarantee, not just a prompt)** — a deterministic post-filter sits on the copilot's output stream and checks every specific claim it makes — IP, MITRE technique ID, CVE, **domain and file hash (MD5/SHA-1/SHA-256)** — against the exact evidence it was given, redacting anything ungrounded before it reaches you (and dropping a wholly-invented list item). It only ever *removes* an invented entity, never adds or changes a real one, so a faithful answer is untouched. This is what makes even a small local model hit **0 hallucinations**: on a real botnet capture (`donbot.pcap`), raw `qwen2.5:7b-instruct` scores **62.5%** faithful — *reproducibly*, because PacketIQ pins the sampling seed (`OLLAMA_SEED`) so the same evidence yields the same words — rising to a deterministic **100.0%** with the guardrail on. The [multi-model ablation](#validation-harnesses) reaches the same **100%** on `llama3.1:8b` and `llama3.2:3b` too (the raw models emit 47 ungrounded entities between them; the guardrail removes every one). On by default (`PACKETIQ_GROUNDING_GUARD=0` disables it, used only to measure the raw model). Covers chat, "Explain with AI", AI reports and the CLI. Full methodology: [docs/grounding_guardrail.md](docs/grounding_guardrail.md); formal write-up with the multi-model ablation in [docs/paper/deterministic_output_grounding.md](docs/paper/deterministic_output_grounding.md).
 
 **Local model (no key, fully offline)** — install [Ollama](https://ollama.com), run `ollama pull qwen2.5:7b-instruct` (or `llama3.1:8b`), and the copilot works with **no API key and no data leaving your machine** — ideal for sensitive captures. Auto-detected when the daemon is running; or pick **"Local (Ollama)"** in the selector.
 
@@ -378,7 +470,7 @@ python tools/ablation.py --markdown reports/faithfulness_ablation.md    # guardr
 python tools/benchmark.py --dir datasets/real/pcaps --markdown reports/performance.md
 ```
 
-- **`validate.py`** runs the real detection pipeline over labeled captures. `--suite` uses crafted fixtures (one per detector + benign) so it needs no downloads — a **regression/sanity check, not a real-world accuracy claim**. Point `--manifest` at real captures for real figures: `datasets/fetch_ctu.sh` pulls a labeled Stratosphere CTU-13 sample (five malware families + benign), on which PacketIQ scores **100% recall · 83.3% precision · 90.9% F1** — every real malware capture caught with a transparent, per-detector account of every decision — see [`reports/detection_real.md`](reports/detection_real.md) and the [public datasets guide](datasets/README.md).
+- **`validate.py`** runs the real detection pipeline over labeled captures. `--suite` uses crafted fixtures (one per detector + benign) so it needs no downloads — a **regression/sanity check, not a real-world accuracy claim**. Point `--manifest` at real captures for real figures: `datasets/fetch_ctu.sh` pulls a labeled Stratosphere CTU-13 sample (six malware families across **nine real infected captures + benign**), on which PacketIQ scores **100% recall · 90.0% precision · 94.7% F1** — every real malware capture caught with a transparent, per-detector account of every decision — see [`reports/detection_real.md`](reports/detection_real.md) and the [public datasets guide](datasets/README.md).
 - **`eval_copilot.py`** measures copilot **groundedness** deterministically (regex entity-matching against the exact context the model saw) — a human-free hallucination metric, ideal for a validation chapter. **`ablation.py`** sweeps it across several local models to show the guardrail's 100% is model-independent.
 - **`benchmark.py`** measures real throughput and memory through the exact analysis pipeline (`--demo` needs no download).
 
@@ -445,6 +537,7 @@ PacketIQ/
 │   ├── reports/                   # Security Audit · Sandbox Test · Minutes (PDF/DOCX)
 │   ├── security_audit/            # reproducible audit scripts + raw bandit/pip-audit output
 │   ├── sandbox_test/              # end-to-end campaign runner + results.json
+│   ├── screenshots/               # README UI screenshots — real running web app
 │   └── assets/                    # images (bot avatar)
 ├── samples/generate_sample.py     # build a demo PCAP
 ├── tests/                         # 304 pytest tests

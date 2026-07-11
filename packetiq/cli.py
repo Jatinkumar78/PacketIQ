@@ -1196,10 +1196,10 @@ def zeek_cmd(conn_log: str, top: int):
 
     if events:
         rows = []
-        for e in events:
-            dst = f"{e.dst_ip}:{e.dst_port}" if e.dst_ip and e.dst_port else (e.dst_ip or "—")
-            rows.append([e.severity.value, e.event_type.value.replace("_", " "),
-                         e.src_ip or "—", dst, e.description[:70]])
+        for ev in events:
+            dst = f"{ev.dst_ip}:{ev.dst_port}" if ev.dst_ip and ev.dst_port else (ev.dst_ip or "—")
+            rows.append([ev.severity.value, ev.event_type.value.replace("_", " "),
+                         ev.src_ip or "—", dst, ev.description[:70]])
         ui.print_table(
             "Detection Events",
             columns=[("Severity", "bold white", "center"), ("Type", "yellow", "left"),
@@ -1254,10 +1254,10 @@ def netflow_cmd(flow_file: str, top: int):
 
     if events:
         rows = []
-        for e in events:
-            dst = f"{e.dst_ip}:{e.dst_port}" if e.dst_ip and e.dst_port else (e.dst_ip or "—")
-            rows.append([e.severity.value, e.event_type.value.replace("_", " "),
-                         e.src_ip or "—", dst, e.description[:70]])
+        for ev in events:
+            dst = f"{ev.dst_ip}:{ev.dst_port}" if ev.dst_ip and ev.dst_port else (ev.dst_ip or "—")
+            rows.append([ev.severity.value, ev.event_type.value.replace("_", " "),
+                         ev.src_ip or "—", dst, ev.description[:70]])
         ui.print_table(
             "Detection Events",
             columns=[("Severity", "bold white", "center"), ("Type", "yellow", "left"),

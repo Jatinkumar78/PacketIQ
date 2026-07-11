@@ -183,9 +183,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   runs on flow telemetry at collector scale with no raw capture. Eight new tests
   cover v5, v9, IPFIX, multi-datagram streams and graceful degradation.
 - **Real-world detection accuracy re-measured and enlarged.** The CTU-13 harness
-  now spans **five malware families** (added Virut fast-flux / DGA) plus benign
-  captures: **100% recall · 83.3% precision · 90.9% F1** (up from 57% precision),
-  every decision attributable to a specific detector — see `reports/detection_real.md`.
+  now spans **six malware families** across nine real infected captures (~1.7 M
+  packets — Donbot, Sogou, Qvod, Rbot ×2, Virut + a second fast-flux, Neris ×2)
+  plus benign captures: **100% recall · 90.0% precision · 94.7% F1** (up from 57%
+  precision; the lift from 83.3% comes from correctly detecting four more real
+  botnet captures, detectors untouched), every decision attributable to a specific
+  detector — see `reports/detection_real.md`.
 - **CI eval gates.** `tools/validate.py` gained `--min-recall / --min-precision /
   --min-f1` (exit non-zero below the floor). CI now enforces the synthetic suite at
   100% recall/precision, runs the deterministic guardrail invariant, a throughput

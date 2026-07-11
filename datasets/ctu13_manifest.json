@@ -9,6 +9,10 @@
     {"file": "qvod.pcap",          "malicious": true,  "expect": ["C2_BEACON"], "note": "Qvod botnet"},
     {"file": "rbot-dos-icmp.pcap", "malicious": true,  "expect": ["C2_BEACON"], "note": "Rbot DDoS bot, IRC C2"},
     {"file": "virut-fastflux.pcap", "malicious": true, "expect": ["DNS_ANOMALY", "C2_BEACON", "IOC_MATCH"], "note": "Virut fast-flux botnet (DGA / fast-flux DNS — different family class)"},
+    {"file": "neris-42.pcap",      "malicious": true,  "expect": ["C2_BEACON"], "note": "Neris HTTP spam/click-fraud botnet, C2 (CTU-13 scenario 1)"},
+    {"file": "neris-43.pcap",      "malicious": true,  "expect": ["C2_BEACON"], "note": "Neris HTTP spam/click-fraud botnet, C2 (CTU-13 scenario 2)"},
+    {"file": "rbot-44.pcap",       "malicious": true,  "expect": ["C2_BEACON"], "note": "Rbot IRC botnet, scanning + DoS (CTU-13 scenario 3)"},
+    {"file": "fastflux-46.pcap",   "malicious": true,  "expect": ["DNS_ANOMALY"], "note": "Fast-flux / DGA DNS botnet (distinct capture from Botnet-54)"},
     {"file": "normal-20110817.pcap", "malicious": false, "note": "Real benign host traffic"},
     {"file": "normal-dns-2015.pcap", "malicious": false, "note": "Real benign DNS traffic"},
     {"file": "normal-dns-2013.pcap", "malicious": false, "note": "Real benign DNS traffic"}

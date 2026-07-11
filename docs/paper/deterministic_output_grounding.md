@@ -146,7 +146,7 @@ be measured on evidence-rich traffic, as it is here.
 
 **Detection grounding (context.)** The entities in `C` are themselves real: they
 come from PacketIQ's deterministic detectors, evaluated on real Stratosphere CTU-13
-malware captures at **100% recall / 83.3% precision** with a per-detector account of
+malware captures at **100% recall / 90.0% precision** with a per-detector account of
 every decision. The copilot explains findings the detectors produced; it is never
 the source of a finding.
 

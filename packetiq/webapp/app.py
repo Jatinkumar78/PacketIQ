@@ -548,8 +548,8 @@ def _run_fuse(job_id: str, pcap_paths: list, loop: asyncio.AbstractEventLoop) ->
             for rec in parser.stream():
                 extractor.feed(rec)
             res = extractor.finalize()
-            ev, _risk, fps = DetectionEngine().run(res, path)
-            all_events.extend(ev)
+            batch, _risk, fps = DetectionEngine().run(res, path)
+            all_events.extend(batch)
             results.append(res)
             fps_all.extend(fps)
 
