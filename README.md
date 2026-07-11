@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0b0f1a,45:1d4ed8,100:3b82f6&height=210&section=header&text=PacketIQ&fontSize=78&fontColor=ffffff&fontAlignY=38&desc=AI-Augmented%20PCAP%20Forensics%20%26%20SOC%20Intelligence%20Platform&descAlignY=58&descSize=18&animation=fadeIn" width="100%" alt="PacketIQ"/>
+  
+<img src="https://github.com/user-attachments/assets/390aa3a6-bd5f-4291-a2bb-934d25a6931e" width="100%" alt="PacketIQ"/>
+
+
 
 <a href="https://github.com/PacketIQ">
   <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=18&duration=3000&pause=800&color=3B82F6&center=true&vCenter=true&multiline=false&width=760&lines=Detect+threats+in+seconds+%F0%9F%94%8D;Real+threat-intel+enrichment+%E2%80%94+no+fabricated+data+%E2%9C%85;JA3%2FJA4+%C2%B7+YARA+%C2%B7+file+carving+%C2%B7+SIGMA+%C2%B7+STIX+%C2%B7+MISP;Map+MITRE+ATT%26CK+%2B+kill+chains+%F0%9F%8E%AF;PCAP+%C2%B7+Zeek+logs+%C2%B7+live+capture+%E2%9A%A1" alt="Typing SVG" />
