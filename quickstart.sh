@@ -22,6 +22,12 @@ if ! command -v "$BOOT_PY" >/dev/null 2>&1; then
   warn "Python 3.9+ is required but was not found. Install it from https://python.org"
   exit 1
 fi
+# Make sure it's new enough (3.9+), or the install below fails with a confusing error
+if ! "$BOOT_PY" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 9) else 1)' 2>/dev/null; then
+  HAVE=$("$BOOT_PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "unknown")
+  warn "PacketIQ needs Python 3.9 or newer, but found Python $HAVE. Install a newer one from https://python.org and re-run."
+  exit 1
+fi
 
 # 2) Create the virtual environment if needed
 if [ ! -d ".venv" ]; then

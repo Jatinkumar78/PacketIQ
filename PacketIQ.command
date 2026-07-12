@@ -36,6 +36,13 @@ if ! command -v "$PY" >/dev/null 2>&1; then
   read -r -p "Press Enter to close..."
   exit 1
 fi
+# Make sure it's new enough (3.9+), or the install below fails with a confusing error
+if ! "$PY" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 9) else 1)' 2>/dev/null; then
+  HAVE=$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "unknown")
+  warn "PacketIQ needs Python 3.9 or newer, but the Python found is $HAVE. Install a newer one from https://www.python.org/downloads/ and double-click this file again."
+  read -r -p "Press Enter to close..."
+  exit 1
+fi
 
 # 2) Create the virtual environment on first run
 if [ ! -d ".venv" ]; then
