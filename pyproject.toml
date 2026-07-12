@@ -85,6 +85,9 @@ addopts = "-q"
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning",
+    # macOS system Python links against LibreSSL, not OpenSSL — urllib3 says so on
+    # import. Cosmetic, unrelated to PacketIQ; keep the test summary clean.
+    "ignore:urllib3 v2 only supports OpenSSL",
 ]
 
 [tool.ruff]
