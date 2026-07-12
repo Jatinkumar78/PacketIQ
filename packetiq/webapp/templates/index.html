@@ -1804,11 +1804,29 @@ function resetPerCaptureFilters(){
   clr('pk-search');                      // packet browser search
   clr('f-sev'); clr('f-type'); clr('f-ip');  // threat-events filters
   clr('tl-filter');                      // timeline keyword filter
-  pkQuery = ''; pkOffset = 0; pkLoadedFor = null; pkCurrent = null;  // force a clean packet reload
+  // Force the two lazy-loaded, capture-specific panels (Packets, CVE) to reload
+  // their data the next time they're opened, and drop any stale rows now so a
+  // panel can never show the previous file's results.
+  pkQuery = ''; pkOffset = 0; pkLoadedFor = null; pkCurrent = null;
+  cveLoadedFor = null;
+  const pkBody = document.getElementById('pk-tbody');
+  if(pkBody) pkBody.innerHTML = '';
+  const pkCount = document.getElementById('pk-count'); if(pkCount) pkCount.textContent = '';
+}
+
+/* Land on the Dashboard for every freshly analysed capture, exactly like the
+   live-capture path does — so the user always starts on the new file's overview
+   and never lingers on a stale (e.g. Packets) panel from the previous capture. */
+function focusDashboard(){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  const dn = document.querySelector('.nav-item[data-panel="dashboard"]'); if(dn) dn.classList.add('active');
+  const dp = document.getElementById('panel-dashboard'); if(dp) dp.classList.add('active');
 }
 
 function showResults(){
   resetPerCaptureFilters();
+  focusDashboard();
   const d = resultData;
   renderDashboard(d); renderEvents(d); renderChains(d);
   renderNetwork(d); renderAssets(d); renderAttribution(d);
