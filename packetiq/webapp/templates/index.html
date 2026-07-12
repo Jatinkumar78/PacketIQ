@@ -1795,7 +1795,20 @@ async function fetchResults(){
 /* ══════════════════════════════════════════════════════════
    RENDER ALL
 ══════════════════════════════════════════════════════════ */
+/* A newly-analysed capture must never inherit the previous file's search / filter
+   state. renderEvents→filterEvents and renderTimeline→filterTimeline re-read these
+   inputs, so a stale severity/IP/keyword would otherwise silently hide rows from the
+   new capture. Clear them all before rendering. */
+function resetPerCaptureFilters(){
+  const clr = id => { const el = document.getElementById(id); if(el) el.value = ''; };
+  clr('pk-search');                      // packet browser search
+  clr('f-sev'); clr('f-type'); clr('f-ip');  // threat-events filters
+  clr('tl-filter');                      // timeline keyword filter
+  pkQuery = ''; pkOffset = 0; pkLoadedFor = null; pkCurrent = null;  // force a clean packet reload
+}
+
 function showResults(){
+  resetPerCaptureFilters();
   const d = resultData;
   renderDashboard(d); renderEvents(d); renderChains(d);
   renderNetwork(d); renderAssets(d); renderAttribution(d);
@@ -2441,7 +2454,13 @@ function renderCVEs(j){
 /* ── Packet browser + inspector ── */
 let pkOffset = 0, pkQuery = '', pkLoadedFor = null, pkCurrent = null;
 function ensurePackets(){
-  if(jobId && pkLoadedFor !== jobId){ pkLoadedFor = jobId; searchPackets(); }
+  if(jobId && pkLoadedFor !== jobId){
+    pkLoadedFor = jobId;
+    const box = document.getElementById('pk-search');
+    if(box) box.value = '';   // a new capture must not inherit the previous search
+    pkQuery = '';
+    searchPackets();
+  }
 }
 async function searchPackets(){
   if(!jobId) return;
