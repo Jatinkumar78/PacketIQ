@@ -51,7 +51,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0", "pyyaml>=6.0.0", "pysigma>=0.11.0", "yara-python>=4.3.0", "ruff", "mypy"]
+dev = ["pytest>=8.0.0", "pytest-cov>=4.0.0", "pyyaml>=6.0.0", "pysigma>=0.11.0", "yara-python>=4.3.0", "ruff", "mypy"]
 yara = ["yara-python>=4.3.0"]
 geoip = ["geoip2>=4.7.0"]
 
@@ -88,6 +88,24 @@ filterwarnings = [
     # macOS system Python links against LibreSSL, not OpenSSL — urllib3 says so on
     # import. Cosmetic, unrelated to PacketIQ; keep the test summary clean.
     "ignore:urllib3 v2 only supports OpenSSL",
+]
+
+# Coverage is measured in CI (not in the default local addopts, so a plain
+# `pytest` stays fast). The CI step runs: pytest --cov=packetiq --cov-fail-under=65
+# The whole package is measured — nothing is omitted to inflate the number,
+# including the hardware-dependent live-capture path and terminal renderers.
+[tool.coverage.run]
+source = ["packetiq"]
+branch = false
+
+[tool.coverage.report]
+# Exclude only genuinely non-executable / defensive lines (coverage.py's own
+# recommended defaults) — not whole modules.
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
 ]
 
 [tool.ruff]

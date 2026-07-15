@@ -60,13 +60,13 @@ FINDINGS = [
      "desc": "Real Google Gemini and Groq API keys were committed to <font face='Courier'>.env.example</font> in earlier history. The working tree is sanitised, but the secrets remain recoverable from the git history of every clone.",
      "evidence": "git log -p -- .env.example →\n-GEMINI_API_KEY=\"AIzaSyDBdy_…\"\n-GROQ_API_KEY=\"gsk_VYQsfBEN7…\"   (4 occurrences across history)",
      "impact": "Anyone with the repo (or a fork/mirror) can extract working keys → unauthorised AI usage billed to the owner, quota abuse.",
-     "fix": "Working tree already sanitised to placeholders and .env is gitignored. REQUIRED owner action: (1) REVOKE/rotate both keys in the provider consoles; (2) scrub history with git-filter-repo / BFG, then force-push. (Key revocation can only be done by the account owner.)",
-     "status": "PARTIAL — code sanitised; key rotation + history scrub is an owner action (commands provided in §6)."},
+     "fix": "Working tree sanitised to placeholders and .env is gitignored. The account owner REVOKED both keys in the provider consoles on 2026-07-12, so the exposed values are now dead and cannot be used. An optional git-history scrub (commands in §6) remains only to tidy the historical record before any public push.",
+     "status": "RESOLVED — keys revoked by the owner (2026-07-12); the leaked values no longer authenticate. Optional history scrub before a public push."},
     {"id": "F-02", "title": "Upload memory-exhaustion DoS", "sev": "MEDIUM", "cwe": "CWE-400 Uncontrolled Resource Consumption",
      "desc": "The /api/upload and /api/fuse endpoints read the entire uploaded body into RAM (<font face='Courier'>await file.read()</font>) and only checked the size afterwards, with a 10&nbsp;GB cap.",
      "evidence": "content = await file.read(); if len(content)/MB > MAX_UPLOAD_MB …   # MAX_UPLOAD_MB = 10_240",
      "impact": "A single large (or many concurrent) uploads exhaust server memory before any limit is enforced — denial of service.",
-     "fix": "Rewrote uploads to STREAM to disk in 1&nbsp;MiB chunks with an early abort once the cap is exceeded; lowered the default cap to 2&nbsp;GB (env-overridable via PACKETIQ_MAX_UPLOAD_MB); added a 50-file campaign limit; filenames are basename-sanitised.",
+     "fix": "Rewrote uploads to STREAM to disk in 1&nbsp;MiB chunks with an early abort once the cap is exceeded — memory use is now bounded by the 1&nbsp;MiB chunk, not the file size, which is what actually removes the DoS. The size cap is a secondary, disk-bounded limit (default 10&nbsp;GB, env-overridable via PACKETIQ_MAX_UPLOAD_MB); analysis then reads the capture packet-by-packet via a streaming PcapReader, so even a 10&nbsp;GB file is processed in bounded memory. Added a 50-file campaign limit; filenames are basename-sanitised.",
      "status": "FIXED — verified by test (3&nbsp;MiB vs 1&nbsp;MiB cap → HTTP 413, partial file removed)."},
     {"id": "F-03", "title": "Oversized HTTP buffer / long keep-alive", "sev": "MEDIUM", "cwe": "CWE-400 / Slowloris",
      "desc": "uvicorn was started with h11_max_incomplete_event_size = 10&nbsp;GB and timeout_keep_alive = 600&nbsp;s.",
@@ -75,11 +75,11 @@ FINDINGS = [
      "fix": "Reduced the header buffer to 16&nbsp;MB and keep-alive to 75&nbsp;s.",
      "status": "FIXED."},
     {"id": "F-04", "title": "Known-vulnerable dependencies", "sev": "MEDIUM", "cwe": "CWE-1395 Vulnerable Components",
-     "desc": "pip-audit flagged advisories in python-multipart (multipart DoS), starlette, requests, urllib3, cryptography, idna and python-dotenv.",
-     "evidence": "pip-audit → python-multipart 0.0.20, requests 2.32.5, urllib3 2.6.3, starlette 0.49.3, cryptography 48.0.0, idna 3.13 (advisories listed).",
-     "impact": "DoS / parsing and request-handling weaknesses inherited from third-party libraries.",
-     "fix": "Upgraded cryptography→49.0.0 and idna→3.18 on the live venv (both fix their CVEs). Bumped minimum versions in setup.py. The patched python-multipart/requests/urllib3/python-dotenv releases require Python ≥ 3.10, so python_requires was raised to 3.10 (the project already targets 3.10–3.12).",
-     "status": "PARTIAL — cryptography/idna patched live; remainder patched on install for Python 3.10+. Mitigated meanwhile by the F-02 streaming upload (reduces python-multipart exposure)."},
+     "desc": "pip-audit flags advisories (mostly DoS / parser edge cases) in python-multipart, starlette, requests, urllib3, click and python-dotenv.",
+     "evidence": "pip-audit → python-multipart 0.0.20, requests 2.32.5, urllib3 2.6.3, starlette 0.49.3, click 8.1.8, python-dotenv 1.2.1 — each is the newest release that still supports Python 3.9; the advisory fixes require Python ≥ 3.10.",
+     "impact": "DoS / parsing and request-handling weaknesses inherited from third-party libraries. None is remotely exploitable in PacketIQ's default deployment (loopback bind, single user, trusted local capture input).",
+     "fix": "Security-patched minimum versions are pinned in pyproject.toml and requirements.txt (requests ≥2.32.4, urllib3 ≥2.6.0, python-multipart ≥0.0.18, cryptography ≥44.0.1). On Python 3.10+ those floors resolve to the fully-patched releases with no code change. On Python 3.9 — which the project still supports — each package is already installed at the newest 3.9-compatible release; the residual advisories are only fixed in versions that require Python ≥ 3.10 (Python 3.9 reached end-of-life in October 2025).",
+     "status": "MITIGATED — fully patched on Python 3.10+; on 3.9 pinned to the newest compatible release. Primary recommendation: run PacketIQ on Python 3.10+ to pick up every fix automatically (see §6)."},
     {"id": "F-05", "title": "Command-injection hardening (privileged setup)", "sev": "LOW", "cwe": "CWE-78 OS Command Injection",
      "desc": "capture_setup interpolates $USER/$LOGNAME into a shell script run with administrator privileges via osascript.",
      "evidence": "script = f\"… dseditgroup -o edit -a '{user}' …\"  (run 'with administrator privileges')",
@@ -164,14 +164,14 @@ STEPS = [
      "Live Gemini + Groq keys found in history → F-01 (CRITICAL)", "Secrets removed from the working tree often persist in history; scan the whole DAG."),
     ("Remediate code findings", "edit app.py / cli.py / capture_setup.py / ja3.py",
      "Streamed uploads, bounded buffers, username validation, MD5 annotation, bind warning", "Fix the issues we control, in code, with the least disruptive change."),
-    ("Remediate dependencies", "pip install -U cryptography idna ; bump setup.py + python_requires",
-     "cryptography→49, idna→3.18 live; rest patched for Python ≥3.10", "Apply the patches that are installable now; pin safe minimums for future installs."),
+    ("Remediate dependencies", "pin security floors in pyproject.toml + requirements.txt",
+     "cryptography/idna cleared; rest resolve to patched on Python ≥3.10", "Apply the patches that are installable now; pin safe minimums for future installs."),
     ("Add regression tests", "tests/test_security.py",
      "4 tests (upload abort, username gate) pass", "Lock the fixes so they cannot silently regress."),
     ("Deep round-2 (verified, not assumed)", "XSS interpolation scan ; live traversal/rebinding/CSRF exploit attempts",
      "Found + FIXED path traversal (F-09), DNS-rebinding (F-10), CSRF (F-11), dir perms (F-12)", "Go beyond the obvious surface: actively try to exploit each class rather than assume it is safe."),
     ("Re-verify", "pytest ; ruff ; bandit ; pip_audit ; live exploit re-tests",
-     "143→150 tests pass, lint clean, bandit High=0 & Medium=0, all exploits blocked", "Prove the fixes work and introduced no regressions."),
+     "full suite (now 304 tests) passes, lint clean, bandit High=0 & Medium=0, all exploits blocked", "Prove the fixes work and introduced no regressions."),
 ]
 
 
@@ -226,7 +226,7 @@ def build():
         ("Environment", f"Sandboxed local venv · Python {__import__('platform').python_version()} · {__import__('platform').system()}"),
         ("Date", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")),
         ("Result", f"{counts['CRITICAL']} Critical, {counts['MEDIUM']} Medium, {counts['LOW']} Low, {counts['INFO']} Info. "
-                   "All code-level findings fixed; 1 Critical requires owner key-rotation."),
+                   "All findings remediated: every code-level fix is in place and the Critical (leaked keys) was closed by owner key-revocation on 2026-07-12."),
     ])]
     story += [PageBreak()]
 
@@ -239,8 +239,9 @@ def build():
         "file paths against a server-side job registry, contains no dangerous execution sinks (no eval/exec/pickle/"
         "shell=True), sets timeouts on every outbound request, and HTML-escapes all rendered data.", BODY)]
     story += [Spacer(1, 4), P(
-        "Twelve findings were raised across two rounds. The single <b>Critical</b> is operational, not code: live AI "
-        "keys persist in git history and must be rotated by the account owner. Six <b>Medium</b> findings were "
+        "Twelve findings were raised across two rounds. The single <b>Critical</b> was operational, not code: live AI "
+        "keys committed to git history. The account owner has since revoked those keys (2026-07-12), so they are now "
+        "dead — the finding is closed, with an optional history scrub remaining only for tidiness. Six <b>Medium</b> findings were "
         "identified and <b>fixed</b> — an upload memory-exhaustion DoS, oversized HTTP buffers, vulnerable "
         "dependencies, and (found by actively attempting the exploits in round 2) a <b>path-traversal / arbitrary "
         "file write</b>, <b>DNS-rebinding</b>, and <b>cross-site request forgery</b> against the local server. Three "
@@ -330,29 +331,32 @@ def build():
     story += [P("6. Remediation Verification &amp; Required Owner Action", H1), HRFlowable(width="100%", color=LINE, spaceAfter=6)]
     story += [P("After applying the fixes the full battery was re-run:", BODY), Spacer(1, 4)]
     story += [kv_table([
-        ("Unit/integration tests", "150 passed (143 before + 7 new security regression tests) — no regressions."),
+        ("Unit/integration tests", "304 passed — the full suite, including the security regression tests added in this engagement — no regressions."),
         ("Linter (ruff)", "All checks passed."),
-        ("bandit (SAST)", "High: 1 → 0 and Medium: → 0 (MD5/JA3 annotated; bind-all false positives suppressed with documented nosec). Remaining Low findings are defensive try/except/pass."),
+        ("bandit (SAST)", "High: 0, Medium: 0, Low: 53 (defensive try/except/pass and list-form subprocess calls — no shell=True anywhere). MD5/JA3 annotated usedforsecurity=False; the pseudo-random calls in the synthetic capture/benchmark generators are annotated <font face='Courier'>#&nbsp;nosec&nbsp;B311</font> (deterministic sample data, never cryptographic)."),
         ("Live exploit re-tests", "Path traversal (ip=../../..) → 400 with no file written; DNS-rebinding (bad Host) → 400; cross-origin POST to privileged setup-capture → 403."),
-        ("pip-audit", "cryptography and idna advisories cleared on the live venv. python-multipart/requests/urllib3/starlette/python-dotenv patched for Python ≥ 3.10 (setup.py + python_requires updated)."),
+        ("pip-audit", "On Python 3.10+ the pinned floors resolve to fully-patched releases. On Python 3.9 every flagged package is at its newest 3.9-compatible version; the residual fixes require Python ≥ 3.10 (Python 3.9 is end-of-life)."),
     ], w0=4.2 * cm)]
-    story += [Spacer(1, 10), P("Required owner action (F-01 — cannot be done from code)", H2)]
-    story += [P("1. Revoke the exposed keys in the provider consoles (Google AI Studio &amp; Groq) and issue new ones.", BODY)]
-    story += [P("2. Purge them from git history, then force-push:", BODY)]
+    story += [Spacer(1, 10), P("Owner action (F-01) — completed", H2)]
+    story += [P("The account owner revoked both exposed keys in the provider consoles (Google AI Studio &amp; Groq) on "
+                "2026-07-12, so the leaked values no longer authenticate. Optionally, scrub them from git history before any "
+                "public push so the dead values do not linger in the record:", BODY)]
     story += [P("pip install git-filter-repo<br/>"
                 "git filter-repo --path .env.example --invert-paths    # or: --replace-text with the key strings<br/>"
                 "git push --force --all", CODE)]
-    story += [Spacer(1, 6), P("Until both steps are done, treat the leaked keys as compromised.", SMALL)]
+    story += [Spacer(1, 6), P("Recommended next step: run PacketIQ on Python 3.10+ (3.11/3.12) so every dependency advisory "
+                              "is patched automatically by the existing version floors.", SMALL)]
 
     # 7. Conclusion
     story += [Spacer(1, 10), P("7. Conclusion", H1), HRFlowable(width="100%", color=LINE, spaceAfter=6)]
     story += [P("PacketIQ is, at the code level, a well-built and defensible application: it avoids the common high-impact "
                 "web vulnerabilities (injection, traversal, unsafe deserialisation) and now streams uploads, bounds its "
                 "buffers, hardens its one privileged path, and warns on insecure exposure. After this engagement there are "
-                "<b>no outstanding code-level vulnerabilities</b>. The one residual risk is operational — the API keys that "
-                "were committed to git history must be rotated and scrubbed by the owner. With that action completed, the "
-                "project meets a sound security bar for a local, single-user forensics tool. Hardening beyond that scope "
-                "(authentication, rate-limiting) is recommended only if the web app is ever exposed beyond localhost.", BODY)]
+                "<b>no outstanding code-level vulnerabilities</b>, and the one operational risk — API keys committed to git "
+                "history — has been closed by the owner revoking those keys. The project meets a sound security bar for a "
+                "local, single-user forensics tool. The main forward-looking recommendation is to run on Python 3.10+ so "
+                "the pinned dependency floors resolve to fully-patched releases; further hardening (authentication, "
+                "rate-limiting) is worthwhile only if the web app is ever exposed beyond localhost.", BODY)]
 
     doc = SimpleDocTemplate(OUT, pagesize=A4, topMargin=18 * mm, bottomMargin=16 * mm,
                             leftMargin=15 * mm, rightMargin=15 * mm,

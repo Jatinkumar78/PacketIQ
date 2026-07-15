@@ -421,7 +421,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 - Removed real Gemini/Groq API keys that had been committed to `.env.example`
-  (placeholders only now). **Keys present in earlier git history must be rotated.**
+  (placeholders only now). The keys present in earlier git history have since been
+  **revoked by the owner (2026-07-12)**, so the leaked values no longer authenticate;
+  an optional history scrub before any public push is all that remains.
 - **Full security audit + hardening** (SAST, dependency CVE scan, secret scan,
   and manual review — see `docs/reports/PacketIQ_Security_Audit_Report.pdf`). Fixed:
   **path-traversal / arbitrary file write** in the evidence export (the `ip`
@@ -429,14 +431,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   **CSRF** on the local web server (new middleware validates the Host header and
   blocks cross-origin state-changing requests — e.g. a malicious page can no
   longer trigger the privileged capture-setup prompt); **upload memory-exhaustion
-  DoS** (uploads stream to disk with an early size abort; default cap 2 GB via
+  DoS** (uploads stream to disk with an early size abort; default cap 10 GB via
   `PACKETIQ_MAX_UPLOAD_MB`); oversized HTTP buffer / long keep-alive reduced;
   **command-injection hardening** of the privileged macOS capture-setup (strict
   `$USER` validation); world-readable upload/history dirs tightened to `0700`; a
-  security warning is printed when binding to a non-loopback address. Dependencies
-  bumped to patched versions (`python_requires` raised to 3.10 for the fixed
-  `requests`/`python-multipart`/`urllib3`). MD5-in-JA3 annotated (`usedforsecurity=
-  False`) — it is the JA3 spec, not a security control. bandit High/Medium: 0.
+  security warning is printed when binding to a non-loopback address. MD5-in-JA3
+  annotated (`usedforsecurity=False`) — it is the JA3 spec, not a security control.
+  bandit High/Medium: 0.
+- **Dependency posture.** Runtime pins sit at security-patched floors in
+  `pyproject.toml` / `requirements.txt`. On Python 3.10+ these resolve to fully
+  patched releases; on the still-supported Python 3.9 (end-of-life since Oct 2025)
+  each package installs at its newest 3.9-compatible version, so a few upstream
+  advisories are only fixed on 3.10+ — **Python 3.10+ is recommended**. Re-checked
+  by `pip-audit` in CI.
+- **Re-audit (2026-07-15)** confirmed no new code-level issues; added a root
+  [`SECURITY.md`](SECURITY.md) policy and refreshed the audit report + raw
+  `bandit`/`pip-audit` evidence in `docs/security_audit/`. Also fixed a web-app
+  display gap: the drop-zone hint and client-side size guard were hard-coded and
+  could drift from the server's real limit — both now read the actual
+  `MAX_UPLOAD_MB` injected at page load, so they always match the backend (and
+  track `PACKETIQ_MAX_UPLOAD_MB` overrides). The default cap is **10 GB**: uploads
+  stream to disk in 1 MiB chunks and captures are analysed packet-by-packet via a
+  streaming `PcapReader`, so a full 10 GB file is handled in bounded memory
+  (limit is free disk, not RAM); documented in `.env.example`.
+- **Test-coverage measurement** — added `pytest-cov` (dev dependency) with a
+  `[tool.coverage]` config that measures the **whole** package (nothing omitted to
+  inflate the number). Line coverage is **~70%**; CI now enforces a **65% floor**
+  on every push (Python 3.9–3.12) so it cannot silently regress. Bandit's B311
+  "weak-random" findings in the synthetic capture/benchmark/fixture generators are
+  annotated `# nosec B311` (deterministic sample data, never cryptographic); the
+  audit's Low count is now 53.
+- **Frictionless Python 3.10+ path** — `PacketIQ.command` and `quickstart.sh` now
+  auto-prefer the newest installed CI-tested interpreter (3.12 → 3.10) when building
+  a fresh `.venv`, falling back to `python3` (3.9 still supported). A step-by-step
+  upgrade runbook was added to [`docs/RELEASE.md`](docs/RELEASE.md). Running on
+  3.10+ resolves the security-floor dependencies to their fully-patched releases.
 
 ### Fixed
 - **"Explain with AI" (and AI report) now fall back across providers.** They

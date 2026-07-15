@@ -127,7 +127,8 @@ def build():
         ("Environment", f"Sandboxed local venv · Python {__import__('platform').python_version()} · {__import__('platform').system()}"),
         ("Date", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")),
         ("Result", f"{counts['CRITICAL']} Critical, {counts['MEDIUM']} Medium, {counts['LOW']} Low, "
-                   f"{counts['INFO']} Info. All code-level findings fixed; 1 Critical requires owner key-rotation."),
+                   f"{counts['INFO']} Info. All findings remediated: every code-level fix is in place and the "
+                   "Critical (leaked keys) was closed by owner key-revocation on 2026-07-12."),
     ]
     mt = doc.add_table(rows=len(meta), cols=2)
     mt.style = "Table Grid"
@@ -149,10 +150,11 @@ def build():
         "server-side job registry, no dangerous execution sinks, timeouts on every outbound request, and "
         "HTML-escaping of all rendered data."))
     doc.add_paragraph(_strip(
-        "Twelve findings were raised across two rounds. The single Critical is operational, not code: live AI "
-        "keys persist in git history and must be rotated by the account owner. Six Medium findings were fixed "
-        "— an upload memory-exhaustion DoS, oversized HTTP buffers, vulnerable dependencies, and (found by "
-        "actively attempting the exploits) a path-traversal / arbitrary file write, DNS-rebinding, and CSRF "
+        "Twelve findings were raised across two rounds. The single Critical was operational, not code: live AI "
+        "keys committed to git history. The account owner has since revoked those keys (2026-07-12), so they are "
+        "now dead and the finding is closed, with an optional history scrub remaining only for tidiness. Six Medium "
+        "findings were fixed — an upload memory-exhaustion DoS, oversized HTTP buffers, vulnerable dependencies, and "
+        "(found by actively attempting the exploits) a path-traversal / arbitrary file write, DNS-rebinding, and CSRF "
         "against the local server. Three Low findings were also fixed. Every code-level fix is covered by a new "
         "regression test and, where exploitable, re-tested live to confirm it is blocked."))
 
@@ -262,13 +264,13 @@ def build():
     hrule(doc)
     doc.add_paragraph("After applying the fixes the full battery was re-run:").runs[0].font.size = Pt(10)
     ver = [
-        ("Unit/integration tests", "150 passed (143 before + 7 new security regression tests) — no regressions."),
+        ("Unit/integration tests", "304 passed — the full suite, including the security regression tests added in this engagement — no regressions."),
         ("Linter (ruff)", "All checks passed."),
-        ("bandit (SAST)", "High: 1 → 0 and Medium → 0. Remaining Low findings are defensive try/except/pass."),
+        ("bandit (SAST)", "High: 0, Medium: 0, Low: 53. Remaining Low findings are defensive try/except/pass and list-form subprocess calls (no shell=True). The pseudo-random calls in the synthetic capture/benchmark generators are annotated \"# nosec B311\" (deterministic sample data, never cryptographic)."),
         ("Live exploit re-tests", "Path traversal (ip=../../..) → 400, no file written; DNS-rebinding (bad Host) → 400; "
                                   "cross-origin POST to privileged setup-capture → 403."),
-        ("pip-audit", "cryptography and idna advisories cleared; remainder patched for Python >= 3.10 "
-                      "(setup.py + python_requires updated)."),
+        ("pip-audit", "On Python 3.10+ the pinned floors resolve to fully-patched releases. On Python 3.9 every flagged "
+                      "package is at its newest 3.9-compatible version; the residual fixes require Python >= 3.10 (3.9 is end-of-life)."),
     ]
     vt = doc.add_table(rows=len(ver), cols=2)
     vt.style = "Table Grid"
@@ -277,11 +279,11 @@ def build():
         set_cell(vt.cell(i, 1), v, size=9)
     vt.columns[0].width = Pt(120)
 
-    doc.add_heading("Required owner action (F-01 — cannot be done from code)", level=2)
+    doc.add_heading("Owner action (F-01) — completed", level=2)
     p = doc.add_paragraph()
-    p.add_run("1. Revoke the exposed keys in the provider consoles (Google AI Studio & Groq) and issue new ones.").font.size = Pt(10)
-    p = doc.add_paragraph()
-    p.add_run("2. Purge them from git history, then force-push:").font.size = Pt(10)
+    p.add_run("The account owner revoked both exposed keys in the provider consoles (Google AI Studio & Groq) on "
+              "2026-07-12, so the leaked values no longer authenticate. Optionally, scrub them from git history before "
+              "any public push so the dead values do not linger in the record:").font.size = Pt(10)
     code = doc.add_paragraph()
     cr = code.add_run("pip install git-filter-repo\n"
                       "git filter-repo --path .env.example --invert-paths\n"
@@ -296,10 +298,11 @@ def build():
         "At the code level PacketIQ is a well-built and defensible application: it avoids the common high-impact "
         "web vulnerabilities and now streams uploads, bounds its buffers, validates Host/Origin headers, blocks "
         "path traversal, hardens its one privileged path, and restricts its data directories. After this "
-        "engagement there are no outstanding code-level vulnerabilities — including a real path-traversal and "
-        "CSRF/DNS-rebinding class closed in round two. The only residual risk is operational: the API keys "
-        "committed to git history must be rotated and scrubbed by the owner. Hardening beyond that scope "
-        "(authentication, rate-limiting) is recommended only if the web app is ever exposed beyond localhost."))
+        "engagement there are no outstanding code-level vulnerabilities, including a real path-traversal and "
+        "CSRF/DNS-rebinding class closed in round two. The one operational risk, API keys committed to git "
+        "history, has been closed by the owner revoking those keys. The main forward-looking recommendation is to "
+        "run on Python 3.10+ so the pinned dependency floors resolve to fully-patched releases; further hardening "
+        "(authentication, rate-limiting) is worthwhile only if the web app is ever exposed beyond localhost."))
 
     # footer
     section = doc.sections[0]

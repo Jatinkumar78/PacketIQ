@@ -67,19 +67,19 @@ def build():
 
     # 5) C2 beacon: victim -> external C2 every ~30s, low jitter
     for i in range(16):
-        add(Ether() / IP(src=VICTIM, dst=C2) / TCP(sport=52000, dport=443, flags="S"), t + i * 30 + random.uniform(-0.4, 0.4))
+        add(Ether() / IP(src=VICTIM, dst=C2) / TCP(sport=52000, dport=443, flags="S"), t + i * 30 + random.uniform(-0.4, 0.4))  # nosec B311 - synthetic demo-capture jitter, not cryptographic
     t += 16 * 30 + 10
 
     # 6) DNS tunneling: oversized query names from victim
     for i in range(6):
-        label = "".join(random.choice("0123456789abcdef") for _ in range(60))
+        label = "".join(random.choice("0123456789abcdef") for _ in range(60))  # nosec B311 - synthetic demo-capture data, not cryptographic
         add(Ether() / IP(src=VICTIM, dst=RESOLVER) / UDP(sport=33000 + i, dport=53) /
             DNS(rd=1, qd=DNSQR(qname=f"{label}.exfil.example-evil.xyz")), t + i * 2)
     t += 20
 
     # 7) DGA-style domains from victim (high-entropy second-level labels)
     for i in range(5):
-        label = "".join(random.choice("bcdfghjklmnpqrstvwxyz0123456789") for _ in range(18))
+        label = "".join(random.choice("bcdfghjklmnpqrstvwxyz0123456789") for _ in range(18))  # nosec B311 - synthetic demo-capture data, not cryptographic
         add(Ether() / IP(src=VICTIM, dst=RESOLVER) / UDP(sport=34000 + i, dport=53) /
             DNS(rd=1, qd=DNSQR(qname=f"{label}.top")), t + i * 2)
     t += 20

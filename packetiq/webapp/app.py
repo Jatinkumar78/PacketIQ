@@ -38,7 +38,7 @@ except Exception:
     pass
 # Bounded upload size (env-overridable). Streamed to disk with an early abort so
 # a large/malicious upload cannot exhaust server memory (CWE-400).
-MAX_UPLOAD_MB = int(os.environ.get("PACKETIQ_MAX_UPLOAD_MB", "2048"))  # default 2 GB
+MAX_UPLOAD_MB = int(os.environ.get("PACKETIQ_MAX_UPLOAD_MB", "10240"))  # default 10 GB
 
 
 # Host allow-list for the DNS-rebinding / CSRF guard. Loopback + the TestClient
@@ -2023,7 +2023,16 @@ def create_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
-        return HTMLResponse(TEMPLATE.read_text(encoding="utf-8"))
+        # Inject the real upload cap so the page's hint text and client-side size
+        # guard always match the server (which enforces MAX_UPLOAD_MB, env-overridable)
+        # — never a hard-coded figure that could drift from the backend.
+        label = (f"{MAX_UPLOAD_MB // 1024} GB" if MAX_UPLOAD_MB >= 1024 and MAX_UPLOAD_MB % 1024 == 0
+                 else f"{MAX_UPLOAD_MB / 1024:.1f} GB" if MAX_UPLOAD_MB >= 1024
+                 else f"{MAX_UPLOAD_MB} MB")
+        html = (TEMPLATE.read_text(encoding="utf-8")
+                .replace("__MAX_UPLOAD_MB__", str(MAX_UPLOAD_MB))
+                .replace("__MAX_UPLOAD_LABEL__", label))
+        return HTMLResponse(html)
 
     @app.get("/static/vendor/{name}")
     async def vendor_asset(name: str):

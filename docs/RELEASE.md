@@ -63,3 +63,35 @@ security-patched floors that exist on PyPI**:
 | `cryptography` | `>=44.0.1` | GHSA-537c-gmf6-5ccf and prior |
 
 Do not lower these. Re-check with `pip-audit` (run automatically in CI).
+
+On **Python 3.10+** these floors resolve to the fully-patched upstream releases with
+no code change. On **Python 3.9** (still supported, but end-of-life since October
+2025) each package installs at the newest 3.9-compatible version; a handful of
+upstream advisories are only fixed in releases that require Python 3.10+, so **3.10+
+is recommended** for the fullest patch set. The full analysis is in
+[docs/reports/PacketIQ_Security_Audit_Report.pdf](reports/PacketIQ_Security_Audit_Report.pdf).
+
+### Upgrading a local dev machine to Python 3.10+ (recommended)
+
+No code change is needed — `requires-python` stays `>=3.9`, so 3.9 keeps working.
+This just rebuilds your local `.venv` on a newer interpreter so `pip` resolves the
+security floors to their fully-patched releases. CI already validates 3.9–3.12.
+
+```bash
+# 1. Install a newer Python (macOS — pick one):
+#      • Official installer:  https://www.python.org/downloads/  (python.org .pkg)
+#      • Homebrew:            brew install python@3.12
+# 2. Rebuild the venv on it (the launchers auto-prefer python3.12→3.10 when present):
+cd /path/to/PacketIQ
+rm -rf .venv
+python3.12 -m venv .venv          # or: ./quickstart.sh  (auto-selects the newest)
+./.venv/bin/python -m pip install -U pip
+./.venv/bin/pip install -e ".[dev,yara,geoip]"
+# 3. Verify — everything should stay green:
+./.venv/bin/python -m pytest -q --cov=packetiq --cov-fail-under=65
+./.venv/bin/python -m pip_audit          # advisories now resolve to patched releases
+```
+
+The `PacketIQ.command` / `quickstart.sh` launchers already prefer the newest
+installed CI-tested interpreter, so once 3.10+ is on `PATH` a fresh setup uses it
+automatically.

@@ -28,10 +28,14 @@ warn() { printf "${YELLOW}%s${NC}\n" "$1"; }
 
 banner
 
-# 1) Find Python 3.9+
-PY=python3
-command -v "$PY" >/dev/null 2>&1 || PY=python
-if ! command -v "$PY" >/dev/null 2>&1; then
+# 1) Find Python 3.9+ — prefer a newer, CI-tested interpreter (3.12 → 3.10) when
+#    one is installed, so a fresh .venv is built on fully-patched dependencies;
+#    otherwise fall back to whatever python3 is available (3.9 still works).
+PY=""
+for cand in python3.12 python3.11 python3.10 python3 python; do
+  if command -v "$cand" >/dev/null 2>&1; then PY="$cand"; break; fi
+done
+if [ -z "$PY" ]; then
   warn "Python 3.9+ is required. Install it from https://www.python.org/downloads/ and double-click this file again."
   read -r -p "Press Enter to close..."
   exit 1

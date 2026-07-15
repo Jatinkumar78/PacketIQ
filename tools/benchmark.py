@@ -149,16 +149,18 @@ def _build_demo(path: Path, n_packets: int) -> None:
     ext = [f"93.184.216.{i}" for i in range(1, 60)]
     for i in range(n_packets):
         r = i % 10
-        src = random.choice(hosts)
+        src = random.choice(hosts)  # nosec B311 - synthetic benchmark traffic, not cryptographic
         if r < 6:      # HTTPS-ish
-            p = Ether(**eth) / IP(src=src, dst=random.choice(ext)) / \
+            dst = random.choice(ext)  # nosec B311 - synthetic benchmark traffic, not cryptographic
+            p = Ether(**eth) / IP(src=src, dst=dst) / \
                 TCP(sport=40000 + (i % 20000), dport=443, flags="S")
         elif r < 8:    # DNS
             p = Ether(**eth) / IP(src=src, dst="8.8.8.8") / \
                 UDP(sport=33000 + (i % 1000), dport=53) / \
                 DNS(rd=1, qd=DNSQR(qname=f"host{i % 500}.example.com"))
         else:          # small HTTP payload
-            p = Ether(**eth) / IP(src=src, dst=random.choice(ext)) / \
+            dst = random.choice(ext)  # nosec B311 - synthetic benchmark traffic, not cryptographic
+            p = Ether(**eth) / IP(src=src, dst=dst) / \
                 TCP(sport=50000 + (i % 10000), dport=80, flags="PA") / \
                 Raw(load=b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
         p.time = t + i * 0.001

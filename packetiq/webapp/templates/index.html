@@ -869,7 +869,7 @@ tbody tr:hover td{background:var(--surface2)}
           <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6H16a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
         </svg>
         <h3>Drop a PCAP / PCAPNG file here</h3>
-        <p style="margin-top:6px">Supports .pcap · .pcapng · .cap · Zeek conn.log · NetFlow/IPFIX &nbsp;·&nbsp; Max 10 GB</p>
+        <p style="margin-top:6px">Supports .pcap · .pcapng · .cap · Zeek conn.log · NetFlow/IPFIX &nbsp;·&nbsp; Max __MAX_UPLOAD_LABEL__</p>
         <p style="margin-top:4px;font-size:12px;opacity:.7">Select 2+ captures for a fused campaign analysis</p>
         <p style="margin-top:10px;font-size:12px;color:rgba(139,163,191,.5)">or click to browse</p>
       </div>
@@ -1646,7 +1646,7 @@ function pickFile(f){
   selectedFiles = [];
   const ext = f.name.split('.').pop().toLowerCase();
   if(!['pcap','pcapng','cap','log','tsv','json','netflow','nfcapd','nf','ipfix','flows'].includes(ext)) return showErr('Upload a capture (.pcap/.pcapng/.cap), a Zeek conn.log (.log/.tsv/.json), or a NetFlow/IPFIX export (.netflow/.nfcapd/.ipfix).');
-  if(f.size > 10*1024*1024*1024) return showErr('File exceeds 10 GB limit.');
+  if(f.size > __MAX_UPLOAD_MB__*1024*1024) return showErr('File exceeds __MAX_UPLOAD_LABEL__ limit.');
   hideErr(); selectedFile = f;
   document.getElementById('sel-name').textContent = f.name;
   document.getElementById('sel-size').textContent = fmtBytes(f.size);

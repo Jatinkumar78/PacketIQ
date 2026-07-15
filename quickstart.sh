@@ -15,10 +15,14 @@ GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; NC='\033[0m'
 say()  { printf "${GREEN}▸ %s${NC}\n" "$1"; }
 warn() { printf "${YELLOW}%s${NC}\n" "$1"; }
 
-# 1) Find a Python 3 to bootstrap the venv with
-BOOT_PY=python3
-command -v "$BOOT_PY" >/dev/null 2>&1 || BOOT_PY=python
-if ! command -v "$BOOT_PY" >/dev/null 2>&1; then
+# 1) Find a Python 3 to bootstrap the venv with — prefer a newer, CI-tested
+#    interpreter (3.12 → 3.10) when installed, so a fresh .venv gets fully-patched
+#    dependencies; otherwise fall back to python3 (3.9 still works).
+BOOT_PY=""
+for cand in python3.12 python3.11 python3.10 python3 python; do
+  if command -v "$cand" >/dev/null 2>&1; then BOOT_PY="$cand"; break; fi
+done
+if [ -z "$BOOT_PY" ]; then
   warn "Python 3.9+ is required but was not found. Install it from https://python.org"
   exit 1
 fi

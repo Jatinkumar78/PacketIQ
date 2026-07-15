@@ -15,6 +15,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![Scapy](https://img.shields.io/badge/Scapy-packet%20engine-ef4444?style=for-the-badge&logo=python&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-304%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
+![Coverage](https://img.shields.io/badge/coverage-~70%25-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![GUI](https://img.shields.io/badge/100%25-GUI%20web%20app-3b82f6?style=for-the-badge&logo=googlechrome&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff%20clean-000000?style=for-the-badge&logo=ruff&logoColor=white)
 
@@ -179,8 +180,11 @@ Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` (crea
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev,yara,geoip]"                   # everything (tests, YARA, GeoIP)
 pytest                                                # run the 304-test suite
+pytest --cov=packetiq --cov-report=term-missing      # with line-coverage report
 ```
 The CLI (`packetiq …`) is the same engine the web app uses — handy for scripting/CI, but not required.
+
+**Test coverage:** ~70% line coverage across the package (`pytest-cov`), measured over the *whole* codebase — nothing omitted to flatter the number, including the hardware-dependent live-capture path and terminal renderers. CI enforces a **65% floor** on every push (Python 3.9–3.12), so coverage can't silently regress.
 </details>
 
 ---
@@ -549,7 +553,7 @@ PacketIQ/
 ├── Dockerfile · docker-compose.yml
 ├── pyproject.toml · requirements.txt · MANIFEST.in   # PEP 621 packaging
 ├── packetiq.toml.example · .env.example
-└── LICENSE · CHANGELOG.md · README.md
+└── LICENSE · CHANGELOG.md · README.md · SECURITY.md
 ```
 
 ---
@@ -573,6 +577,7 @@ PacketIQ/
 - **Core analysis runs fully offline.** The AI copilot is optional and only receives the structured summary — never raw packets.
 - Uploaded PCAPs are processed and removed; API keys live only in your local `.env` (gitignored).
 - This is a **defensive** tool. The bundled sample generator produces synthetic captures — nothing is ever transmitted on your network.
+- **Hardened by default:** loopback bind, a DNS-rebinding/CSRF `Host`-header guard, streamed size-capped uploads, `0700` data directories, parameterised SQL, and no `eval`/`exec`/`shell=True`. Policy and reporting: [SECURITY.md](SECURITY.md). Full white-box audit (bandit + pip-audit + manual review + live exploitation): [docs/reports/PacketIQ_Security_Audit_Report.pdf](docs/reports/PacketIQ_Security_Audit_Report.pdf).
 
 ---
 
