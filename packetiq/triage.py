@@ -54,6 +54,11 @@ _RATIONALE: dict = {
         "why": "An IP→MAC conflict is the signature of ARP cache poisoning — an on-path attacker redirecting a victim's traffic to intercept or alter it (man-in-the-middle).",
         "action": "Identify both MACs; if one is unauthorised, isolate it. Consider dynamic ARP inspection (DAI) and port security on the switch. (Rule out legitimate HA/VRRP failover first.)",
     },
+    EventType.DOS_FLOOD: {
+        "what": "A large number of unanswered TCP SYNs was aimed at a single host and port.",
+        "why": "Concentrating half-open connections on one endpoint exhausts its connection table — the signature of a SYN flood / denial-of-service, distinct from a port scan (which spreads across ports/hosts).",
+        "action": "Rate-limit the source and enable SYN cookies upstream; confirm the target's availability and rule out a stuck client repeatedly retrying a dead service.",
+    },
     EventType.DNS_ANOMALY: {
         "what": "Unusual DNS behaviour (high-entropy or excessive queries).",
         "why": "Algorithmically generated domains and query floods are associated with malware C2 and data staging.",

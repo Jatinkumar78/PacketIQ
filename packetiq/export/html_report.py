@@ -524,6 +524,33 @@ def _attack_coverage_html(events) -> str:
     return f"<div class='matrix'>{''.join(cols)}</div>"
 
 
+def _predictions_html(result, events) -> str:
+    """Grounded attack forecast — possible attacks given exposure & behaviour."""
+    try:
+        from packetiq import prediction
+        preds = prediction.predict(result, events)
+    except Exception:
+        preds = []
+    if not preds:
+        return "<p class='muted'>No specific attack exposure predicted from the observed services and behaviour.</p>"
+    intro = ("<p class='muted'>A forecast of attacks this capture is <em>exposed to</em>, derived from the "
+             "observed services and behaviour — possible attacks, not confirmed events. Each rests on the "
+             "evidence listed.</p>")
+    blocks = []
+    for p in preds:
+        ev = "".join(f"<li>{_esc(e)}</li>" for e in (p.evidence or []))
+        mitre = " ".join(f"<span class='muted'>{_esc(m)}</span>" for m in (p.mitre or []))
+        blocks.append(
+            f"<div class='finding' style='border-left:3px solid {_SEV_COLOR.get(p.severity, '#888')}'>"
+            f"<b>{_esc(p.attack)}</b> — <span class='muted'>{_esc(p.likelihood)} likelihood · {_esc(p.severity)} impact · {_esc(p.category)}</span>"
+            f"<br>{_esc(p.rationale)}"
+            f"<ul>{ev}</ul>"
+            f"<div><b>Recommended:</b> {_esc(p.recommendation)}</div>"
+            f"<div style='margin-top:4px'>{mitre}</div></div>"
+        )
+    return intro + "".join(blocks)
+
+
 def _chains_html(chains) -> str:
     if not chains:
         return "<p class='muted'>No multi-stage attack chains correlated.</p>"
@@ -797,6 +824,9 @@ def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
 
   <h2>Finding analysis (why &amp; recommended actions)</h2>
   {_findings_detail(events)}
+
+  <h2>Threat forecast (possible attacks from this capture)</h2>
+  {_predictions_html(result, events)}
 
   <h2>Attack chains ({len(chains)})</h2>
   {_chains_html(chains)}

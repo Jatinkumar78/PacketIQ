@@ -29,6 +29,7 @@ class EventType(str, Enum):
     HOST_SCAN           = "HOST_SCAN"
     ARP_SCAN            = "ARP_SCAN"
     ARP_SPOOFING        = "ARP_SPOOFING"
+    DOS_FLOOD           = "DOS_FLOOD"
     DNS_ANOMALY         = "DNS_ANOMALY"
     DNS_TUNNELING       = "DNS_TUNNELING"
     CREDENTIAL_EXPOSURE = "CREDENTIAL_EXPOSURE"

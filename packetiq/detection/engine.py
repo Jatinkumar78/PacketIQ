@@ -20,6 +20,7 @@ from packetiq.detection import (
     brute_force,
     credential,
     dns_anomaly,
+    dos_flood,
     http_inspect,
     ja3,
     port_scan,
@@ -63,6 +64,9 @@ class DetectionEngine:
 
         _step("arp_scan")
         events.extend(arp_scan.detect(result))
+
+        _step("dos_flood")
+        events.extend(dos_flood.detect(result))
 
         _step("dns_anomaly")
         events.extend(dns_anomaly.detect(result))

@@ -383,6 +383,36 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
     else:
         ui.print_status("No threats detected in this capture.", status="ok")
 
+    # ── Threat Forecast (grounded prediction) ─────────────────────────
+    try:
+        from packetiq import prediction
+        preds = prediction.predict(result, events)
+    except Exception:
+        preds = []
+    if preds:
+        ui.print_section("THREAT FORECAST", "possible attacks given the exposed services & behaviour")
+        ui.print_status(
+            "Prediction of attacks this capture is EXPOSED to — not confirmed events. "
+            "Each rests on the evidence shown.", status="info")
+        pred_rows = [[
+            p.severity,
+            p.likelihood,
+            p.attack[:44] + ("…" if len(p.attack) > 44 else ""),
+            (p.evidence[0][:60] + "…" if p.evidence and len(p.evidence[0]) > 60
+             else (p.evidence[0] if p.evidence else "")),
+        ] for p in preds]
+        ui.print_table(
+            "Predicted Attacks",
+            columns=[
+                ("Impact",     "bold white", "center"),
+                ("Likelihood", "magenta",    "center"),
+                ("Predicted Attack", "yellow", "left"),
+                ("Key evidence", "dim white", "left"),
+            ],
+            rows=pred_rows,
+            max_rows=9999 if full else 12,
+        )
+
     # ── Correlation Engine ────────────────────────────────────────────
     ui.print_section("ATTACK CORRELATION", "linking events into attack chains")
 

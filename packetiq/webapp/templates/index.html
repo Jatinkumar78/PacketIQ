@@ -1076,6 +1076,7 @@ tbody tr:hover td{background:var(--surface2)}
       <div class="panel active" id="panel-dashboard">
         <div id="dash-warn" style="display:none"></div>
         <div id="risk-banner" class="risk-banner"></div>
+        <div id="threat-forecast" style="margin-bottom:16px"></div>
         <div class="metrics-grid" id="metrics-grid"></div>
         <div style="margin-bottom:6px;font-size:11px;font-weight:600;color:var(--text-sub);text-transform:uppercase;letter-spacing:.06em">Kill Chain Coverage</div>
         <div class="phases-row" id="phases-row" style="margin-bottom:20px"></div>
@@ -1821,6 +1822,7 @@ function resetPerCaptureFilters(){
   // show stale data before its own render lands.
   const cveOut = document.getElementById('cve-results'); if(cveOut) cveOut.innerHTML = '';
   const vstats = document.getElementById('vuln-stats'); if(vstats) vstats.innerHTML = '';
+  const tf = document.getElementById('threat-forecast'); if(tf) tf.innerHTML = '';
   _lastGraph = null;
   if(_graphAnim){ cancelAnimationFrame(_graphAnim); _graphAnim = null; }
   const gc = document.getElementById('net-graph');
@@ -1841,7 +1843,7 @@ function showResults(){
   resetPerCaptureFilters();
   focusDashboard();
   const d = resultData;
-  renderDashboard(d); renderEvents(d); renderChains(d);
+  renderDashboard(d); renderPredictions(d); renderEvents(d); renderChains(d);
   renderNetwork(d); renderAssets(d); renderAttribution(d);
   renderSigma(d); renderTimeline(d); renderExports(d); updateHeader(d);
   renderIntelMatches();
@@ -1864,6 +1866,40 @@ function updateHeader(d){
   riskEl.className = 'risk-pill';
   riskEl.style.color = cls; riskEl.style.borderColor = border; riskEl.style.background = border+'22';
   riskEl.textContent = `Risk ${r.score} · ${r.tier}`;
+}
+
+/* ── Threat Forecast (grounded attack prediction) ── */
+function renderPredictions(d){
+  const host = document.getElementById('threat-forecast');
+  if(!host) return;
+  const preds = d.predictions || [];
+  if(!preds.length){ host.innerHTML = ''; return; }
+  const likColor = l => l==='High'?'var(--critical)':(l==='Medium'?'var(--high)':'var(--text-sub)');
+  const rows = preds.map(p=>{
+    const ev = (p.evidence||[]).map(e=>`<li>${esc(e)}</li>`).join('');
+    const mitre = (p.mitre||[]).map(m=>`<span class="badge badge-INFO" style="margin:2px 4px 0 0">${esc(m)}</span>`).join('');
+    return `<div style="border:1px solid var(--border);border-left:3px solid ${likColor(p.likelihood)};border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--surface)">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="badge badge-${esc(p.severity)}">${esc(p.severity)}</span>
+        <strong style="font-size:13.5px">${esc(p.attack)}</strong>
+        <span style="font-size:11px;color:${likColor(p.likelihood)};font-weight:600;margin-left:auto">${esc(p.likelihood)} likelihood · ${esc(p.category)}</span>
+      </div>
+      <div style="font-size:12.5px;color:var(--text-sub);margin-top:6px">${esc(p.rationale)}</div>
+      <ul style="font-size:11.5px;color:var(--text-dim);margin:8px 0 0 16px;padding:0">${ev}</ul>
+      <div style="font-size:11.5px;margin-top:8px"><span style="color:var(--text-sub)">▸ Recommended:</span> ${esc(p.recommendation)}</div>
+      <div style="margin-top:8px">${mitre}</div>
+    </div>`;
+  }).join('');
+  host.innerHTML = `
+    <div class="card" style="padding:16px">
+      <div class="card-header" style="margin-bottom:10px">
+        <div class="card-title">🔮 Threat Forecast — possible attacks from this capture</div>
+      </div>
+      <div style="font-size:11.5px;color:var(--text-dim);margin-bottom:12px">
+        Forecast of attacks this capture is <em>exposed to</em>, from the observed services and behaviour — a prediction of what's possible, not a confirmed event. Each rests on the evidence listed.
+      </div>
+      ${rows}
+    </div>`;
 }
 
 /* ── Dashboard ── */

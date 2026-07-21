@@ -38,6 +38,11 @@ EVENT_TYPE_TECHNIQUES: dict[str, list[MitreTechnique]] = {
         MitreTechnique("TA0009", "Collection",        "T1557",     "Adversary-in-the-Middle"),
     ],
 
+    EventType.DOS_FLOOD: [
+        MitreTechnique("TA0040", "Impact",            "T1499",     "Endpoint Denial of Service"),
+        MitreTechnique("TA0040", "Impact",            "T1499.002", "Service Exhaustion Flood"),
+    ],
+
     EventType.BRUTE_FORCE: [
         MitreTechnique("TA0006", "Credential Access", "T1110",     "Brute Force"),
         MitreTechnique("TA0006", "Credential Access", "T1110.001", "Password Guessing"),
@@ -121,6 +126,7 @@ EVENT_TYPE_KILL_CHAIN: dict[str, str] = {
     EventType.HOST_SCAN:           "Reconnaissance",
     EventType.ARP_SCAN:            "Reconnaissance",
     EventType.ARP_SPOOFING:        "Actions on Objectives",
+    EventType.DOS_FLOOD:           "Actions on Objectives",
     EventType.SUSPICIOUS_FLAGS:    "Reconnaissance",
     EventType.BRUTE_FORCE:         "Exploitation",
     EventType.CREDENTIAL_EXPOSURE: "Actions on Objectives",

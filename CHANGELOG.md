@@ -5,6 +5,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Threat-forecast prediction, full-suite protocols & SYN-flood detection
+
+**Added**
+- **Threat Forecast — grounded attack prediction (`packetiq/prediction.py`).**
+  After analysing a capture, PacketIQ now forecasts the attacks it is *exposed to
+  next*, from two evidence sources only: the **services actually observed** (mapped
+  to the concrete attacks that target them — e.g. SMB → EternalBlue/ransomware
+  lateral movement; FTP/Telnet → credential sniffing; RDP → BlueKeep/brute force;
+  Redis/Mongo/Docker → unauth RCE/takeover; chargen → UDP amplification), and the
+  **behavioural trajectory** of what was detected (a scan → targeted exploitation
+  of what it found; an ARP sweep → MITM/lateral staging; a C2 beacon → exfiltration).
+  Each prediction cites the exact evidence, a likelihood (High/Medium/Low), impact
+  severity, MITRE technique and remediation. It is framed as *possible* attacks
+  given exposure — never a confirmed event — and surfaced on the web Dashboard
+  ("🔮 Threat Forecast"), in the CLI (`THREAT FORECAST` section) and in the HTML/PDF
+  report. 7 tests (`tests/test_prediction.py`).
+- **Comprehensive Internet-Protocol-Suite recognition.** `utils/helpers.py` now
+  maps the core transport/internet-layer protocols (TCP, UDP, ICMP/ICMPv6, IGMP,
+  SCTP, GRE, ESP/AH, OSPF, EIGRP, VRRP, L2TP, …) and ~135 application-layer
+  services — including the legacy inetd services a scan reveals (echo, discard,
+  daytime, qotd, chargen), Windows services (MSRPC, NetBIOS, SMB, WinRM, Kerberos),
+  databases, ICS/SCADA (Modbus, S7), and management planes (IPMI, Docker, VMware).
+  This feeds richer composition tables and the threat-forecast reasoning.
+- **SYN-flood / connection-exhaustion detection (`packetiq/detection/dos_flood.py`).**
+  A high volume of *unanswered* SYNs concentrated on a single host:port (a flood,
+  not a scan) is now flagged — a real gap: a lab capture with 308 unanswered SYNs
+  to one target previously produced zero findings. MITRE **T1499.002**, tiered by
+  volume/rate, and verified to add no false positives on benign captures. 4 tests
+  (`tests/test_dos_flood.py`).
+
 ### Layer-2 attack detection, a cleaner graph & a zero-finding security scan
 
 **Added**

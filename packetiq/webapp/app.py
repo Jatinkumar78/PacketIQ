@@ -140,6 +140,28 @@ def _ser_event(e) -> dict:
     }
 
 
+def _predictions_for(result, events) -> list:
+    """Grounded attack forecast for this capture (best-effort; never fatal)."""
+    with contextlib.suppress(Exception):
+        from packetiq import prediction
+        return [_ser_prediction(p) for p in prediction.predict(result, events)]
+    return []
+
+
+def _ser_prediction(p) -> dict:
+    return {
+        "attack":        p.attack,
+        "category":      p.category,
+        "likelihood":    p.likelihood,
+        "severity":      p.severity,
+        "rationale":     p.rationale,
+        "recommendation": p.recommendation,
+        "evidence":      p.evidence,
+        "mitre":         p.mitre,
+        "affected":      p.affected,
+    }
+
+
 def _attack_coverage(events) -> list:
     try:
         from packetiq.export import attack_coverage
@@ -488,6 +510,7 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
             "total":       tl.activity_bar.total_events if tl.activity_bar else 0,
         },
         "phases_seen":   tl.phases_seen,
+        "predictions":   _predictions_for(result, events),
         "attack_coverage": _attack_coverage(events),
         "threat_intel_matches": _threat_intel_matches(events),
         "fingerprints":  [_ser_fp(f) for f in fps],
