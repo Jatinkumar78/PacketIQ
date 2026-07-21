@@ -85,3 +85,53 @@ def test_ranking_and_recommendation(monkeypatch):
 def test_no_scapy_degrades_gracefully(monkeypatch):
     monkeypatch.setattr(ni, "_scapy_metadata", lambda: ({}, [], None))
     assert ni.list_interfaces() == []
+
+
+class _FakeIfaces:
+    def __init__(self, providers):
+        self.providers = providers
+        self.reloaded = 0
+
+    def reload(self):
+        self.reloaded += 1
+
+
+class _FakeConf:
+    def __init__(self, ifaces):
+        self.ifaces = ifaces
+
+
+def test_rescan_reloads_only_with_a_provider():
+    """A live re-scan (Wireshark-style) must fire when scapy has a provider…"""
+    ifs = _FakeIfaces(providers={"bpf": object()})
+    ni._rescan_scapy(_FakeConf(ifs))
+    assert ifs.reloaded == 1
+
+
+def test_rescan_skips_when_no_provider():
+    """…but never when there is none — reload() would clear the interface list."""
+    ifs = _FakeIfaces(providers={})
+    ni._rescan_scapy(_FakeConf(ifs))
+    assert ifs.reloaded == 0
+    # Also tolerate a conf whose ifaces is None (half-initialised scapy).
+    ni._rescan_scapy(_FakeConf(None))  # must not raise
+
+
+def test_rescan_swallows_reload_failure():
+    """A failing reload must not propagate; the cached list stays usable."""
+    class Boom(_FakeIfaces):
+        def reload(self):
+            raise RuntimeError("bpf busy")
+
+    ni._rescan_scapy(_FakeConf(Boom(providers={"bpf": object()})))  # no exception
+
+
+def test_scapy_metadata_forces_a_rescan(monkeypatch):
+    """_scapy_metadata must invoke the live re-scan so new NICs are picked up."""
+    calls = {"n": 0}
+    monkeypatch.setattr(ni, "_rescan_scapy",
+                        lambda conf: calls.__setitem__("n", calls["n"] + 1))
+    meta, names, default = ni._scapy_metadata()
+    # scapy is a hard dependency, so the import succeeds and the re-scan runs once.
+    assert calls["n"] == 1
+    assert isinstance(names, list)

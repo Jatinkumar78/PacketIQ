@@ -108,24 +108,44 @@ For an editable install so `packetiq/` edits take effect immediately **and** the
 ./.venv/bin/pip install -e ".[dev,yara,geoip]" --config-settings editable_mode=compat
 ```
 
-**macOS gotcha (important):** if your `.venv` directory carries the macOS
-`UF_HIDDEN` flag (some tools set it on dot-directories), pip writes the editable
-`.pth` file hidden too, and **CPython's `site.py` deliberately skips hidden `.pth`
-files** — so the editable install silently does nothing and `import packetiq`
-fails outside the repo. Clear the flag once and the editable install works
-normally (it stays cleared across reinstalls):
+**macOS gotcha (important) — and the permanent fix:** if your `.venv` directory
+carries the macOS `UF_HIDDEN` flag (some background services — Time Machine, a
+cloud-sync client, Spotlight — periodically apply it to dot-directories and their
+contents), pip's editable `.pth` file gets hidden too, and **CPython's `site.py`
+deliberately skips hidden `.pth` files** — so the editable install silently stops
+working and `import packetiq` fails outside the repo. `chflags -R nohidden .venv`
+clears it, but the flag comes back, so that alone is only a temporary patch.
 
-```bash
-chflags -R nohidden .venv          # macOS only; harmless to re-run
-python -c "import packetiq; print(packetiq.__file__)"   # → …/PacketIQ/packetiq/__init__.py
+The **permanent fix** is a `sitecustomize.py` in the venv's `site-packages`.
+Python's import machinery does **not** skip hidden modules (only `site.py`'s
+`.pth` handling does), so a `sitecustomize.py` runs on every interpreter start
+even when it (and the `.pth`) are hidden. It re-adds the repo root to `sys.path`,
+which keeps the editable install — and live source edits — working from any
+directory regardless of the flag:
+
+```python
+# .venv/lib/pythonX.Y/site-packages/sitecustomize.py
+import os, sys
+_here = os.path.dirname(os.path.abspath(__file__))
+_repo = os.path.abspath(os.path.join(_here, "..", "..", "..", ".."))
+if os.path.isdir(os.path.join(_repo, "packetiq")) and _repo not in sys.path:
+    sys.path.append(_repo)
 ```
 
-`quickstart.sh` clears this flag automatically on macOS.
+`quickstart.sh` writes this file automatically on macOS, so a fresh setup is
+robust with no babysitting. Verify with:
+
+```bash
+cd /tmp && /path/to/PacketIQ/.venv/bin/packetiq --version   # resolves from anywhere
+```
 
 > **Zero-config alternative:** running from the repo root always picks up live
 > source edits (the source tree shadows the install), with no `.pth` involved —
-> e.g. `./.venv/bin/python -m packetiq.cli analyze …`. Use this if you ever hit
-> the hidden-`.pth` issue and don't want to touch flags.
+> e.g. `./.venv/bin/python -m packetiq.cli analyze …`. The `quickstart.sh` and
+> `PacketIQ.command` launchers already run PacketIQ this way (`python -m
+> packetiq.cli`), so the app itself is unaffected by the flag either way. A plain
+> non-editable `pip install .` is also fully immune (the package is copied into
+> site-packages, so there is no `.pth`), at the cost of re-running it after edits.
 
 The `PacketIQ.command` / `quickstart.sh` launchers already prefer the newest
 installed CI-tested interpreter, so once 3.10+ is on `PATH` a fresh setup uses it

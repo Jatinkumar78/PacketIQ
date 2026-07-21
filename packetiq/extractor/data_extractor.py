@@ -100,6 +100,20 @@ class ExtractionResult:
     open_connections: int = 0
     completed_connections: int = 0
 
+    # ── ARP / layer-2 tracking (host discovery & cache poisoning) ─
+    # sender IP → set of distinct target IPs it sent ARP requests for
+    arp_request_targets: dict = field(default_factory=dict)
+    # sender IP → number of ARP requests it sent
+    arp_request_counts: dict = field(default_factory=dict)
+    # sender IP → set of source MACs it used (normally exactly one)
+    arp_sender_macs: dict = field(default_factory=dict)
+    # claimed IPv4 → set of MACs seen announcing it (>1 ⇒ possible spoofing)
+    arp_ip_to_macs: dict = field(default_factory=dict)
+    # sender IP → (first_ts, last_ts) of its ARP requests
+    arp_request_window: dict = field(default_factory=dict)
+    arp_total: int = 0            # total ARP frames seen
+    arp_replies: int = 0          # total ARP replies (op == 2)
+
     # ── Passive fingerprinting ───────────────────────────────────
     src_ip_ttl: dict = field(default_factory=dict)   # ip → first observed TTL
 
@@ -138,6 +152,16 @@ class DataExtractor:
         # Observed software banners: (source, value) → set of IPs
         self._banners: dict = defaultdict(set)
 
+        # ARP accumulators
+        self._arp_targets:     dict = defaultdict(set)   # sender_ip → {target_ip}
+        self._arp_req_count:   dict = defaultdict(int)   # sender_ip → n requests
+        self._arp_sender_macs: dict = defaultdict(set)   # sender_ip → {mac}
+        self._arp_ip_macs:     dict = defaultdict(set)   # ip → {mac announcing it}
+        self._arp_first_ts:    dict = {}                 # sender_ip → first req ts
+        self._arp_last_ts:     dict = {}                 # sender_ip → last req ts
+        self._arp_total:       int = 0
+        self._arp_replies:     int = 0
+
     # ------------------------------------------------------------------ #
     #  Public API                                                          #
     # ------------------------------------------------------------------ #
@@ -159,6 +183,10 @@ class DataExtractor:
         # ── Protocol ─────────────────────────────────────────
         proto = record.protocol or "OTHER"
         self._proto_counts[proto] += 1
+
+        # ── ARP (layer-2 host discovery / cache poisoning) ───
+        if record.is_arp:
+            self._feed_arp(record, ts)
 
         # ── IP ───────────────────────────────────────────────
         if record.src_ip:
@@ -253,6 +281,36 @@ class DataExtractor:
                 if record.http_server:
                     self._banners[("http-server", record.http_server.strip()[:200])].add(record.src_ip)
 
+    # MACs that never identify a real host — ignore for spoof/scan attribution.
+    _NULL_MACS = frozenset({"00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff"})
+
+    def _feed_arp(self, record: RawPacketRecord, ts: float):
+        """Accumulate ARP host-discovery and IP→MAC binding evidence."""
+        self._arp_total += 1
+        smac = record.arp_src_mac
+        sip  = record.arp_src_ip
+        tip  = record.arp_dst_ip
+
+        # Every ARP frame (request or reply) announces the sender's own IP→MAC
+        # binding; collecting these lets us spot one IP claimed by several MACs.
+        if sip and sip != "0.0.0.0" and smac and smac not in self._NULL_MACS:  # nosec B104 - ARP sender-IP sentinel check, not a socket bind
+            self._arp_ip_macs[sip].add(smac)
+
+        if record.arp_op == 2:
+            self._arp_replies += 1
+            return
+
+        # Requests (op == 1, and tolerate unknown ops) drive host-discovery scan
+        # detection: one sender asking "who has X?" for many distinct targets.
+        if sip and sip != "0.0.0.0" and tip and tip != sip:  # nosec B104 - ARP sender-IP sentinel check, not a socket bind
+            self._arp_targets[sip].add(tip)
+            self._arp_req_count[sip] += 1
+            if smac and smac not in self._NULL_MACS:
+                self._arp_sender_macs[sip].add(smac)
+            if sip not in self._arp_first_ts:
+                self._arp_first_ts[sip] = ts
+            self._arp_last_ts[sip] = ts
+
     def finalize(self) -> ExtractionResult:
         """Commit aggregated data into ExtractionResult and return it."""
         r = self._r
@@ -273,6 +331,18 @@ class DataExtractor:
         r.completed_connections = len(self._synack_map & set(self._syn_map.keys()))
         r.tcp_syn_pairs         = dict(self._syn_map)
         r.src_ip_ttl            = self._src_ip_ttl
+
+        # ARP host-discovery / spoofing evidence
+        r.arp_request_targets = {ip: set(t) for ip, t in self._arp_targets.items()}
+        r.arp_request_counts  = dict(self._arp_req_count)
+        r.arp_sender_macs     = {ip: set(m) for ip, m in self._arp_sender_macs.items()}
+        r.arp_ip_to_macs      = {ip: set(m) for ip, m in self._arp_ip_macs.items()}
+        r.arp_request_window  = {
+            ip: (self._arp_first_ts[ip], self._arp_last_ts.get(ip, self._arp_first_ts[ip]))
+            for ip in self._arp_first_ts
+        }
+        r.arp_total   = self._arp_total
+        r.arp_replies = self._arp_replies
 
         # Sort DNS / HTTP chronologically
         r.dns_queries    = sorted(r.dns_queries,    key=lambda x: x["ts"])

@@ -13,6 +13,7 @@ Source: https://www.cisa.gov/known-exploited-vulnerabilities-catalog
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 from functools import lru_cache
@@ -51,10 +52,9 @@ def load() -> dict:
     path = _cache_path()
     fresh = path.is_file() and (time.time() - path.stat().st_mtime) < _MAX_AGE
     if not fresh:
-        try:
+        # offline / blocked — fall back to any cached copy below
+        with contextlib.suppress(Exception):
             refresh()
-        except Exception:
-            pass  # offline / blocked — fall back to any cached copy below
     if not path.is_file():
         return {}
     try:

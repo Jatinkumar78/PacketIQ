@@ -76,6 +76,21 @@ def score(events: list[DetectionEvent]) -> RiskReport:
             tier_label, tier_color, tier_summary = label, color, summary
             break
 
+    # Honest floor: the headline tier must not read *lower* than the worst single
+    # finding warrants. The dampened aggregate score can be small (e.g. one recon
+    # event), but a capture that contains a HIGH/CRITICAL indicator cannot be
+    # summarised as "LOW — no action". The numeric score is left untouched.
+    tier_rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+    severities = {e.severity.value for e in events}
+    floor_label = ("HIGH" if "CRITICAL" in severities
+                   else "MEDIUM" if "HIGH" in severities
+                   else None)
+    if floor_label and tier_rank[floor_label] > tier_rank[tier_label]:
+        for _threshold, label, color, summary in RISK_TIERS:
+            if label == floor_label:
+                tier_label, tier_color, tier_summary = label, color, summary
+                break
+
     # Breakdown stats
     by_severity = dict(Counter(e.severity.value for e in events))
     by_type     = dict(Counter(e.event_type.value for e in events))

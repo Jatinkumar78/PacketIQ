@@ -27,6 +27,17 @@ EVENT_TYPE_TECHNIQUES: dict[str, list[MitreTechnique]] = {
         MitreTechnique("TA0007", "Discovery",         "T1018",     "Remote System Discovery"),
     ],
 
+    EventType.ARP_SCAN: [
+        MitreTechnique("TA0007", "Discovery",         "T1018",     "Remote System Discovery"),
+        MitreTechnique("TA0043", "Reconnaissance",    "T1595",     "Active Scanning"),
+    ],
+
+    EventType.ARP_SPOOFING: [
+        MitreTechnique("TA0006", "Credential Access", "T1557",     "Adversary-in-the-Middle"),
+        MitreTechnique("TA0006", "Credential Access", "T1557.002", "ARP Cache Poisoning"),
+        MitreTechnique("TA0009", "Collection",        "T1557",     "Adversary-in-the-Middle"),
+    ],
+
     EventType.BRUTE_FORCE: [
         MitreTechnique("TA0006", "Credential Access", "T1110",     "Brute Force"),
         MitreTechnique("TA0006", "Credential Access", "T1110.001", "Password Guessing"),
@@ -108,6 +119,8 @@ EVENT_TYPE_TECHNIQUES: dict[str, list[MitreTechnique]] = {
 EVENT_TYPE_KILL_CHAIN: dict[str, str] = {
     EventType.PORT_SCAN:           "Reconnaissance",
     EventType.HOST_SCAN:           "Reconnaissance",
+    EventType.ARP_SCAN:            "Reconnaissance",
+    EventType.ARP_SPOOFING:        "Actions on Objectives",
     EventType.SUSPICIOUS_FLAGS:    "Reconnaissance",
     EventType.BRUTE_FORCE:         "Exploitation",
     EventType.CREDENTIAL_EXPOSURE: "Actions on Objectives",

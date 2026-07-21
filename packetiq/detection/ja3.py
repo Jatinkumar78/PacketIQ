@@ -20,6 +20,7 @@ CSV format (abuse.ch SSLBL):  ja3_md5,Firstseen,Lastseen,Listingreason
 Lines starting with '#' are ignored.
 """
 
+import contextlib
 import csv
 import hashlib
 import os
@@ -239,11 +240,9 @@ def _parse_client_hello(payload: bytes) -> Optional[dict]:
 
             # SNI (0x0000)
             if etype == 0x0000 and edata_end - edata_start > 5:
-                try:
+                with contextlib.suppress(Exception):
                     name_len = struct.unpack_from("!H", payload, edata_start + 3)[0]
                     sni = payload[edata_start + 5: edata_start + 5 + name_len].decode(errors="replace")
-                except Exception:
-                    pass
 
             # supported_groups (0x000a)
             if etype == 0x000a and edata_end - edata_start >= 2:

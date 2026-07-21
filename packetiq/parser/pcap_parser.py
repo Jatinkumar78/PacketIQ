@@ -5,6 +5,7 @@ Reads a PCAP/PCAPNG file using Scapy and yields structured raw packet records.
 Keeps parsing logic separate from detection and extraction logic.
 """
 
+import contextlib
 import os
 from collections.abc import Generator
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from scapy.layers.dns import DNS
 from scapy.layers.http import HTTPRequest, HTTPResponse
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.inet6 import IPv6
+from scapy.layers.l2 import ARP
 from scapy.packet import Packet
 
 from packetiq.utils.helpers import get_protocol_name, get_service_name
@@ -43,6 +45,14 @@ class RawPacketRecord:
     tcp_seq: Optional[int] = None
     tcp_ack: Optional[int] = None
     payload_size: int = 0
+
+    # Layer-2 ARP (host discovery / spoofing signals — populated only for ARP)
+    is_arp: bool = False
+    arp_op: Optional[int] = None        # 1 = request (who-has), 2 = reply (is-at)
+    arp_src_mac: Optional[str] = None   # sender hardware address
+    arp_src_ip: Optional[str] = None    # sender protocol (IPv4) address
+    arp_dst_mac: Optional[str] = None   # target hardware address
+    arp_dst_ip: Optional[str] = None    # target protocol (IPv4) address
 
     # Application hints
     has_dns: bool = False
@@ -140,8 +150,23 @@ class PCAPParser:
                 record.ip_proto  = ip6.nh
                 record.protocol  = get_protocol_name(ip6.nh)
 
+            elif pkt.haslayer(ARP):
+                # ARP carries the layer-2 host-discovery and cache-poisoning
+                # signals we must not discard (a scanner/MITM lives here, not in IP).
+                arp = pkt[ARP]
+                record.is_arp      = True
+                record.protocol    = "ARP"
+                try:
+                    record.arp_op = int(arp.op)
+                except Exception:
+                    record.arp_op = None
+                record.arp_src_mac = self._norm_mac(arp.hwsrc)
+                record.arp_src_ip  = arp.psrc
+                record.arp_dst_mac = self._norm_mac(arp.hwdst)
+                record.arp_dst_ip  = arp.pdst
+
             else:
-                # ARP, 802.11, etc. — keep at Ethernet level
+                # 802.3/LLC (STP, CDP, DTP), 802.11, etc. — keep at link level
                 record.protocol = pkt.name if hasattr(pkt, "name") else "OTHER"
 
             # ── Transport layer ────────────────────────────────────────
@@ -176,10 +201,8 @@ class PCAPParser:
                 record.has_dns = True
                 dns = pkt[DNS]
                 if dns.qd:
-                    try:
+                    with contextlib.suppress(Exception):
                         record.dns_qname = dns.qd.qname.decode("utf-8", errors="replace").rstrip(".")
-                    except Exception:
-                        pass
 
             if pkt.haslayer(HTTPRequest):
                 record.has_http = True
@@ -192,10 +215,8 @@ class PCAPParser:
             elif pkt.haslayer(HTTPResponse):
                 record.has_http = True
                 resp = pkt[HTTPResponse]
-                try:
+                with contextlib.suppress(Exception):
                     record.http_status = int(resp.Status_Code)
-                except Exception:
-                    pass
                 # The Server header names the server software/version — the most
                 # CVE-relevant fingerprint we can read from plaintext HTTP.
                 record.http_server = self._safe_decode(getattr(resp, "Server", None))
@@ -225,6 +246,13 @@ class PCAPParser:
         }
         raw = str(flags)
         return "".join(flag_map.get(c, c) for c in raw if c in flag_map) or raw
+
+    @staticmethod
+    def _norm_mac(mac) -> Optional[str]:
+        """Normalise a MAC to lowercase colon form; None for empty values."""
+        if not mac:
+            return None
+        return str(mac).strip().lower() or None
 
     @staticmethod
     def _infer_service(sport: int, dport: int) -> str:

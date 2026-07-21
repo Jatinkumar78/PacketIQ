@@ -9,6 +9,7 @@ For testing or for users without root, `replay()` runs the exact same detection
 loop over a PCAP file (no privileges required).
 """
 
+import contextlib
 import time
 from collections import deque
 
@@ -36,23 +37,15 @@ def _detect(records: list) -> list:
 
     events = []
     for fn in (brute_force.detect, port_scan.detect, dns_anomaly.detect, protocol_misuse.detect):
-        try:
+        with contextlib.suppress(Exception):
             events.extend(fn(res))
-        except Exception:
-            pass
-    try:
+    with contextlib.suppress(Exception):
         events.extend(beacon.BeaconDetector().detect(res))
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         events.extend(http_inspect.detect(res))
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         from packetiq.enrichment import enrich
         events.extend(enrich(res))
-    except Exception:
-        pass
     return events
 
 
@@ -142,8 +135,6 @@ def sniff_live(interface: str, on_alert, window_secs: float = 300.0,
     except KeyboardInterrupt:
         pass
     finally:
-        try:
+        with contextlib.suppress(Exception):
             sniffer.stop()
-        except Exception:
-            pass
     return mon

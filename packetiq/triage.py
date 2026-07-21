@@ -44,6 +44,16 @@ _RATIONALE: dict = {
         "why": "Horizontal sweeps map which hosts run a given service — reconnaissance or worm-style spread.",
         "action": "Validate the source; if unexpected, isolate it and check the targeted service for exposure.",
     },
+    EventType.ARP_SCAN: {
+        "what": "One host sent ARP 'who-has' requests for many addresses across the local subnet.",
+        "why": "Sweeping the subnet with ARP is layer-2 host discovery — how nmap/arp-scan enumerate live hosts before targeting them. It leaves no IP-layer trace.",
+        "action": "Confirm the source isn't an approved asset-management/vuln scanner; if not, locate the device on the switch port and isolate it.",
+    },
+    EventType.ARP_SPOOFING: {
+        "what": "A single IP address was claimed by more than one MAC address on the wire.",
+        "why": "An IP→MAC conflict is the signature of ARP cache poisoning — an on-path attacker redirecting a victim's traffic to intercept or alter it (man-in-the-middle).",
+        "action": "Identify both MACs; if one is unauthorised, isolate it. Consider dynamic ARP inspection (DAI) and port security on the switch. (Rule out legitimate HA/VRRP failover first.)",
+    },
     EventType.DNS_ANOMALY: {
         "what": "Unusual DNS behaviour (high-entropy or excessive queries).",
         "why": "Algorithmically generated domains and query floods are associated with malware C2 and data staging.",

@@ -52,6 +52,34 @@ VENV_PY=".venv/bin/python"
 [ -x "$VENV_PY" ] || VENV_PY=".venv/bin/python3"
 "$VENV_PY" -m ensurepip --upgrade >/dev/null 2>&1 || true
 
+# Permanent UF_HIDDEN safety net (macOS). chflags above is best-effort — a
+# background service can re-hide .venv, and site.py then skips the editable
+# `.pth`, breaking the `packetiq` command outside the repo. A sitecustomize.py is
+# immune (Python imports it even when hidden), so we drop one in that re-adds the
+# repo root to sys.path. No-op for the non-editable install below (the copied
+# package resolves first) and off macOS.
+if command -v chflags >/dev/null 2>&1; then
+  SP=$("$VENV_PY" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>/dev/null)
+  if [ -n "$SP" ] && [ -d "$SP" ]; then
+    cat > "$SP/sitecustomize.py" <<'PYEOF'
+"""PacketIQ editable-install robustness (macOS UF_HIDDEN workaround).
+
+CPython's site.py skips .pth files carrying the macOS UF_HIDDEN flag, which a
+background service periodically re-applies to a dot-directory such as .venv —
+silently breaking an editable install. Python's import machinery does NOT skip
+hidden modules, so this sitecustomize still runs and re-adds the repo root.
+"""
+import os
+import sys
+
+_here = os.path.dirname(os.path.abspath(__file__))
+_repo = os.path.abspath(os.path.join(_here, "..", "..", "..", ".."))
+if os.path.isdir(os.path.join(_repo, "packetiq")) and _repo not in sys.path:
+    sys.path.append(_repo)
+PYEOF
+  fi
+fi
+
 # 3) Install PacketIQ (+ deps) if not installed yet. Check a real dependency
 #    (fastapi), not just `import packetiq` — run from the repo root the source
 #    tree shadows an uninstalled package, which would wrongly skip the install.

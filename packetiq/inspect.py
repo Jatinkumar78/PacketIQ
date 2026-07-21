@@ -7,6 +7,7 @@ Used by the web "Packets" browser and the AI "explain this packet" feature.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import re
 
@@ -20,12 +21,10 @@ def _ips(pkt):
         return pkt[IP].src, pkt[IP].dst
     if pkt.haslayer(IPv6):
         return pkt[IPv6].src, pkt[IPv6].dst
-    try:
+    with contextlib.suppress(Exception):
         from scapy.layers.l2 import Ether
         if pkt.haslayer(Ether):
             return pkt[Ether].src, pkt[Ether].dst
-    except Exception:
-        pass
     return "", ""
 
 
@@ -48,12 +47,10 @@ _TLS_HANDSHAKE_TYPES = {
 
 def _tcp_payload(pkt) -> bytes:
     """First bytes of the TCP payload (empty for handshake/ACK-only segments)."""
-    try:
+    with contextlib.suppress(Exception):
         from scapy.layers.inet import TCP
         if pkt.haslayer(TCP):
             return bytes(pkt["TCP"].payload)[:64]
-    except Exception:
-        pass
     return b""
 
 
@@ -127,14 +124,12 @@ def _protocol_tokens(pkt, proto, sport, dport, svc) -> list:
     for t in re.split(r"[/\s]+", (proto or "").lower()):
         if t and not t.isdigit():
             toks.add(t)
-    try:
+    with contextlib.suppress(Exception):
         from scapy.layers.inet import TCP, UDP
         if pkt.haslayer(TCP):
             toks.add("tcp")
         if pkt.haslayer(UDP):
             toks.add("udp")
-    except Exception:
-        pass
     for port in (sport, dport):
         toks.update(_PORT_PROTOCOLS.get(port, ()))
     if svc:
@@ -173,18 +168,16 @@ def _dns_info(pkt) -> str:
     kind = "Standard query response" if int(getattr(d, "qr", 0)) else "Standard query"
     parts = [kind, f"0x{int(getattr(d, 'id', 0)):04x}"]
     if getattr(d, "qd", None):
-        try:
+        with contextlib.suppress(Exception):
             qtype = _DNS_QTYPES.get(int(d.qd.qtype), str(int(d.qd.qtype)))
             qname = d.qd.qname.decode("latin-1", "replace").rstrip(".")
             parts.append(f"{qtype} {qname}")
-        except Exception:
-            pass
     return " ".join(parts)[:120]
 
 
 def _wireshark_info(pkt, proto, sport, dport) -> str:
     """A concise, Wireshark-like Info string for the packet list."""
-    try:
+    with contextlib.suppress(Exception):
         if proto == "DNS":
             return _dns_info(pkt)
         if proto in ("HTTP", "TLS"):
@@ -205,8 +198,6 @@ def _wireshark_info(pkt, proto, sport, dport) -> str:
                 bits.append(f"Ack={t.ack}")
             bits.append(f"Win={t.window} Len={plen}")
             return " ".join(bits)[:120]
-    except Exception:
-        pass
     try:
         return pkt.summary()[:160]
     except Exception:
@@ -401,12 +392,10 @@ def _tls_sni(payload: bytes) -> str:
 
 
 def _full_tcp_payload(pkt) -> bytes:
-    try:
+    with contextlib.suppress(Exception):
         from scapy.layers.inet import TCP
         if pkt.haslayer(TCP):
             return bytes(pkt["TCP"].payload)
-    except Exception:
-        pass
     return b""
 
 
@@ -422,18 +411,14 @@ def _payload_bytes(pkt) -> bytes:
     body = _full_tcp_payload(pkt)
     if body:
         return body
-    try:
+    with contextlib.suppress(Exception):
         from scapy.layers.inet import UDP
         if pkt.haslayer(UDP):
             return bytes(pkt["UDP"].payload)
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         from scapy.packet import Raw
         if pkt.haslayer(Raw):
             return bytes(pkt[Raw].load)
-    except Exception:
-        pass
     return b""
 
 
@@ -457,10 +442,8 @@ def analyst_facts(pkt, index: int = 0) -> dict:
 
     # Rebuild through bytes so scapy fills computed fields (length, ihl, checksums)
     # — captured packets have them, freshly-built ones don't. Harmless if it fails.
-    try:
+    with contextlib.suppress(Exception):
         pkt = pkt.__class__(bytes(pkt))
-    except Exception:
-        pass
 
     proto, sport, dport = _proto_and_ports(pkt)
     f: dict = {
@@ -470,13 +453,11 @@ def analyst_facts(pkt, index: int = 0) -> dict:
         "frame_len": len(pkt),
     }
 
-    try:
+    with contextlib.suppress(Exception):
         from scapy.layers.l2 import Ether
         if pkt.haslayer(Ether):
             f["eth_src"] = pkt[Ether].src
             f["eth_dst"] = pkt[Ether].dst
-    except Exception:
-        pass
 
     if pkt.haslayer(IP):
         ip = pkt[IP]

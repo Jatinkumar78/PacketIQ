@@ -8,6 +8,7 @@ Recording is best-effort and never raises into the analysis path.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -24,10 +25,8 @@ def _db_path() -> Path:
 def _connect() -> sqlite3.Connection:
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
+    with contextlib.suppress(Exception):
         os.chmod(path.parent, 0o700)   # history may reference sensitive captures
-    except Exception:
-        pass
     conn = sqlite3.connect(str(path))
     conn.execute(
         """

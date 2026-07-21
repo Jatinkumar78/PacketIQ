@@ -20,6 +20,11 @@ import contextlib
 import shutil
 import subprocess  # nosec B404 - only fixed, argument-list OS queries below (no shell)
 import sys
+import threading
+
+# Serialises scapy's ``conf.ifaces.reload()`` (a clear-then-repopulate on a shared
+# dict) so concurrent web-poll threads can't observe a half-rebuilt list.
+_RELOAD_LOCK = threading.Lock()
 
 # Interface-name prefixes → coarse "kind". Used for the icon/label and to rank
 # real NICs above virtual/system plumbing when nothing better is known.
@@ -123,6 +128,28 @@ def _linux_link_up(dev: str) -> bool | None:
     return None  # "unknown" (e.g. loopback, or driver doesn't report)
 
 
+def _rescan_scapy(conf) -> None:
+    """Force scapy to re-enumerate the OS interfaces (Wireshark-style live scan).
+
+    scapy populates ``conf.ifaces`` once and then caches it, so an interface that
+    appears *after* import — e.g. a USB LAN adapter plugged in while the web app
+    is already running — is invisible to ``get_if_list()`` until a reload. That is
+    exactly why Wireshark (which re-scans the OS every time) shows such a NIC while
+    a long-running PacketIQ process does not.
+
+    This triggers the reload, but only where it can *only help*:
+      * reload only when a provider is registered — a half-initialised ``conf``
+        has none, and ``reload()`` would then *clear* the interface list;
+      * under a lock, so concurrent web polls don't race on the shared dict;
+      * any failure is swallowed, leaving the existing cached list intact.
+    """
+    with contextlib.suppress(Exception):
+        ifaces = getattr(conf, "ifaces", None)
+        if ifaces is not None and getattr(ifaces, "providers", None):
+            with _RELOAD_LOCK:
+                ifaces.reload()
+
+
 def _scapy_metadata() -> tuple:
     """(name->{ip,mac,flags,description}, names_list, default_name). Best effort.
 
@@ -134,12 +161,18 @@ def _scapy_metadata() -> tuple:
     try:
         from scapy.all import get_if_list
         from scapy.config import conf
-    except Exception:
-        return meta, names, None  # scapy unavailable → caller still gets bare names elsewhere
-    try:
+        # The first call also forces scapy's lazy init + provider registration,
+        # so we always have a valid name list even if the re-scan below fails.
         names = list(get_if_list())
     except Exception:
-        names = []
+        return meta, names, None  # scapy unavailable → caller still gets bare names elsewhere
+
+    # Re-scan the live OS interface table so a NIC attached after this process
+    # started (the reason a USB LAN can show in Wireshark but not here) appears.
+    _rescan_scapy(conf)
+    with contextlib.suppress(Exception):
+        names = list(get_if_list())
+
     default = str(conf.iface) if getattr(conf, "iface", None) else None
     data = getattr(getattr(conf, "ifaces", None), "data", None) or {}
     unspecified = "0.0.0.0"  # nosec B104 - the no-IP value we FILTER OUT, never a bind target

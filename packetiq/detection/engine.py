@@ -12,7 +12,10 @@ Usage:
     events, risk, fingerprints = engine.run(extraction_result, pcap_path)
 """
 
+import contextlib
+
 from packetiq.detection import (
+    arp_scan,
     beacon,
     brute_force,
     credential,
@@ -58,6 +61,9 @@ class DetectionEngine:
         _step("port_scan")
         events.extend(port_scan.detect(result))
 
+        _step("arp_scan")
+        events.extend(arp_scan.detect(result))
+
         _step("dns_anomaly")
         events.extend(dns_anomaly.detect(result))
 
@@ -77,19 +83,15 @@ class DetectionEngine:
         cred_events: list[DetectionEvent] = []
         cred_seen: set = set()
         ja3_det = ja3.JA3Detector().begin()
-        try:
+        with contextlib.suppress(Exception):
             for record in PCAPParser(pcap_path).stream():
                 credential.scan_record(record, cred_seen, cred_events)
                 ja3_det.feed(record)
             events.extend(cred_events)
-        except Exception:
-            pass
 
         _step("ja3_fingerprinting")
-        try:
+        with contextlib.suppress(Exception):
             events.extend(ja3_det.finalize())
-        except Exception:
-            pass
 
         # ── Pass 3: Raw-packet detectors — ONE shared scapy stream ───────
         # TLS certificate inspection + file carving both stream raw packets;
@@ -106,7 +108,7 @@ class DetectionEngine:
             carver_acc = file_carver.FileCarverAccumulator()
         except Exception:
             carver_acc = None
-        try:
+        with contextlib.suppress(Exception):
             from scapy.all import PcapReader
             with PcapReader(pcap_path) as reader:
                 for pkt in reader:
@@ -114,26 +116,18 @@ class DetectionEngine:
                         tls_acc.feed(pkt)
                     if carver_acc is not None:
                         carver_acc.feed(pkt)
-        except Exception:
-            pass
         if tls_acc is not None:
-            try:
+            with contextlib.suppress(Exception):
                 events.extend(tls_acc.finalize())
-            except Exception:
-                pass
         if carver_acc is not None:
-            try:
+            with contextlib.suppress(Exception):
                 events.extend(carver_acc.finalize())
-            except Exception:
-                pass
 
         # ── Threat-intel enrichment (real OSINT feeds) ───────────────────
         _step("ioc_enrichment")
-        try:
+        with contextlib.suppress(Exception):
             from packetiq.enrichment import enrich as ioc_enrich
             events.extend(ioc_enrich(result))
-        except Exception:
-            pass
 
         # ── False-positive reduction (allow-list + confidence floor) ──────
         # Conservative: with default config nothing is suppressed, so detection

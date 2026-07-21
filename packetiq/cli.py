@@ -8,6 +8,7 @@ Usage:
     packetiq version
 """
 
+import contextlib
 import sys
 from pathlib import Path
 
@@ -495,7 +496,7 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
         )
 
     # ── Record to history (best-effort) ────────────────────────────────
-    try:
+    with contextlib.suppress(Exception):
         from packetiq import storage
         storage.record(
             filename=pcap_path.name, packets=result.total_packets,
@@ -503,8 +504,6 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
             event_count=len(events), chain_count=len(chains),
             top_attacker=(risk.top_sources[0] if risk.top_sources else ""),
         )
-    except Exception:
-        pass
 
     # ── Done ──────────────────────────────────────────────────────────
     ui.print_divider()
@@ -1161,11 +1160,9 @@ def live_cmd(interface, read_pcap, window, interval, threshold, alert, list_ifac
                      f"[yellow]{e.event_type.value}[/yellow] [red]{e.src_ip or '—'}[/red] "
                      f"→ [cyan]{dst}[/cyan]  [dim]{e.description[:70]}[/dim]")
         if alert:
-            try:
+            with contextlib.suppress(Exception):
                 from packetiq.alerts import channels
                 channels.broadcast("PacketIQ live alert", f"[{sev}] {e.description}")
-            except Exception:
-                pass
 
     if read_pcap:
         ui.print_status(f"Replaying {read_pcap} through the live engine...", status="loading")

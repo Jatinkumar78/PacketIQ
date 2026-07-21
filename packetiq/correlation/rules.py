@@ -95,7 +95,8 @@ def recon_to_initial_access(events: list[DetectionEvent]) -> list[AttackChain]:
     chains: list[AttackChain] = []
     by_src = _events_by_src(events)
 
-    recon_types  = {EventType.PORT_SCAN, EventType.HOST_SCAN, EventType.SUSPICIOUS_FLAGS}
+    recon_types  = {EventType.PORT_SCAN, EventType.HOST_SCAN, EventType.ARP_SCAN,
+                    EventType.SUSPICIOUS_FLAGS}
     attack_types = {EventType.BRUTE_FORCE}
 
     for src_ip, src_events in by_src.items():

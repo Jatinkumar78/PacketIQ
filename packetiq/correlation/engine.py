@@ -13,6 +13,8 @@ Usage:
 """
 
 
+import contextlib
+
 from packetiq.correlation import rules as rule_module
 from packetiq.correlation.models import AttackChain
 from packetiq.detection.models import DetectionEvent, Severity
@@ -49,10 +51,9 @@ class CorrelationEngine:
 
         raw_chains: list[AttackChain] = []
         for rule_fn in _RULES:
-            try:
+            # A broken rule should never crash the whole engine
+            with contextlib.suppress(Exception):
                 raw_chains.extend(rule_fn(events))
-            except Exception:
-                pass  # A broken rule should never crash the whole engine
 
         merged = self._merge(raw_chains)
         return self._rank(merged)

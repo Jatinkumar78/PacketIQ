@@ -19,9 +19,10 @@ one-time* OS setup so capture then works as a normal user:
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404 - only fixed-argument, no-shell system calls below (getcap/setcap/osascript)
 import sys
 from pathlib import Path
 
@@ -39,7 +40,7 @@ def platform_name() -> str:
 # ── status ────────────────────────────────────────────────────────────────────
 
 def _mac_capture_ok() -> bool:
-    try:
+    with contextlib.suppress(Exception):
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             return True
         import grp
@@ -52,8 +53,6 @@ def _mac_capture_ok() -> bool:
                     if os.path.exists(dev) and os.access(dev, os.R_OK):
                         return True
                 return True   # in group; perms applied on next bpf device
-    except Exception:
-        pass
     return False
 
 
@@ -62,19 +61,17 @@ def _linux_capture_ok() -> bool:
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             return True
         py = os.path.realpath(sys.executable)
-        out = subprocess.run(["getcap", py], capture_output=True, text=True, timeout=5)
+        out = subprocess.run(["getcap", py], capture_output=True, text=True, timeout=5)  # nosec B603 B607 - fixed argv, no shell; standard libcap tool on PATH
         return "cap_net_raw" in (out.stdout or "")
     except Exception:
         return False
 
 
 def _windows_capture_ok() -> bool:
-    try:
+    with contextlib.suppress(Exception):
         import ctypes
         if ctypes.windll.shell32.IsUserAnAdmin():
             return True
-    except Exception:
-        pass
     # Npcap installed?  (non-admin capture is possible if installed that way)
     return _npcap_installed()
 
@@ -156,7 +153,7 @@ dseditgroup -o edit -a '{user}' -t user access_bpf 2>/dev/null || true
     osa = ('do shell script "' + script.replace("\\", "\\\\").replace('"', '\\"')
            + '" with administrator privileges')
     try:
-        r = subprocess.run(["osascript", "-e", osa], capture_output=True, text=True, timeout=120)
+        r = subprocess.run(["osascript", "-e", osa], capture_output=True, text=True, timeout=120)  # nosec B603 B607 - fixed argv, no shell; macOS system binary
     except Exception as e:  # noqa: BLE001
         return False, f"Setup failed to launch: {e}"
     if r.returncode != 0:
@@ -176,7 +173,7 @@ def _linux_setup() -> tuple[bool, str]:
     cmd = ["setcap", "cap_net_raw,cap_net_admin+eip", py]
     runner = ["sudo"] if shutil.which("sudo") else []
     try:
-        r = subprocess.run(runner + cmd, capture_output=True, text=True, timeout=120)
+        r = subprocess.run(runner + cmd, capture_output=True, text=True, timeout=120)  # nosec B603 B607 - fixed argv, no shell; sudo/setcap resolved from PATH
     except Exception as e:  # noqa: BLE001
         return False, f"setcap failed: {e}"
     if r.returncode != 0:

@@ -27,6 +27,8 @@ class EventType(str, Enum):
     BRUTE_FORCE         = "BRUTE_FORCE"
     PORT_SCAN           = "PORT_SCAN"
     HOST_SCAN           = "HOST_SCAN"
+    ARP_SCAN            = "ARP_SCAN"
+    ARP_SPOOFING        = "ARP_SPOOFING"
     DNS_ANOMALY         = "DNS_ANOMALY"
     DNS_TUNNELING       = "DNS_TUNNELING"
     CREDENTIAL_EXPOSURE = "CREDENTIAL_EXPOSURE"

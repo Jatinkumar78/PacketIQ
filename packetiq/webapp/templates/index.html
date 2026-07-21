@@ -1725,6 +1725,9 @@ function newAnalysis(){
    PROGRESS
 ══════════════════════════════════════════════════════════ */
 function showProgress(fname, sizeMb){
+  // Wipe the previous capture's panels up-front so nothing from the last file
+  // is ever visible while (or if) the new analysis is still running.
+  resetPerCaptureFilters();
   document.getElementById('upload-screen').style.display = 'none';
   document.getElementById('prog-fname').textContent = fname;
   document.getElementById('prog-fsize').textContent = sizeMb.toFixed(2)+' MB · Running full pipeline…';
@@ -1814,6 +1817,14 @@ function resetPerCaptureFilters(){
   const pkBody = document.getElementById('pk-tbody');
   if(pkBody) pkBody.innerHTML = '';
   const pkCount = document.getElementById('pk-count'); if(pkCount) pkCount.textContent = '';
+  // Drop the previous capture's CVE results and graph so a new run can never
+  // show stale data before its own render lands.
+  const cveOut = document.getElementById('cve-results'); if(cveOut) cveOut.innerHTML = '';
+  const vstats = document.getElementById('vuln-stats'); if(vstats) vstats.innerHTML = '';
+  _lastGraph = null;
+  if(_graphAnim){ cancelAnimationFrame(_graphAnim); _graphAnim = null; }
+  const gc = document.getElementById('net-graph');
+  if(gc){ const gx = gc.getContext('2d'); if(gx) gx.clearRect(0,0,gc.width,gc.height); }
 }
 
 /* Land on the Dashboard for every freshly analysed capture, exactly like the
@@ -2154,37 +2165,49 @@ function renderNetwork(d){
 }
 
 /* ── Force-directed connection graph (dependency-free) ── */
-let _graphAnim = null;
+let _graphAnim = null, _lastGraph = null, _graphDrag = null;
+// Re-render the most recent graph — used when the Network panel becomes visible
+// (a canvas measured while display:none has zero width) and on window resize.
+function redrawGraph(){ if(_lastGraph) drawGraph(_lastGraph); }
 function drawGraph(graph){
+  _lastGraph = graph;
   const canvas = document.getElementById('net-graph');
   if(!canvas) return;
   if(_graphAnim){ cancelAnimationFrame(_graphAnim); _graphAnim=null; }
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  const W = canvas.clientWidth || 600, H = 420;
-  canvas.width = W*dpr; canvas.height = H*dpr; ctx.scale(dpr,dpr);
+  // Measure the real drawing width. While the panel is hidden every width is 0,
+  // so defer to the next animation frame rather than baking in a wrong size.
+  const measured = canvas.clientWidth
+                 || (canvas.parentElement && canvas.parentElement.clientWidth) || 0;
+  if(measured < 40){ _graphAnim = requestAnimationFrame(()=>drawGraph(graph)); return; }
+  const W = measured, H = 420;
+  canvas.width = W*dpr; canvas.height = H*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
 
   const nodes = (graph.nodes||[]).map((n,i)=>({
     ...n,
-    x: W/2 + Math.cos(i)*120 + (Math.random()-0.5)*40,
+    x: W/2 + Math.cos(i)*Math.min(120, W/4) + (Math.random()-0.5)*40,
     y: H/2 + Math.sin(i)*120 + (Math.random()-0.5)*40,
     vx:0, vy:0,
     r: 5 + Math.min(11, Math.log10((n.packets||1)+1)*4)
   }));
+  ctx.clearRect(0,0,W,H);
   if(!nodes.length){ ctx.fillStyle='#64748b'; ctx.font='13px sans-serif';
-    ctx.fillText('No IP traffic to graph.', 16, 28); return; }
+    ctx.fillText('No host-to-host IP conversations to graph.', 16, 28); return; }
   const idx = {}; nodes.forEach(n=>idx[n.id]=n);
   const edges = (graph.edges||[]).filter(e=>idx[e.source]&&idx[e.target]);
 
-  let dragNode=null;
+  // Drag state lives at module scope so a single window 'mouseup' handler
+  // (registered once, below) can clear it without leaking a listener per redraw.
   const pos = ev=>{ const r=canvas.getBoundingClientRect();
     return {x:(ev.clientX-r.left), y:(ev.clientY-r.top)}; };
   canvas.onmousedown = ev=>{ const p=pos(ev);
-    dragNode = nodes.find(n=>Math.hypot(n.x-p.x,n.y-p.y)<n.r+4) || null;
-    if(dragNode) canvas.style.cursor='grabbing'; };
-  canvas.onmousemove = ev=>{ if(dragNode){ const p=pos(ev); dragNode.x=p.x; dragNode.y=p.y; dragNode.vx=dragNode.vy=0; } };
-  window.addEventListener('mouseup', ()=>{ dragNode=null; canvas.style.cursor='grab'; });
+    _graphDrag = nodes.find(n=>Math.hypot(n.x-p.x,n.y-p.y)<n.r+4) || null;
+    if(_graphDrag) canvas.style.cursor='grabbing'; };
+  canvas.onmousemove = ev=>{ if(_graphDrag){ const p=pos(ev); _graphDrag.x=p.x; _graphDrag.y=p.y; _graphDrag.vx=_graphDrag.vy=0; } };
 
+  let dragNode = null;  // local alias kept for the physics loop below
   let frames=0;
   function step(){
     frames++;
@@ -2199,7 +2222,7 @@ function drawGraph(graph){
       let dx=b.x-a.x, dy=b.y-a.y; const d=Math.hypot(dx,dy)||1; const f=(d-90)*0.01;
       const ux=dx/d, uy=dy/d; a.vx+=ux*f; a.vy+=uy*f; b.vx-=ux*f; b.vy-=uy*f; });
     // centering + integrate
-    nodes.forEach(n=>{ if(n===dragNode) return;
+    nodes.forEach(n=>{ if(n===_graphDrag) return;
       n.vx+=(W/2-n.x)*0.001; n.vy+=(H/2-n.y)*0.001;
       n.vx*=0.85; n.vy*=0.85; n.x+=n.vx; n.y+=n.vy;
       n.x=Math.max(n.r,Math.min(W-n.r,n.x)); n.y=Math.max(n.r,Math.min(H-n.r,n.y)); });
@@ -2211,13 +2234,25 @@ function drawGraph(graph){
     nodes.forEach(n=>{
       const c = n.flagged ? '#dc2626' : (n.internal ? '#3b82f6' : '#f59e0b');
       ctx.beginPath(); ctx.arc(n.x,n.y,n.r,0,7); ctx.fillStyle=c; ctx.globalAlpha=0.9; ctx.fill(); ctx.globalAlpha=1;
-      if(n.r>8 || n.flagged){ ctx.fillStyle='#cbd5e1'; ctx.font='10px sans-serif'; ctx.textAlign='center';
+      if(n.r>8 || n.flagged || nodes.length<=20){ ctx.fillStyle='#cbd5e1'; ctx.font='10px sans-serif'; ctx.textAlign='center';
         ctx.fillText(n.id, n.x, n.y-n.r-3); }
     });
-    if(frames<600 || dragNode) _graphAnim=requestAnimationFrame(step);
+    if(frames<600 || _graphDrag) _graphAnim=requestAnimationFrame(step);
   }
   step();
 }
+
+// One global drag-release + resize handler pair (registered once, never leaked).
+window.addEventListener('mouseup', ()=>{
+  if(_graphDrag){ _graphDrag=null;
+    const c=document.getElementById('net-graph'); if(c) c.style.cursor='grab'; }
+});
+let _graphResizeT = null;
+window.addEventListener('resize', ()=>{
+  const p=document.getElementById('panel-network');
+  if(!p || !p.classList.contains('active')) return;
+  clearTimeout(_graphResizeT); _graphResizeT=setTimeout(redrawGraph, 150);
+});
 
 /* ── Assets ── */
 function renderAssets(d){
@@ -2344,6 +2379,9 @@ document.querySelectorAll('.nav-item[data-panel]').forEach(el=>{
     else { stopIfaceAutoRefresh(); }
     if(el.dataset.panel==='packets') ensurePackets();
     if(el.dataset.panel==='cve')     ensureCVE();
+    // The graph canvas has no size while its panel is hidden — redraw at the
+    // now-correct width the moment the Network panel becomes visible.
+    if(el.dataset.panel==='network') requestAnimationFrame(redrawGraph);
   });
 });
 

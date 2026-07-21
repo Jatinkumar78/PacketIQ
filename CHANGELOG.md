@@ -5,6 +5,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Layer-2 attack detection, a cleaner graph & a zero-finding security scan
+
+**Added**
+- **ARP scan & spoofing detection (`packetiq/detection/arp_scan.py`).** PacketIQ
+  now parses ARP frames instead of discarding them, and detects two layer-2
+  attack patterns that IP-layer detectors are blind to:
+  - **ARP host-discovery sweep** — one host ARP-requesting many distinct targets
+    (how `nmap -sn` / `arp-scan` enumerate a subnet). MITRE **T1018**. Tiered
+    MEDIUM (≥20 targets) / HIGH (≥50), scaled by breadth.
+  - **ARP cache poisoning** — a single IP announced by multiple MACs (an
+    adversary-in-the-middle signature). MITRE **T1557.002**.
+  This closes a real gap: a full-subnet ARP sweep (789 requests to 253 hosts) that
+  previously produced **zero findings** now surfaces as a clear HIGH event naming
+  the scanner. ARP is also a first-class protocol in the composition table now
+  (it was silently lumped into "Ethernet"). 6 new tests (`tests/test_arp_scan.py`).
+
+**Fixed**
+- **A successful attack reading as "0 findings / LOW".** In addition to the ARP
+  gap above, the aggregate risk **tier could read lower than the worst single
+  finding warranted** — a capture containing a HIGH indicator could still be
+  summarised "LOW — no action". The tier is now floored (a HIGH finding ⇒ tier at
+  least MEDIUM, a CRITICAL ⇒ at least HIGH); the numeric score is unchanged.
+- **Connection graph cluttered / mis-sized.** The graph plotted broadcast,
+  multicast and unspecified pseudo-addresses (`0.0.0.0`, `255.255.255.255`,
+  `224–239.x.x.x`, `x.x.x.255`, `ff00::/8`) as if they were hosts, so DHCP/mDNS
+  noise dwarfed the real talkers. It now shows only real endpoints. The canvas is
+  also sized correctly (it was laid out at a fixed width while its panel was
+  hidden, then CSS-stretched — causing blur), redraws when the Network panel
+  becomes visible and on window resize, labels every node when few are present,
+  and no longer leaks a window event listener per redraw.
+- **The previous capture's data lingering after a new upload.** A new analysis now
+  clears all per-capture panels (packets, CVE, graph) **up-front** when it starts,
+  not only when the next render lands, so no state bleeds between captures.
+- **All 56 Bandit findings resolved (was 0 High / 0 Medium / 53 Low → now 0/0/0).**
+  43 best-effort `try/except: pass` blocks became idiomatic `contextlib.suppress`;
+  the remaining intentional patterns (fixed-argv, no-shell system calls; skip-and-
+  continue loops; `"0.0.0.0"` sentinel comparisons) carry scoped, justified
+  `# nosec` annotations. No behaviour change; the full suite stays green.
+- **Editable install permanently robust to macOS `UF_HIDDEN`.** The earlier
+  `chflags` clear was only temporary (a background service re-hides `.venv`). A
+  `sitecustomize.py` in the venv now re-adds the repo root to `sys.path`; Python
+  imports it even when hidden (unlike `.pth` files, which `site.py` skips), so the
+  `packetiq` command resolves from any directory and live edits keep working.
+  `quickstart.sh` writes it automatically on macOS.
+
 ### Dynamic, Wireshark-style Live Monitor & reliable editable installs
 
 **Added**
@@ -18,10 +63,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   just like Wireshark — while preserving your current selection.
 - **`packetiq live --list`** prints the same interface table in the terminal, and
   running `packetiq live` with no `-i` now lists the available interfaces.
-- 6 new tests (`tests/test_net_interfaces.py`) covering classification, the macOS
-  `networksetup`/`ifconfig` parsers, ranking and graceful degradation.
+- 10 new tests (`tests/test_net_interfaces.py`) covering classification, the macOS
+  `networksetup`/`ifconfig` parsers, ranking, the live re-scan and graceful
+  degradation.
 
 **Fixed**
+- **A hot-plugged NIC (e.g. a USB LAN adapter) never appearing in the Live
+  Monitor while it was visible in Wireshark.** Root cause: scapy caches its
+  interface table (`conf.ifaces`) at first use and `get_if_list()` only reads that
+  cache, so an interface attached *after* the web app started stayed invisible —
+  even though the picker re-polled every 3 s (it was re-rendering a stale list).
+  Wireshark, by contrast, re-scans the OS on every open. `net_interfaces.py` now
+  forces a live re-scan (`conf.ifaces.reload()`) on each enumeration — guarded so
+  it only fires when a scapy provider is registered (otherwise `reload()` would
+  clear the list), serialised with a lock against concurrent web polls, and
+  failure-tolerant (a failed re-scan leaves the cached list intact). A plugged-in
+  adapter now shows up within one 3 s tick, matching Wireshark.
 - **Editable installs (`pip install -e .`) silently doing nothing on macOS.**
   Root cause: when the `.venv` tree carries the macOS `UF_HIDDEN` flag, pip writes
   the editable `.pth` hidden, and CPython's `site.py` **deliberately skips hidden

@@ -57,7 +57,7 @@ def _rules():
                 try:
                     _y.compile(filepath=path)
                     good[f"ns{i}"] = path
-                except Exception:
+                except Exception:  # nosec B112 - skip a rule file that fails to compile, keep the rest
                     continue
             return _y.compile(filepaths=good) if good else None
         except Exception:

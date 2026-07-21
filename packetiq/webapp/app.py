@@ -10,6 +10,7 @@ Provides:
 """
 
 import asyncio
+import contextlib
 import io
 import ipaddress
 import json
@@ -32,10 +33,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 # the owner (0700) on shared/multi-user hosts (CWE-377/CWE-732).
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "packetiq_uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-try:
+with contextlib.suppress(Exception):
     os.chmod(UPLOAD_DIR, 0o700)
-except Exception:
-    pass
 # Bounded upload size (env-overridable). Streamed to disk with an early abort so
 # a large/malicious upload cannot exhaust server memory (CWE-400).
 MAX_UPLOAD_MB = int(os.environ.get("PACKETIQ_MAX_UPLOAD_MB", "10240"))  # default 10 GB
@@ -243,16 +242,41 @@ def _ser_attr(a) -> dict:
     }
 
 
+def _is_graphable_host(ip: str) -> bool:
+    """True only for real endpoints. Broadcast / multicast / unspecified
+    pseudo-addresses (0.0.0.0, 255.255.255.255, x.x.x.255, 224–239.x.x.x,
+    ff00::/8) are traffic sinks, not hosts — graphing them clutters the view
+    and makes DHCP/mDNS noise dwarf the real talkers."""
+    if not ip or ip in ("0.0.0.0", "255.255.255.255", "::", "::1"):  # nosec B104 - string comparison against pseudo-hosts, not a socket bind
+        return False
+    if ":" in ip:                              # IPv6
+        return not ip.lower().startswith("ff")  # drop multicast, keep unicast/link-local
+    octs = ip.split(".")
+    if len(octs) == 4:
+        try:
+            first, last = int(octs[0]), int(octs[3])
+        except ValueError:
+            return True
+        if 224 <= first <= 239:                # IPv4 multicast
+            return False
+        if last == 255:                        # subnet/limited broadcast
+            return False
+    return True
+
+
 def _build_graph(result, events) -> dict:
     """Nodes/edges for the interactive network graph (top talkers + flows)."""
     from packetiq.utils.helpers import is_private_ip
 
     counts: dict = {}
     for ip, c in result.ip_src_counts.items():
-        counts[ip] = counts.get(ip, 0) + c
+        if _is_graphable_host(ip):
+            counts[ip] = counts.get(ip, 0) + c
     for ip, c in result.ip_dst_counts.items():
-        counts[ip] = counts.get(ip, 0) + c
-    flagged = {e.dst_ip for e in events if e.dst_ip} | {e.src_ip for e in events if e.src_ip}
+        if _is_graphable_host(ip):
+            counts[ip] = counts.get(ip, 0) + c
+    flagged = {e.dst_ip for e in events if e.dst_ip and _is_graphable_host(e.dst_ip)} \
+              | {e.src_ip for e in events if e.src_ip and _is_graphable_host(e.src_ip)}
 
     top = {ip for ip, _ in sorted(counts.items(), key=lambda x: -x[1])[:40]}
     top |= {ip for ip in flagged if ip}     # always include flagged hosts
@@ -318,34 +342,26 @@ class _LiveSession:
         self.alerts.append(_ser_event(e))
 
     def _cb(self, pkt):
-        try:
+        with contextlib.suppress(Exception):
             idx = self._i
             if self._writer is not None and self.packets < self._MAX_PKTS:
-                try:
+                with contextlib.suppress(Exception):
                     self._writer.write(pkt)
-                except Exception:
-                    pass
             rec = self._parser._parse_packet(pkt, idx)
             self._i += 1
             self.packets += 1
-            try:
+            with contextlib.suppress(Exception):
                 from packetiq import inspect as _ins
                 self.pkt_summaries.append(_ins.summarize(pkt, idx))
-            except Exception:
-                pass
             if rec:
                 with self._lock:
                     self.monitor.feed(rec)
-        except Exception:
-            pass
 
     def flush(self):
         with self._lock:
-            try:
+            with contextlib.suppress(Exception):
                 if self._writer is not None and getattr(self._writer, "f", None):
                     self._writer.f.flush()
-            except Exception:
-                pass
 
     def start(self):
         from scapy.all import AsyncSniffer, PcapWriter
@@ -371,24 +387,18 @@ class _LiveSession:
         if now - self._last_scan >= 2.0:
             self._last_scan = now
             with self._lock:
-                try:
+                with contextlib.suppress(Exception):
                     self.monitor.trim(now)
                     self.monitor.scan()
-                except Exception:
-                    pass
 
     def stop(self):
         self.status = "stopped"
-        try:
+        with contextlib.suppress(Exception):
             self.sniffer.stop()
-        except Exception:
-            pass
         with self._lock:
-            try:
+            with contextlib.suppress(Exception):
                 if self._writer is not None:
                     self._writer.close()
-            except Exception:
-                pass
             self._writer = None
 
 
@@ -420,7 +430,7 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
     html_report = build_html(file_meta, result, events, chains, risk, attrs,
                              pcap_sha256=file_meta.get("sha256"))
 
-    try:
+    with contextlib.suppress(Exception):
         from packetiq import storage
         storage.record(
             filename=fname, packets=result.total_packets,
@@ -428,8 +438,6 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
             event_count=len(events), chain_count=len(chains),
             top_attacker=(risk.top_sources[0] if risk.top_sources else ""),
         )
-    except Exception:
-        pass
 
     _p("finalize", 99, "Finalising results…")
     dur = max(0.0, result.capture_end - result.capture_start)
@@ -754,7 +762,7 @@ def _iter_packets(paths: list, max_scan: int = 200_000):
                     idx += 1
                     if idx >= max_scan:
                         return
-        except Exception:
+        except Exception:  # nosec B112 - skip an unreadable/corrupt capture and continue with the rest
             continue
 
 
@@ -767,10 +775,8 @@ def _evict_old_jobs(max_jobs: int = 12):
         paths = _jobs[job_id].get("pcap_paths") or [_jobs[job_id].get("pcap_path")]
         for p in paths:
             if p:
-                try:
+                with contextlib.suppress(Exception):
                     Path(p).unlink(missing_ok=True)
-                except Exception:
-                    pass
         _jobs.pop(job_id, None)
 
 
@@ -1167,7 +1173,7 @@ def _ollama_warm(model: str, host: str) -> None:
     _OLLAMA_WARMED.add(model)
 
     def _run() -> None:
-        try:
+        with contextlib.suppress(Exception):  # best-effort warm-up
             import httpx
             httpx.post(
                 host.rstrip("/") + "/api/chat",
@@ -1180,8 +1186,6 @@ def _ollama_warm(model: str, host: str) -> None:
                 },
                 timeout=httpx.Timeout(120.0, connect=5.0),
             )
-        except Exception:  # noqa: BLE001 — best-effort warm-up
-            pass
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -2136,10 +2140,8 @@ def create_app() -> FastAPI:
         except (asyncio.TimeoutError, WebSocketDisconnect):
             pass
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 await websocket.close()
-            except Exception:
-                pass
 
     @app.get("/api/results/{job_id}")
     async def results(job_id: str):
