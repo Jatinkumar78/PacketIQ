@@ -44,11 +44,16 @@ VENV_PY=".venv/bin/python"
 [ -x "$VENV_PY" ] || VENV_PY=".venv/bin/python3"
 "$VENV_PY" -m ensurepip --upgrade >/dev/null 2>&1 || true
 
-# 3) Install PacketIQ (+ deps) if not importable yet
-if ! "$VENV_PY" -c "import packetiq" >/dev/null 2>&1; then
+# 3) Install PacketIQ (+ deps) if not installed yet. Check a real dependency
+#    (fastapi), not just `import packetiq` — run from the repo root the source
+#    tree shadows an uninstalled package, which would wrongly skip the install.
+if ! "$VENV_PY" -c "import packetiq, fastapi, scapy" >/dev/null 2>&1; then
   say "Installing PacketIQ and dependencies (first run only, ~1-2 min)…"
   "$VENV_PY" -m pip install -q --upgrade pip
-  "$VENV_PY" -m pip install -q -e .
+  # Regular (non-editable) install: copies the package into site-packages so the
+  # `packetiq` console script resolves from ANY working directory. Editable (.pth)
+  # installs are unreliable on some Python 3.12+ standalone builds.
+  "$VENV_PY" -m pip install -q .
 fi
 
 # 4) Create .env from the template if missing (AI keys are optional)

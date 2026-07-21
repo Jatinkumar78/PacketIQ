@@ -26,8 +26,14 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # Regular (non-editable) install so the `packetiq` console script resolves
+          # from any working directory (editable/.pth installs are unreliable on some
+          # Python 3.12+ standalone builds; verified by the entry-point smoke test).
+          pip install ".[dev]"
           pip install ruff mypy
+
+      - name: Entry point works from any directory
+        run: cd "$RUNNER_TEMP" && packetiq --help >/dev/null && python -c "import packetiq; print('import OK', packetiq.__version__)"
 
       - name: Lint (ruff)
         run: ruff check packetiq tools tests

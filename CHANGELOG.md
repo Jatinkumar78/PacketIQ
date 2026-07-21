@@ -439,9 +439,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   annotated (`usedforsecurity=False`) — it is the JA3 spec, not a security control.
   bandit High/Medium: 0.
 - **Dependency posture.** Runtime pins sit at security-patched floors in
-  `pyproject.toml` / `requirements.txt`. On Python 3.10+ these resolve to fully
-  patched releases; on the still-supported Python 3.9 (end-of-life since Oct 2025)
-  each package installs at its newest 3.9-compatible version, so a few upstream
+  `pyproject.toml` / `requirements.txt`. The **reference/dev environment now runs on
+  Python 3.12.13**, where these resolve to fully-patched releases and `pip-audit`
+  reports zero advisories in the runtime dependency set (one dev-only transitive,
+  `diskcache` via the `dev`-extra `pySigma`, has no upstream fix yet — not shipped to
+  runtime users). The still-supported Python 3.9 (end-of-life since Oct 2025)
+  installs each package at its newest 3.9-compatible version, so a few upstream
   advisories are only fixed on 3.10+ — **Python 3.10+ is recommended**. Re-checked
   by `pip-audit` in CI.
 - **Re-audit (2026-07-15)** confirmed no new code-level issues; added a root
@@ -461,11 +464,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   "weak-random" findings in the synthetic capture/benchmark/fixture generators are
   annotated `# nosec B311` (deterministic sample data, never cryptographic); the
   audit's Low count is now 53.
-- **Frictionless Python 3.10+ path** — `PacketIQ.command` and `quickstart.sh` now
-  auto-prefer the newest installed CI-tested interpreter (3.12 → 3.10) when building
-  a fresh `.venv`, falling back to `python3` (3.9 still supported). A step-by-step
-  upgrade runbook was added to [`docs/RELEASE.md`](docs/RELEASE.md). Running on
-  3.10+ resolves the security-floor dependencies to their fully-patched releases.
+- **Migrated the reference environment to Python 3.12.13.** The dev `.venv` was
+  rebuilt on a standalone (uv-managed) CPython 3.12.13 — no system change, no code
+  change (`requires-python` stays `>=3.9`). The full suite (304 tests, ~70% coverage
+  gate, ruff, detection gate 100%) passes on 3.12, and the security-floor
+  dependencies resolve to their fully-patched releases (`python-multipart`
+  0.0.20→0.0.32, `starlette` 0.49→1.3.1, `urllib3` 2.6.3→2.7.0, `requests`
+  2.32.5→2.34.2, `click` 8.1.8→8.4.2, `python-dotenv` 1.2.1→1.2.2), clearing the
+  3.9-ceiling advisories. `PacketIQ.command` / `quickstart.sh` now auto-prefer the
+  newest installed CI-tested interpreter (3.12 → 3.10) for a fresh `.venv`, falling
+  back to `python3` (3.9 still supported); an upgrade runbook is in
+  [`docs/RELEASE.md`](docs/RELEASE.md).
 
 ### Fixed
 - **"Explain with AI" (and AI report) now fall back across providers.** They

@@ -61,7 +61,11 @@ VENV_PY=".venv/bin/python"
 if ! "$VENV_PY" -c "import packetiq, fastapi, scapy" >/dev/null 2>&1; then
   say "Installing PacketIQ and its dependencies (one-time, ~1–2 minutes)…"
   "$VENV_PY" -m pip install -q --upgrade pip
-  "$VENV_PY" -m pip install -q -e . || {
+  # Regular (non-editable) install: copies the package into site-packages so the
+  # `packetiq` console script resolves from ANY working directory. Editable (.pth)
+  # installs are unreliable on some Python 3.12+ standalone builds, where the
+  # editable .pth is silently skipped and the command breaks outside the repo.
+  "$VENV_PY" -m pip install -q . || {
     warn "Install failed. Check your internet connection and try again."
     read -r -p "Press Enter to close..."
     exit 1

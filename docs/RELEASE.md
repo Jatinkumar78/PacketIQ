@@ -71,7 +71,13 @@ upstream advisories are only fixed in releases that require Python 3.10+, so **3
 is recommended** for the fullest patch set. The full analysis is in
 [docs/reports/PacketIQ_Security_Audit_Report.pdf](reports/PacketIQ_Security_Audit_Report.pdf).
 
-### Upgrading a local dev machine to Python 3.10+ (recommended)
+### Upgrading a local dev machine to Python 3.10+ (done on the reference env)
+
+> The project's reference/dev environment has already been migrated to
+> **Python 3.12.13** (standalone, uv-managed — no system change). On it the pinned
+> floors resolve to fully-patched releases and `pip-audit` reports zero advisories
+> in the runtime dependency set. The steps below are the exact, verified procedure
+> to do the same on any machine.
 
 No code change is needed — `requires-python` stays `>=3.9`, so 3.9 keeps working.
 This just rebuilds your local `.venv` on a newer interpreter so `pip` resolves the
@@ -86,7 +92,11 @@ cd /path/to/PacketIQ
 rm -rf .venv
 python3.12 -m venv .venv          # or: ./quickstart.sh  (auto-selects the newest)
 ./.venv/bin/python -m pip install -U pip
-./.venv/bin/pip install -e ".[dev,yara,geoip]"
+# Regular (non-editable) install so the `packetiq` command works from any directory.
+# Developers who want live-edit can use `pip install -e ".[dev,yara,geoip]"` instead —
+# reliable on standard CPython, though on some Python 3.12+ standalone builds the
+# editable .pth is silently skipped (the console script then only works inside the repo).
+./.venv/bin/pip install ".[dev,yara,geoip]"
 # 3. Verify — everything should stay green:
 ./.venv/bin/python -m pytest -q --cov=packetiq --cov-fail-under=65
 ./.venv/bin/python -m pip_audit          # advisories now resolve to patched releases

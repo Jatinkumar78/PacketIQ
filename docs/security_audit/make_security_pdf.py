@@ -76,10 +76,10 @@ FINDINGS = [
      "status": "FIXED."},
     {"id": "F-04", "title": "Known-vulnerable dependencies", "sev": "MEDIUM", "cwe": "CWE-1395 Vulnerable Components",
      "desc": "pip-audit flags advisories (mostly DoS / parser edge cases) in python-multipart, starlette, requests, urllib3, click and python-dotenv.",
-     "evidence": "pip-audit → python-multipart 0.0.20, requests 2.32.5, urllib3 2.6.3, starlette 0.49.3, click 8.1.8, python-dotenv 1.2.1 — each is the newest release that still supports Python 3.9; the advisory fixes require Python ≥ 3.10.",
+     "evidence": "The reference environment was migrated to Python 3.12.13 (2026-07-15), where pip resolves the pinned floors to their fully-patched releases: python-multipart 0.0.20→0.0.32, requests 2.32.5→2.34.2, urllib3 2.6.3→2.7.0, starlette 0.49.3→1.3.1, click 8.1.8→8.4.2, python-dotenv 1.2.1→1.2.2. pip-audit on that venv reports zero advisories across the runtime dependency set. On Python 3.9 each package is instead pinned to the newest 3.9-compatible release, and the advisory fixes require Python ≥ 3.10.",
      "impact": "DoS / parsing and request-handling weaknesses inherited from third-party libraries. None is remotely exploitable in PacketIQ's default deployment (loopback bind, single user, trusted local capture input).",
-     "fix": "Security-patched minimum versions are pinned in pyproject.toml and requirements.txt (requests ≥2.32.4, urllib3 ≥2.6.0, python-multipart ≥0.0.18, cryptography ≥44.0.1). On Python 3.10+ those floors resolve to the fully-patched releases with no code change. On Python 3.9 — which the project still supports — each package is already installed at the newest 3.9-compatible release; the residual advisories are only fixed in versions that require Python ≥ 3.10 (Python 3.9 reached end-of-life in October 2025).",
-     "status": "MITIGATED — fully patched on Python 3.10+; on 3.9 pinned to the newest compatible release. Primary recommendation: run PacketIQ on Python 3.10+ to pick up every fix automatically (see §6)."},
+     "fix": "Security-patched minimum versions are pinned in pyproject.toml and requirements.txt (requests ≥2.32.4, urllib3 ≥2.6.0, python-multipart ≥0.0.18, cryptography ≥44.0.1). The reference/dev environment was migrated to Python 3.12.13 (2026-07-15) using a standalone uv-managed interpreter — no system change and no code change (requires-python stays ≥3.9) — and there the floors resolve to fully-patched releases. Python 3.9 remains supported for anyone who needs it, installing at the newest 3.9-compatible release (Python 3.9 reached end-of-life in October 2025).",
+     "status": "RESOLVED on the reference environment (Python 3.12.13) — the runtime-dependency advisories (python-multipart, starlette, requests, urllib3, click, python-dotenv) are cleared. Python 3.9 stays supported with newest-compatible pins. One dev-only transitive advisory remains: diskcache (pulled by the dev-extra pySigma, not a runtime dependency) — PYSEC-2026-2447, no upstream fix released yet; never shipped to runtime users."},
     {"id": "F-05", "title": "Command-injection hardening (privileged setup)", "sev": "LOW", "cwe": "CWE-78 OS Command Injection",
      "desc": "capture_setup interpolates $USER/$LOGNAME into a shell script run with administrator privileges via osascript.",
      "evidence": "script = f\"… dseditgroup -o edit -a '{user}' …\"  (run 'with administrator privileges')",
@@ -165,7 +165,7 @@ STEPS = [
     ("Remediate code findings", "edit app.py / cli.py / capture_setup.py / ja3.py",
      "Streamed uploads, bounded buffers, username validation, MD5 annotation, bind warning", "Fix the issues we control, in code, with the least disruptive change."),
     ("Remediate dependencies", "pin security floors in pyproject.toml + requirements.txt",
-     "cryptography/idna cleared; rest resolve to patched on Python ≥3.10", "Apply the patches that are installable now; pin safe minimums for future installs."),
+     "reference env migrated to Python 3.12.13 — runtime advisories cleared; 3.9 stays supported at newest-compatible pins", "Apply the patches that are installable now; pin safe minimums for future installs."),
     ("Add regression tests", "tests/test_security.py",
      "4 tests (upload abort, username gate) pass", "Lock the fixes so they cannot silently regress."),
     ("Deep round-2 (verified, not assumed)", "XSS interpolation scan ; live traversal/rebinding/CSRF exploit attempts",
@@ -335,7 +335,7 @@ def build():
         ("Linter (ruff)", "All checks passed."),
         ("bandit (SAST)", "High: 0, Medium: 0, Low: 53 (defensive try/except/pass and list-form subprocess calls — no shell=True anywhere). MD5/JA3 annotated usedforsecurity=False; the pseudo-random calls in the synthetic capture/benchmark generators are annotated <font face='Courier'>#&nbsp;nosec&nbsp;B311</font> (deterministic sample data, never cryptographic)."),
         ("Live exploit re-tests", "Path traversal (ip=../../..) → 400 with no file written; DNS-rebinding (bad Host) → 400; cross-origin POST to privileged setup-capture → 403."),
-        ("pip-audit", "On Python 3.10+ the pinned floors resolve to fully-patched releases. On Python 3.9 every flagged package is at its newest 3.9-compatible version; the residual fixes require Python ≥ 3.10 (Python 3.9 is end-of-life)."),
+        ("pip-audit", "Reference env migrated to Python 3.12.13: the pinned floors resolve to fully-patched releases and the runtime dependency set reports zero advisories. Only a dev-only transitive remains (diskcache via the dev-extra pySigma), no upstream fix yet. Python 3.9 stays supported at newest-compatible pins."),
     ], w0=4.2 * cm)]
     story += [Spacer(1, 10), P("Owner action (F-01) — completed", H2)]
     story += [P("The account owner revoked both exposed keys in the provider consoles (Google AI Studio &amp; Groq) on "

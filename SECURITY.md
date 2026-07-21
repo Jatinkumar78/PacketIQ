@@ -50,10 +50,14 @@ surface small:
 
 Runtime dependencies are pinned to **security-patched floors** in `pyproject.toml`
 and `requirements.txt`, re-checked by **`pip-audit`** in CI on every push
-(Python 3.9–3.12). On **Python 3.10+** those floors resolve to fully-patched
-releases; on **Python 3.9** (end-of-life since October 2025) packages install at the
-newest 3.9-compatible version, so **Python 3.10+ is recommended** for the fullest
-patch set. Static analysis uses **bandit**.
+(Python 3.9–3.12). The **reference/dev environment runs on Python 3.12.13**, where
+those floors resolve to fully-patched releases and `pip-audit` reports **zero
+advisories in the runtime dependency set** (one dev-only transitive, `diskcache`
+via the `dev`-extra `pySigma`, has no upstream fix yet — it is never installed by
+`pip install packetiq`). **Python 3.9** remains supported (end-of-life since October
+2025); there each package installs at its newest 3.9-compatible version, so
+**Python 3.10+ is recommended** for the fullest patch set. Static analysis uses
+**bandit**.
 
 ## Audit
 

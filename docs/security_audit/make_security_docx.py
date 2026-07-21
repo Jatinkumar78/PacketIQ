@@ -269,8 +269,9 @@ def build():
         ("bandit (SAST)", "High: 0, Medium: 0, Low: 53. Remaining Low findings are defensive try/except/pass and list-form subprocess calls (no shell=True). The pseudo-random calls in the synthetic capture/benchmark generators are annotated \"# nosec B311\" (deterministic sample data, never cryptographic)."),
         ("Live exploit re-tests", "Path traversal (ip=../../..) → 400, no file written; DNS-rebinding (bad Host) → 400; "
                                   "cross-origin POST to privileged setup-capture → 403."),
-        ("pip-audit", "On Python 3.10+ the pinned floors resolve to fully-patched releases. On Python 3.9 every flagged "
-                      "package is at its newest 3.9-compatible version; the residual fixes require Python >= 3.10 (3.9 is end-of-life)."),
+        ("pip-audit", "Reference environment migrated to Python 3.12.13: the pinned floors resolve to fully-patched "
+                      "releases and the runtime dependency set reports zero advisories. One dev-only transitive remains "
+                      "(diskcache via the dev-extra pySigma), no upstream fix yet. Python 3.9 stays supported at newest-compatible pins."),
     ]
     vt = doc.add_table(rows=len(ver), cols=2)
     vt.style = "Table Grid"
@@ -300,9 +301,9 @@ def build():
         "path traversal, hardens its one privileged path, and restricts its data directories. After this "
         "engagement there are no outstanding code-level vulnerabilities, including a real path-traversal and "
         "CSRF/DNS-rebinding class closed in round two. The one operational risk, API keys committed to git "
-        "history, has been closed by the owner revoking those keys. The main forward-looking recommendation is to "
-        "run on Python 3.10+ so the pinned dependency floors resolve to fully-patched releases; further hardening "
-        "(authentication, rate-limiting) is worthwhile only if the web app is ever exposed beyond localhost."))
+        "history, has been closed by the owner revoking those keys. The reference/dev environment has been migrated to "
+        "Python 3.12.13, so the pinned dependency floors now resolve to fully-patched releases (Python 3.9 stays supported "
+        "for anyone who needs it); further hardening (authentication, rate-limiting) is worthwhile only if the web app is ever exposed beyond localhost."))
 
     # footer
     section = doc.sections[0]
