@@ -32,8 +32,8 @@ def test_html_report_contains_sections():
     html = build_html({"filename": "demo.pcap"}, res, events, [], risk, [])
     for marker in ("Network Forensics &amp; Incident Report",   # house-style cover title
                    "PACKETIQ", "demo.pcap", "PIQ-",             # brand, evidence, report ref
-                   "OVERALL RISK", "Network graph", "<svg",
-                   "Detection events", "Brute force on SSH",
+                   "OVERALL RISK", "Network connection graph", "<svg",
+                   "Detection events", "Threat forecast", "Brute force on SSH",
                    "Limitations &amp; assurance"):
         assert marker in html, marker
 

@@ -286,9 +286,16 @@ def _is_graphable_host(ip: str) -> bool:
     return True
 
 
+_ATTACKER_EVENT_TYPES = {"PORT_SCAN", "HOST_SCAN", "ARP_SCAN", "ARP_SPOOFING",
+                         "DOS_FLOOD", "BRUTE_FORCE", "HTTP_ATTACK"}
+
+
 def _build_graph(result, events) -> dict:
-    """Nodes/edges for the interactive network graph (top talkers + flows)."""
-    from packetiq.utils.helpers import is_private_ip
+    """A real host-to-host network graph: nodes are hosts tagged with a *role*
+    (attacker / target / external / internal), edges are the actual conversations
+    plus the attacker→target scan/attack edges reconstructed from detections, so
+    the topology of the activity is visible — not just a top-talker bar chart."""
+    from packetiq.utils.helpers import get_service_name, is_private_ip
 
     counts: dict = {}
     for ip, c in result.ip_src_counts.items():
@@ -297,29 +304,69 @@ def _build_graph(result, events) -> dict:
     for ip, c in result.ip_dst_counts.items():
         if _is_graphable_host(ip):
             counts[ip] = counts.get(ip, 0) + c
-    flagged = {e.dst_ip for e in events if e.dst_ip and _is_graphable_host(e.dst_ip)} \
-              | {e.src_ip for e in events if e.src_ip and _is_graphable_host(e.src_ip)}
+
+    # Roles from detections: sources of scan/attack behaviour = attackers;
+    # their destinations (and probed hosts) = targets.
+    attackers: set = set()
+    targets: set = set()
+    for e in events:
+        if e.event_type.value in _ATTACKER_EVENT_TYPES and e.src_ip and _is_graphable_host(e.src_ip):
+            attackers.add(e.src_ip)
+        if e.dst_ip and _is_graphable_host(e.dst_ip):
+            targets.add(e.dst_ip)
+        for t in (e.evidence or {}).get("sample_targets", []) or []:
+            host = str(t).split(":")[0]
+            if _is_graphable_host(host):
+                targets.add(host)
+    flagged = attackers | targets
 
     top = {ip for ip, _ in sorted(counts.items(), key=lambda x: -x[1])[:40]}
-    top |= {ip for ip in flagged if ip}     # always include flagged hosts
+    top |= {ip for ip in flagged if ip}          # always include hosts in the story
     top = set(list(top)[:60])
+
+    def _role(ip: str) -> str:
+        if ip in attackers:
+            return "attacker"
+        if ip in targets:
+            return "target"
+        return "internal" if is_private_ip(ip) else "external"
 
     nodes = [
         {"id": ip, "packets": counts.get(ip, 0),
-         "internal": is_private_ip(ip), "flagged": ip in flagged}
+         "internal": is_private_ip(ip),
+         "flagged": ip in flagged,
+         "role": _role(ip)}
         for ip in top
     ]
+
     edges = []
-    seen = set()
+    seen: set = set()
+    # 1) real conversations (flows), labelled with their service/protocol
     for fl in sorted(result.flows.values(), key=lambda f: -f.bytes_total):
         if fl.src_ip in top and fl.dst_ip in top:
             k = (fl.src_ip, fl.dst_ip)
             if k in seen:
                 continue
             seen.add(k)
-            edges.append({"source": fl.src_ip, "target": fl.dst_ip, "bytes": fl.bytes_total})
+            label = fl.service or get_service_name(fl.dst_port) if fl.dst_port else (fl.protocol or "")
+            edges.append({"source": fl.src_ip, "target": fl.dst_ip,
+                          "bytes": fl.bytes_total, "kind": "flow", "label": str(label)})
             if len(edges) >= 90:
                 break
+    # 2) attack/scan edges from detections (attacker → each probed target)
+    for e in events:
+        if e.event_type.value not in _ATTACKER_EVENT_TYPES or not e.src_ip:
+            continue
+        dsts = set()
+        if e.dst_ip:
+            dsts.add(e.dst_ip)
+        for t in (e.evidence or {}).get("sample_targets", []) or []:
+            dsts.add(str(t).split(":")[0])
+        for d in dsts:
+            if e.src_ip in top and d in top and (e.src_ip, d) not in seen:
+                seen.add((e.src_ip, d))
+                edges.append({"source": e.src_ip, "target": d, "bytes": 0,
+                              "kind": "attack", "label": e.event_type.value.replace("_", " ").lower()})
     return {"nodes": nodes, "edges": edges}
 
 

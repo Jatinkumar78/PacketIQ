@@ -23,6 +23,7 @@ from packetiq.detection.models import DetectionEvent, Severity
 _RULES = [
     rule_module.full_kill_chain,          # most specific first → highest confidence
     rule_module.recon_to_initial_access,
+    rule_module.reconnaissance_progression,
     rule_module.brute_credential_chain,
     rule_module.lateral_movement_smb,
     rule_module.c2_channel_detection,

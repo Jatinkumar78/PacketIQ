@@ -181,8 +181,11 @@ class DataExtractor:
             self._last_ts = ts
 
         # ── Protocol ─────────────────────────────────────────
+        # `proto` stays the transport/network class (TCP/UDP/ICMP/ARP) that the
+        # detectors' flow logic depends on; the composition uses the most-specific
+        # name (STP, DHCP, mDNS, …) so it matches Wireshark's protocol hierarchy.
         proto = record.protocol or "OTHER"
-        self._proto_counts[proto] += 1
+        self._proto_counts[record.display_protocol or proto] += 1
 
         # ── ARP (layer-2 host discovery / cache poisoning) ───
         if record.is_arp:
@@ -255,6 +258,8 @@ class DataExtractor:
                 "src": record.src_ip,
                 "dst": record.dst_ip,
                 "qname": record.dns_qname,
+                # mDNS / LLMNR / DNS — computed by the parser's display protocol
+                "kind": record.display_protocol if record.display_protocol in ("mDNS", "LLMNR") else "DNS",
             })
 
         # ── HTTP ─────────────────────────────────────────────

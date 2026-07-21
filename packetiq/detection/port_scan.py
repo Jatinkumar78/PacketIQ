@@ -40,6 +40,64 @@ def detect(result: ExtractionResult) -> list[DetectionEvent]:
     events.extend(_vertical_scan(result))
     events.extend(_horizontal_scan(result))
     events.extend(_stealth_syn_scan(result))
+    events.extend(_coordinated_recon(result))
+    return events
+
+
+# ── Coordinated recon (ARP sweep → TCP service probing) ─────────────────────────
+
+# Distinct targets an ARP sender must hit to be considered a confirmed sweeper.
+_ARP_SWEEP_MIN = 20
+# Distinct (host,port) TCP probes from that same host to call it service probing.
+_PROBE_MIN = 2
+
+
+def _coordinated_recon(result: ExtractionResult) -> list[DetectionEvent]:
+    """Catch the *truncated* port scan that standalone thresholds miss.
+
+    A host that ARP-swept the subnet AND then sent TCP SYNs to several distinct
+    service endpoints is unambiguously doing discovery → service enumeration —
+    even if only a handful of probes were captured. The ARP-sweep context makes
+    this low-false-positive: a normal client that contacts three services is not
+    also mapping the entire subnet by ARP.
+    """
+    events: list[DetectionEvent] = []
+    arp_targets = getattr(result, "arp_request_targets", None) or {}
+    sweepers = {ip for ip, tgts in arp_targets.items() if len(tgts) >= _ARP_SWEEP_MIN}
+    if not sweepers:
+        return events
+
+    probes: dict[str, set] = defaultdict(set)   # src → {(dst, port)}
+    for (src, dst, dport), _tss in (result.tcp_syn_pairs or {}).items():
+        if src in sweepers and dst and dport is not None:
+            probes[src].add((dst, dport))
+
+    for src, combos in probes.items():
+        if len(combos) < _PROBE_MIN:
+            continue
+        hosts = sorted({d for d, _ in combos})
+        ports = sorted({p for _, p in combos})
+        events.append(DetectionEvent(
+            event_type   = EventType.PORT_SCAN,
+            severity     = Severity.MEDIUM,
+            src_ip       = src,
+            protocol     = "TCP",
+            description  = (
+                f"TCP service probing after host discovery — {src} sent SYN probes to "
+                f"{len(combos)} service(s) across {len(hosts)} host(s) "
+                f"(ports {', '.join(str(p) for p in ports[:8])}) following an ARP sweep"
+            ),
+            packet_count = len(combos),
+            confidence   = 0.7,
+            evidence     = {
+                "probes":         len(combos),
+                "hosts_probed":   len(hosts),
+                "ports_probed":   sorted(ports),
+                "sample_targets": [f"{d}:{p}" for d, p in sorted(combos)][:10],
+                "context":        "same host performed an ARP subnet sweep",
+                "scan_type":      "coordinated_recon",
+            },
+        ))
     return events
 
 

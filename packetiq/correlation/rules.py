@@ -429,6 +429,47 @@ def full_kill_chain(events: list[DetectionEvent]) -> list[AttackChain]:
     return chains
 
 
+# ── Rule 6b: Reconnaissance progression (same attacker, multiple recon phases) ─
+
+def reconnaissance_progression(events: list[DetectionEvent]) -> list[AttackChain]:
+    """One source performing multiple, distinct reconnaissance actions.
+
+    e.g. an ARP subnet sweep (host discovery) followed by TCP service probing of
+    the hosts it found. Two recon phases from one source is a coherent scanning
+    campaign even when it never reaches exploitation — exactly what a truncated
+    or vantage-limited capture of a pentest looks like.
+    """
+    recon_types = {EventType.ARP_SCAN, EventType.PORT_SCAN, EventType.HOST_SCAN,
+                   EventType.SUSPICIOUS_FLAGS}
+    chains: list[AttackChain] = []
+    for src_ip, src_events in _events_by_src(events).items():
+        recon = [e for e in src_events if e.event_type in recon_types]
+        distinct_types = {e.event_type for e in recon}
+        if len(recon) < 2 or len(distinct_types) < 2:
+            continue
+        # Full-kill-chain already covers 3+ *phases*; this focuses on the recon stage.
+        type_names = ", ".join(sorted(t.value.replace("_", " ") for t in distinct_types))
+        targets = sorted({e.dst_ip for e in recon if e.dst_ip})
+        sev = Severity.HIGH if any(e.severity == Severity.HIGH for e in recon) else Severity.MEDIUM
+        chains.append(_chain(
+            name        = f"Reconnaissance campaign [{src_ip}]",
+            description = (
+                f"{src_ip} performed multiple reconnaissance actions ({type_names})"
+                + (f" against {len(targets)} host(s)" if targets else "")
+                + " — systematic host discovery and service enumeration."
+            ),
+            events      = recon,
+            severity    = sev,
+            confidence  = 0.85,
+            analyst_note= (
+                f"{src_ip} is actively mapping the network (discovery → service probing). "
+                "This is the reconnaissance stage of an intrusion; identify and isolate the "
+                "host, and watch the enumerated services for follow-on exploitation."
+            ),
+        ))
+    return chains
+
+
 # ── Rule 7: DGA / Malware Domain Cluster ─────────────────────────────────────
 
 def dga_c2_cluster(events: list[DetectionEvent]) -> list[AttackChain]:

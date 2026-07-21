@@ -1016,6 +1016,11 @@ tbody tr:hover td{background:var(--surface2)}
         <span>Attack Chains</span>
         <span class="nav-badge" id="nb-chains">0</span>
       </div>
+      <div class="nav-item" data-panel="predictions">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 000 18"/><circle cx="12" cy="12" r="2.5"/></svg>
+        <span>Possible Attacks</span>
+        <span class="nav-badge" id="nb-predictions">0</span>
+      </div>
       <div class="nav-divider"></div>
       <div class="nav-section">Network</div>
       <div class="nav-item" data-panel="network">
@@ -1155,16 +1160,29 @@ tbody tr:hover td{background:var(--surface2)}
         <div id="chains-list"></div>
       </div>
 
+      <!-- POSSIBLE ATTACKS (threat forecast / prediction) -->
+      <div class="panel" id="panel-predictions">
+        <div class="sec-header">
+          <div>
+            <div class="sec-title">🔮 Possible Attacks — Threat Forecast</div>
+            <div class="sec-sub">Attacks this capture is exposed to, predicted from the observed services &amp; behaviour — with the reason for each</div>
+          </div>
+        </div>
+        <div id="pred-panel-body"></div>
+      </div>
+
       <!-- NETWORK -->
       <div class="panel" id="panel-network">
         <div class="sec-title" style="margin-bottom:16px">Network Intelligence</div>
         <div class="card" style="margin-bottom:16px">
           <div class="card-header">
-            <div class="card-title">Connection Graph</div>
+            <div class="card-title">Network Connection Graph</div>
             <span class="result-count">
+              <span style="color:#dc2626">●</span> attacker
+              <span style="color:#f59e0b">●</span> target
               <span style="color:#3b82f6">●</span> internal
-              <span style="color:#f59e0b">●</span> external
-              <span style="color:#dc2626">●</span> flagged
+              <span style="color:#94a3b8">●</span> external
+              &nbsp;<span style="color:#dc2626">▬</span> scan/attack
             </span>
           </div>
           <canvas id="net-graph" height="420" style="width:100%;display:block;cursor:grab"></canvas>
@@ -1823,6 +1841,8 @@ function resetPerCaptureFilters(){
   const cveOut = document.getElementById('cve-results'); if(cveOut) cveOut.innerHTML = '';
   const vstats = document.getElementById('vuln-stats'); if(vstats) vstats.innerHTML = '';
   const tf = document.getElementById('threat-forecast'); if(tf) tf.innerHTML = '';
+  const pp = document.getElementById('pred-panel-body'); if(pp) pp.innerHTML = '';
+  const npb = document.getElementById('nb-predictions'); if(npb) npb.textContent = '0';
   _lastGraph = null;
   if(_graphAnim){ cancelAnimationFrame(_graphAnim); _graphAnim = null; }
   const gc = document.getElementById('net-graph');
@@ -1868,38 +1888,67 @@ function updateHeader(d){
   riskEl.textContent = `Risk ${r.score} · ${r.tier}`;
 }
 
-/* ── Threat Forecast (grounded attack prediction) ── */
-function renderPredictions(d){
-  const host = document.getElementById('threat-forecast');
-  if(!host) return;
-  const preds = d.predictions || [];
-  if(!preds.length){ host.innerHTML = ''; return; }
-  const likColor = l => l==='High'?'var(--critical)':(l==='Medium'?'var(--high)':'var(--text-sub)');
-  const rows = preds.map(p=>{
-    const ev = (p.evidence||[]).map(e=>`<li>${esc(e)}</li>`).join('');
-    const mitre = (p.mitre||[]).map(m=>`<span class="badge badge-INFO" style="margin:2px 4px 0 0">${esc(m)}</span>`).join('');
-    return `<div style="border:1px solid var(--border);border-left:3px solid ${likColor(p.likelihood)};border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--surface)">
+/* ── Possible Attacks / Threat Forecast (grounded prediction) ── */
+const likColor = l => l==='High'?'var(--critical)':(l==='Medium'?'var(--high)':'var(--text-sub)');
+
+function predictionCard(p){
+  const ev = (p.evidence||[]).map(e=>`<li>${esc(e)}</li>`).join('');
+  const mitre = (p.mitre||[]).map(m=>`<span class="badge badge-INFO" style="margin:2px 4px 0 0">${esc(m)}</span>`).join('');
+  // Explicit "why we predict this" — ties the observed evidence to the forecast.
+  const why = (p.evidence && p.evidence.length)
+    ? 'We predict this because ' + p.evidence.join('; ') + '.'
+    : p.rationale;
+  return `<div style="border:1px solid var(--border);border-left:4px solid ${likColor(p.likelihood)};border-radius:8px;padding:14px 16px;margin-bottom:12px;background:var(--surface)">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span class="badge badge-${esc(p.severity)}">${esc(p.severity)}</span>
-        <strong style="font-size:13.5px">${esc(p.attack)}</strong>
-        <span style="font-size:11px;color:${likColor(p.likelihood)};font-weight:600;margin-left:auto">${esc(p.likelihood)} likelihood · ${esc(p.category)}</span>
+        <span class="badge badge-${esc(p.severity)}">${esc(p.severity)} impact</span>
+        <strong style="font-size:14px">${esc(p.attack)}</strong>
+        <span style="font-size:11.5px;color:${likColor(p.likelihood)};font-weight:600;margin-left:auto">${esc(p.likelihood)} likelihood · ${esc(p.category)}</span>
       </div>
-      <div style="font-size:12.5px;color:var(--text-sub);margin-top:6px">${esc(p.rationale)}</div>
+      <div style="font-size:12.5px;color:var(--accent2);margin-top:8px;font-weight:600">Why we predict this</div>
+      <div style="font-size:12.5px;color:var(--text-sub);margin-top:2px">${esc(why)}</div>
       <ul style="font-size:11.5px;color:var(--text-dim);margin:8px 0 0 16px;padding:0">${ev}</ul>
-      <div style="font-size:11.5px;margin-top:8px"><span style="color:var(--text-sub)">▸ Recommended:</span> ${esc(p.recommendation)}</div>
+      <div style="font-size:12.5px;color:var(--text-sub);margin-top:8px">${esc(p.rationale)}</div>
+      <div style="font-size:12px;margin-top:8px"><span style="color:var(--text-sub)">▸ Recommended:</span> ${esc(p.recommendation)}</div>
       <div style="margin-top:8px">${mitre}</div>
     </div>`;
-  }).join('');
-  host.innerHTML = `
-    <div class="card" style="padding:16px">
-      <div class="card-header" style="margin-bottom:10px">
-        <div class="card-title">🔮 Threat Forecast — possible attacks from this capture</div>
-      </div>
-      <div style="font-size:11.5px;color:var(--text-dim);margin-bottom:12px">
-        Forecast of attacks this capture is <em>exposed to</em>, from the observed services and behaviour — a prediction of what's possible, not a confirmed event. Each rests on the evidence listed.
-      </div>
-      ${rows}
+}
+
+function renderPredictions(d){
+  const preds = d.predictions || [];
+  // nav badge
+  const nb = document.getElementById('nb-predictions'); if(nb) nb.textContent = preds.length;
+  const intro = `<div style="font-size:12px;color:var(--text-dim);margin-bottom:14px">
+      A forecast of attacks this capture is <em>exposed to</em>, from the observed services and behaviour —
+      a prediction of what's <em>possible</em>, not a confirmed event. Each shows exactly why it was predicted.
     </div>`;
+  // Dedicated left-nav panel — full detail
+  const panel = document.getElementById('pred-panel-body');
+  if(panel){
+    panel.innerHTML = preds.length
+      ? intro + preds.map(predictionCard).join('')
+      : `<div class="no-data" style="padding:32px"><p>No specific attack exposure predicted from the observed services and behaviour.</p></div>`;
+  }
+  // Dashboard teaser — compact summary linking to the panel
+  const tf = document.getElementById('threat-forecast');
+  if(tf){
+    if(!preds.length){ tf.innerHTML=''; }
+    else {
+      const lines = preds.slice(0,4).map(p=>`<div style="display:flex;gap:8px;align-items:center;margin:4px 0">
+        <span class="badge badge-${esc(p.severity)}">${esc(p.severity)}</span>
+        <span style="font-size:12.5px">${esc(p.attack)}</span>
+        <span style="font-size:11px;color:${likColor(p.likelihood)};margin-left:auto">${esc(p.likelihood)}</span></div>`).join('');
+      tf.innerHTML = `<div class="card" style="padding:16px">
+        <div class="card-header" style="margin-bottom:8px"><div class="card-title">🔮 Possible Attacks — ${preds.length} predicted</div>
+        <a class="btn btn-secondary btn-sm" href="#" onclick="gotoPanel('predictions');return false">View all &amp; reasons →</a></div>
+        ${lines}</div>`;
+    }
+  }
+}
+
+/* Programmatically switch to a panel (used by the dashboard teaser link). */
+function gotoPanel(name){
+  const nav=document.querySelector('.nav-item[data-panel="'+name+'"]');
+  if(nav) nav.click();
 }
 
 /* ── Dashboard ── */
@@ -2264,12 +2313,30 @@ function drawGraph(graph){
       n.x=Math.max(n.r,Math.min(W-n.r,n.x)); n.y=Math.max(n.r,Math.min(H-n.r,n.y)); });
 
     ctx.clearRect(0,0,W,H);
-    ctx.strokeStyle='rgba(148,163,184,0.18)'; ctx.lineWidth=1;
+    const roleColor = n => n.role==='attacker' ? '#dc2626'
+                        : n.role==='target'   ? '#f59e0b'
+                        : n.role==='external' ? '#94a3b8'
+                        : n.internal          ? '#3b82f6' : '#94a3b8';
+    // edges: scan/attack edges are red + dashed + arrowed; normal flows grey
     edges.forEach(e=>{ const a=idx[e.source],b=idx[e.target];
-      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); });
+      const attack = e.kind==='attack';
+      ctx.strokeStyle = attack ? 'rgba(220,38,38,0.55)' : 'rgba(148,163,184,0.22)';
+      ctx.lineWidth = attack ? 1.6 : 1;
+      ctx.setLineDash(attack ? [5,4] : []);
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+      ctx.setLineDash([]);
+      // arrowhead pointing at the target (direction of the connection/attack)
+      const ang=Math.atan2(b.y-a.y,b.x-a.x); const ex=b.x-Math.cos(ang)*(b.r+2), ey=b.y-Math.sin(ang)*(b.r+2);
+      ctx.fillStyle = attack ? 'rgba(220,38,38,0.7)' : 'rgba(148,163,184,0.35)';
+      ctx.beginPath(); ctx.moveTo(ex,ey);
+      ctx.lineTo(ex-Math.cos(ang-0.4)*7, ey-Math.sin(ang-0.4)*7);
+      ctx.lineTo(ex-Math.cos(ang+0.4)*7, ey-Math.sin(ang+0.4)*7);
+      ctx.closePath(); ctx.fill();
+    });
     nodes.forEach(n=>{
-      const c = n.flagged ? '#dc2626' : (n.internal ? '#3b82f6' : '#f59e0b');
+      const c = roleColor(n);
       ctx.beginPath(); ctx.arc(n.x,n.y,n.r,0,7); ctx.fillStyle=c; ctx.globalAlpha=0.9; ctx.fill(); ctx.globalAlpha=1;
+      if(n.role==='attacker'){ ctx.strokeStyle='#fecaca'; ctx.lineWidth=2; ctx.stroke(); }
       if(n.r>8 || n.flagged || nodes.length<=20){ ctx.fillStyle='#cbd5e1'; ctx.font='10px sans-serif'; ctx.textAlign='center';
         ctx.fillText(n.id, n.x, n.y-n.r-3); }
     });

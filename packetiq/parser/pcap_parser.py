@@ -16,7 +16,7 @@ from scapy.layers.dns import DNS
 from scapy.layers.http import HTTPRequest, HTTPResponse
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.inet6 import IPv6
-from scapy.layers.l2 import ARP
+from scapy.layers.l2 import ARP, LLC, SNAP, STP
 from scapy.packet import Packet
 
 from packetiq.utils.helpers import get_protocol_name, get_service_name
@@ -35,7 +35,8 @@ class RawPacketRecord:
     ip_version: int = 4
     ttl: Optional[int] = None
     ip_proto: Optional[int] = None  # numeric (6=TCP, 17=UDP, 1=ICMP …)
-    protocol: str = "UNKNOWN"       # human-readable
+    protocol: str = "UNKNOWN"       # transport/network class for detector logic (TCP/UDP/ICMP/ARP…)
+    display_protocol: Optional[str] = None  # most-specific protocol for composition (STP, DHCP, mDNS…)
 
     # Transport layer
     src_port: Optional[int] = None
@@ -221,11 +222,80 @@ class PCAPParser:
                 # CVE-relevant fingerprint we can read from plaintext HTTP.
                 record.http_server = self._safe_decode(getattr(resp, "Server", None))
 
+            # ── Most-specific protocol name (Wireshark-style composition) ──
+            record.display_protocol = self._display_proto(pkt, record)
+
             return record
 
         except Exception:
             # Malformed or unsupported packet — skip silently
             return None
+
+    # ------------------------------------------------------------------ #
+    #  Protocol identification for accurate composition                    #
+    # ------------------------------------------------------------------ #
+
+    # Cisco SNAP protocol IDs (OUI 00:00:0c) → link-layer control protocols.
+    _SNAP_CODE = {0x2000: "CDP", 0x2004: "DTP", 0x2003: "VTP", 0x010b: "PVST"}
+    # UDP/TCP well-known application protocols surfaced in the composition.
+    _UDP_APP = {67: "DHCP", 68: "DHCP", 546: "DHCPv6", 547: "DHCPv6", 69: "TFTP",
+                123: "NTP", 137: "NBNS", 138: "NBT-DGM", 161: "SNMP", 162: "SNMP",
+                500: "ISAKMP", 514: "SYSLOG", 520: "RIP", 1900: "SSDP", 5353: "mDNS",
+                5355: "LLMNR", 4789: "VXLAN"}
+    _TCP_APP = {21: "FTP", 22: "SSH", 23: "TELNET", 25: "SMTP", 110: "POP", 143: "IMAP",
+                139: "NBSS", 445: "SMB", 389: "LDAP", 3389: "RDP", 5900: "VNC"}
+
+    def _display_proto(self, pkt, record: "RawPacketRecord") -> str:
+        """Return the most-specific protocol name for the composition table.
+
+        Wireshark shows the highest dissected layer (STP, DHCP, mDNS…); PacketIQ
+        used to collapse these into '802.3'/'Ethernet'/'UDP'. This restores that
+        granularity for the composition WITHOUT changing ``record.protocol``
+        (kept as TCP/UDP/ICMP/ARP for the detectors' flow logic).
+        """
+        with contextlib.suppress(Exception):
+            if record.is_arp:
+                return "ARP"
+            # ── Application layer over UDP/TCP ──
+            if record.has_dns:
+                port = record.dst_port or record.src_port or 0
+                return "mDNS" if port == 5353 else ("LLMNR" if port == 5355 else "DNS")
+            if pkt.haslayer("DHCP") or pkt.haslayer("BOOTP"):
+                return "DHCP"
+            if pkt.haslayer("NBTDatagram"):
+                return "NBT-DGM"
+            if record.has_http:
+                return "HTTP"
+            if record.protocol == "UDP":
+                port = record.dst_port if (record.dst_port or 0) < 49152 else record.src_port
+                return self._UDP_APP.get(port or 0, "UDP")
+            if record.protocol == "TCP":
+                for p in (record.dst_port, record.src_port):
+                    if p in self._TCP_APP:
+                        return self._TCP_APP[p]
+                if record.dst_port == 443 or record.src_port == 443:
+                    return "TLS" if record.payload_size > 0 else "TCP"
+                if record.dst_port == 80 or record.src_port == 80:
+                    return "HTTP" if record.payload_size > 0 else "TCP"
+                return "TCP"
+            if record.protocol == "ICMP":
+                return "ICMP"
+            if record.ip_proto == 2:
+                return "IGMP"
+            if record.ip_version == 6 and record.protocol not in ("TCP", "UDP"):
+                return record.protocol or "IPv6"
+            # ── Link-layer control (non-IP frames) ──
+            if pkt.haslayer(STP):
+                return "STP"
+            if pkt.haslayer(SNAP):
+                return self._SNAP_CODE.get(int(getattr(pkt[SNAP], "code", 0)), "SNAP")
+            eth = pkt.getlayer("Ether")
+            if eth is not None and int(getattr(eth, "type", 0)) == 0x9000:
+                return "LOOP"          # Ethernet Configuration Test / loopback
+            if pkt.haslayer(LLC):
+                return "LLC"
+        return record.protocol if record.protocol not in (None, "UNKNOWN") else (
+            pkt.name if hasattr(pkt, "name") else "OTHER")
 
     # ------------------------------------------------------------------ #
     #  Helpers                                                             #

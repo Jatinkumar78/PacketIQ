@@ -71,53 +71,118 @@ def _os_hint(ttl) -> str:
     return "Router/appliance (TTL≤255)"
 
 
+_GRAPH_ATTACK_EVENTS = {"PORT_SCAN", "HOST_SCAN", "ARP_SCAN", "ARP_SPOOFING",
+                        "DOS_FLOOD", "BRUTE_FORCE", "HTTP_ATTACK"}
+
+
+def _graphable(ip: str) -> bool:
+    """Real endpoints only — drop broadcast/multicast/unspecified pseudo-hosts."""
+    if not ip or ip in ("0.0.0.0", "255.255.255.255", "::", "::1"):  # nosec B104 - string comparison against pseudo-hosts, not a socket bind
+        return False
+    if ":" in ip:
+        return not ip.lower().startswith("ff")
+    o = ip.split(".")
+    if len(o) == 4:
+        try:
+            if 224 <= int(o[0]) <= 239 or int(o[3]) == 255:
+                return False
+        except ValueError:
+            return True
+    return True
+
+
 def _network_svg(result, events) -> str:
-    """Simple force-free circular network graph of the top talkers + flows."""
+    """A real host-to-host network graph: hosts coloured by role (attacker /
+    target / internal / external), conversation edges plus attacker→target
+    scan/attack edges (dashed red, arrowed), so the topology of the activity is
+    visible — not just a top-talker chart."""
     counts: dict = {}
     for ip, c in result.ip_src_counts.items():
-        counts[ip] = counts.get(ip, 0) + c
+        if _graphable(ip):
+            counts[ip] = counts.get(ip, 0) + c
     for ip, c in result.ip_dst_counts.items():
-        counts[ip] = counts.get(ip, 0) + c
-    top = [ip for ip, _ in sorted(counts.items(), key=lambda x: -x[1])[:14]]
-    if len(top) < 2:
-        return "<p class='muted'>Not enough hosts to graph.</p>"
+        if _graphable(ip):
+            counts[ip] = counts.get(ip, 0) + c
 
-    bad = {e.dst_ip for e in events if e.dst_ip} | {e.src_ip for e in events if e.src_ip}
+    attackers = {e.src_ip for e in events
+                 if e.event_type.value in _GRAPH_ATTACK_EVENTS and e.src_ip and _graphable(e.src_ip)}
+    targets = {e.dst_ip for e in events if e.dst_ip and _graphable(e.dst_ip)}
+    for e in events:
+        for t in (getattr(e, "evidence", {}) or {}).get("sample_targets", []) or []:
+            h = str(t).split(":")[0]
+            if _graphable(h):
+                targets.add(h)
+
+    top = [ip for ip, _ in sorted(counts.items(), key=lambda x: -x[1])[:16]]
+    for ip in (attackers | targets):
+        if ip not in top and _graphable(ip):
+            top.append(ip)
+    top = top[:20]
+    if len(top) < 2:
+        return "<p class='muted'>Not enough distinct hosts to graph.</p>"
 
     W = H = 560
     cx = cy = W / 2
     R = 210
     pos = {}
-    n = len(top)
     for i, ip in enumerate(top):
-        ang = 2 * math.pi * i / n - math.pi / 2
+        ang = 2 * math.pi * i / len(top) - math.pi / 2
         pos[ip] = (cx + R * math.cos(ang), cy + R * math.sin(ang))
 
-    edges: list = []
-    flows = sorted(result.flows.values(), key=lambda f: -f.bytes_total)
-    for fl in flows:
-        if fl.src_ip in pos and fl.dst_ip in pos and len(edges) < 40:
-            edges.append((fl.src_ip, fl.dst_ip))
+    # conversation edges + attack/scan edges
+    flow_edges: set = set()
+    for fl in sorted(result.flows.values(), key=lambda f: -f.bytes_total):
+        if fl.src_ip in pos and fl.dst_ip in pos and len(flow_edges) < 40:
+            flow_edges.add((fl.src_ip, fl.dst_ip))
+    attack_edges: set = set()
+    for e in events:
+        if e.event_type.value not in _GRAPH_ATTACK_EVENTS or e.src_ip not in pos:
+            continue
+        dsts = {e.dst_ip} if e.dst_ip else set()
+        for t in (getattr(e, "evidence", {}) or {}).get("sample_targets", []) or []:
+            dsts.add(str(t).split(":")[0])
+        for d in dsts:
+            if d in pos:
+                attack_edges.add((e.src_ip, d))
+    flow_edges -= attack_edges
 
-    parts = [f'<svg viewBox="0 0 {W} {H}" width="100%" style="max-width:620px">']
-    for a, b in edges:
+    parts = [f'<svg viewBox="0 0 {W} {H}" width="100%" style="max-width:620px">',
+             '<defs><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">'
+             '<path d="M0,0 L7,3 L0,6 Z" fill="#dc2626"/></marker>'
+             '<marker id="ahg" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">'
+             '<path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker></defs>']
+
+    def _edge(a, b, attack):
         x1, y1 = pos[a]; x2, y2 = pos[b]
-        parts.append(f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" stroke="#94a3b888" stroke-width="1"/>')
+        # shorten so the arrowhead sits at the node edge
+        dx, dy = x2 - x1, y2 - y1
+        d = math.hypot(dx, dy) or 1
+        x2s, y2s = x2 - dx / d * 12, y2 - dy / d * 12
+        if attack:
+            return (f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2s:.0f}" y2="{y2s:.0f}" '
+                    f'stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5,4" opacity="0.6" marker-end="url(#ah)"/>')
+        return (f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2s:.0f}" y2="{y2s:.0f}" '
+                f'stroke="#94a3b8" stroke-width="1" opacity="0.4" marker-end="url(#ahg)"/>')
+
+    for a, b in flow_edges:
+        parts.append(_edge(a, b, False))
+    for a, b in attack_edges:
+        parts.append(_edge(a, b, True))
+
     for ip, (x, y) in pos.items():
-        if ip in bad:
-            fill = "#dc2626"
-        elif is_private_ip(ip):
-            fill = "#3b82f6"
-        else:
-            fill = "#f59e0b"
+        fill = ("#dc2626" if ip in attackers else "#f59e0b" if ip in targets
+                else "#3b82f6" if is_private_ip(ip) else "#94a3b8")
         r = 6 + min(12, math.log10(max(counts.get(ip, 1), 1)) * 4)
-        parts.append(f'<circle cx="{x:.0f}" cy="{y:.0f}" r="{r:.0f}" fill="{fill}" opacity="0.85"/>')
+        stroke = ' stroke="#fecaca" stroke-width="2"' if ip in attackers else ''
+        parts.append(f'<circle cx="{x:.0f}" cy="{y:.0f}" r="{r:.0f}" fill="{fill}" opacity="0.9"{stroke}/>')
         parts.append(f'<text x="{x:.0f}" y="{y - r - 4:.0f}" font-size="10" fill="#475569" '
                      f'text-anchor="middle">{_esc(ip)}</text>')
     parts.append("</svg>")
-    parts.append('<div class="legend"><span class="dot" style="background:#3b82f6"></span>internal '
-                 '<span class="dot" style="background:#f59e0b"></span>external '
-                 '<span class="dot" style="background:#dc2626"></span>flagged</div>')
+    parts.append('<div class="legend"><span class="dot" style="background:#dc2626"></span>attacker '
+                 '<span class="dot" style="background:#f59e0b"></span>target '
+                 '<span class="dot" style="background:#3b82f6"></span>internal '
+                 '<span class="dot" style="background:#94a3b8"></span>external '
+                 '&nbsp;<span style="color:#dc2626">▬▶</span> scan/attack</div>')
     return "".join(parts)
 
 
@@ -241,20 +306,34 @@ def _services_table(result) -> str:
 def _dns_table(result) -> str:
     q = getattr(result, "dns_queries", []) or []
     counts: dict = {}
+    kinds: dict = {}
+    kind_totals: dict = {"DNS": 0, "mDNS": 0, "LLMNR": 0}
     for item in q:
-        name = item.get("qname", "") if isinstance(item, dict) else ""
-        if name:
-            counts[name] = counts.get(name, 0) + 1
+        if not isinstance(item, dict):
+            continue
+        name = item.get("qname", "")
+        if not name:
+            continue
+        kind = item.get("kind", "DNS")
+        counts[name] = counts.get(name, 0) + 1
+        kinds[name] = kind
+        kind_totals[kind] = kind_totals.get(kind, 0) + 1
     if not counts:
         return ""
     rows = "".join(
-        f"<tr><td>{_esc(name)}</td><td class='num'>{c:,}</td></tr>"
+        f"<tr><td>{_esc(name)}</td><td>{_esc(kinds.get(name, 'DNS'))}</td><td class='num'>{c:,}</td></tr>"
         for name, c in sorted(counts.items(), key=lambda x: -x[1])[:20]
     )
+    # Distinguish real name resolution (unicast DNS) from local service discovery.
+    breakdown = ", ".join(f"{v} {k}" for k, v in kind_totals.items() if v)
+    note = ""
+    if kind_totals.get("DNS", 0) == 0 and (kind_totals.get("mDNS", 0) or kind_totals.get("LLMNR", 0)):
+        note = ("<p class='muted'>All queries are local service discovery (mDNS/LLMNR on the local segment) — "
+                "no unicast DNS name resolution to an external resolver was observed in this capture.</p>")
     return (
-        f"<h2>DNS activity ({len(counts)} unique names, {len(q):,} queries)</h2>"
-        "<table><thead><tr><th>Queried name</th><th class='num'>Count</th></tr></thead>"
-        f"<tbody>{rows}</tbody></table>"
+        f"<h2>DNS activity ({len(counts)} unique names, {len(q):,} queries — {breakdown})</h2>"
+        "<table><thead><tr><th>Queried name</th><th>Type</th><th class='num'>Count</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>{note}"
     )
 
 
@@ -570,19 +649,26 @@ def _chains_html(chains) -> str:
     return "\n".join(out)
 
 
+_ATTACKER_EVENTS = {"PORT_SCAN", "HOST_SCAN", "ARP_SCAN", "ARP_SPOOFING",
+                    "DOS_FLOOD", "BRUTE_FORCE", "HTTP_ATTACK"}
+
+
 def _iocs_html(events, result) -> str:
-    """External indicators extracted from flagged traffic, as a graded table."""
+    """Indicators extracted from flagged traffic — external threat-intel IOCs
+    AND internal hosts of interest (attackers/scanners), so an internal pentest
+    is not reported as 'no IOCs'."""
     if not events:
-        return "<p class='muted'>No external IOCs extracted.</p>"
+        return "<p class='muted'>No indicators extracted.</p>"
     rows, seen = [], set()
     for e in events:
         sev = e.severity.value
         etype = e.event_type.value.replace("_", " ")
+        ev = getattr(e, "evidence", {}) or {}
+        # External indicators (classic threat-intel IOCs)
         for ip in (e.dst_ip, e.src_ip):
             if ip and not is_private_ip(ip) and ("ip", ip) not in seen:
                 seen.add(("ip", ip))
-                rows.append((ip, "IPv4", etype, sev))
-        ev = getattr(e, "evidence", {}) or {}
+                rows.append((ip, "IPv4 (external)", etype, sev))
         dom = ev.get("domain") or (ev.get("indicator") if ev.get("kind") == "domain" else None)
         if dom and ("dom", dom) not in seen:
             seen.add(("dom", dom))
@@ -591,8 +677,16 @@ def _iocs_html(events, result) -> str:
         if h and ("h", h) not in seen:
             seen.add(("h", h))
             rows.append((h, "File hash", etype, sev))
+        # Internal hosts of interest — the attacker/scanner sources
+        if e.event_type.value in _ATTACKER_EVENTS and e.src_ip and ("host", e.src_ip) not in seen:
+            seen.add(("host", e.src_ip))
+            rows.append((e.src_ip, "Internal host (attacker)", etype, sev))
+        mac = ev.get("sender_mac") or ev.get("conflicting_macs")
+        if mac and ("mac", mac) not in seen:
+            seen.add(("mac", mac))
+            rows.append((mac, "MAC address", etype, sev))
     if not rows:
-        return "<p class='muted'>No external IOCs extracted.</p>"
+        return "<p class='muted'>No indicators extracted.</p>"
     rows.sort(key=lambda r: -_SEV_RANK.get(r[3], 0))
     body = "".join(
         f"<tr><td><code>{_esc(ind)}</code></td><td>{_esc(kind)}</td><td>{_esc(src)}</td>"
@@ -603,8 +697,9 @@ def _iocs_html(events, result) -> str:
         "<table><thead><tr><th>Indicator</th><th>Type</th><th>First flagged by</th>"
         "<th>Severity</th></tr></thead>"
         f"<tbody>{body}</tbody></table>"
-        "<p class='muted'>Indicators are extracted from flagged traffic only. Validate against the raw "
-        "capture before blocking — an external IP may be shared infrastructure (CDN / hoster).</p>"
+        "<p class='muted'>Indicators are extracted from flagged traffic only. External IPs may be shared "
+        "infrastructure (CDN / hoster); internal hosts of interest are the sources of scanning/attack "
+        "behaviour on your own network — validate against the raw capture before acting.</p>"
     )
 
 
@@ -815,7 +910,7 @@ def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
 
   {_attribution_html(attrs)}
 
-  <h2>Network graph (top talkers)</h2>
+  <h2>Network connection graph</h2>
   {_network_svg(result, events)}
 
   <h2>Detection events ({len(events)})</h2>

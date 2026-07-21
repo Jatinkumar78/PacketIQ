@@ -5,6 +5,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Accurate composition, coordinated-recon detection, real network graph & a Possible-Attacks panel
+
+**Added**
+- **Dedicated "Possible Attacks" panel.** The Threat Forecast is now its own
+  left-nav section (with a count badge) alongside Threat Events / Attack Chains,
+  and every predicted attack shows an explicit **"Why we predict this"** reason
+  tied to the concrete observed evidence. A compact summary also appears on the
+  Dashboard.
+- **Coordinated-recon detection.** A host that ARP-sweeps the subnet and then
+  sends TCP SYN probes to several services is now flagged as a scan even when the
+  probe count is far below the standalone vertical/horizontal thresholds (the case
+  a vantage-limited pentest capture produces). Low false-positive — it requires the
+  ARP-sweep context. These recon phases also correlate into a **"Reconnaissance
+  campaign"** attack chain.
+- 5 tests (`tests/test_composition_recon.py`).
+
+**Fixed**
+- **Traffic composition now matches Wireshark.** The parser was collapsing
+  link-layer control frames into "802.3"/"Ethernet" and every UDP application into
+  "UDP". It now names them: **STP, CDP, DTP, LLC, LOOP** and **DHCP, mDNS, NBNS,
+  NBT-DGM, LLMNR, SSDP, NTP, SNMP** (a new `display_protocol` used only for the
+  composition — `protocol` stays TCP/UDP for detector logic). e.g. a lab capture
+  that read "802.3 18.8% / UDP 6.2%" now reads "STP 16.2% / DHCP 5.4% / mDNS 0.7% …".
+- **DNS activity distinguishes mDNS / LLMNR / unicast DNS** and notes when a
+  capture contains only local service discovery (no external name resolution).
+- **Real host-to-host network graph** (replaces the top-talker chart). Nodes are
+  tagged with a role — **attacker / target / internal / external** — edges are the
+  actual conversations *plus* attacker→target scan/attack edges reconstructed from
+  detections (dashed red, arrowed), so the attack topology is visible. Web canvas
+  and report SVG both updated; the report section is now "Network connection graph".
+- **Indicators of Compromise now include internal hosts of interest** (the
+  attacker/scanner source IPs and ARP MACs), so an internal pentest is no longer
+  reported as "no IOCs".
+
 ### Threat-forecast prediction, full-suite protocols & SYN-flood detection
 
 **Added**
