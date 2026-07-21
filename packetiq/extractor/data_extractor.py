@@ -114,6 +114,18 @@ class ExtractionResult:
     arp_total: int = 0            # total ARP frames seen
     arp_replies: int = 0          # total ARP replies (op == 2)
 
+    # ── Device inventory (real physical hosts, keyed by NIC/MAC) ─────
+    # Only hosts that actually transmitted a frame are real devices; an IP that
+    # merely appears as an ARP-probe target or an unanswered SYN destination is
+    # NOT proof a device exists. These structures let the graph show the true
+    # device inventory (and merge a host's IPv4 + IPv6 into one node) instead of
+    # inventing a node for every probed address.
+    transmitted_ips: set = field(default_factory=set)   # IPs seen as a frame source
+    ip_to_mac: dict = field(default_factory=dict)        # IP → dominant source MAC
+    mac_to_ips: dict = field(default_factory=dict)       # MAC → {IPs it sourced}
+    devices: list = field(default_factory=list)          # [{id, mac, ips, packets, kind}]
+    ip_to_device: dict = field(default_factory=dict)     # IP → canonical device id (node id)
+
     # ── Passive fingerprinting ───────────────────────────────────
     src_ip_ttl: dict = field(default_factory=dict)   # ip → first observed TTL
 
@@ -162,6 +174,12 @@ class DataExtractor:
         self._arp_total:       int = 0
         self._arp_replies:     int = 0
 
+        # Device inventory accumulators (keyed by transmitting NIC/MAC)
+        self._mac_pkts:        dict = defaultdict(int)   # mac → frames sent
+        self._mac_ips:         dict = defaultdict(set)   # mac → {IPs it sourced}
+        self._mac_protos:      dict = defaultdict(set)   # mac → {display protocols}
+        self._ip_mac_counts:   dict = defaultdict(lambda: defaultdict(int))  # ip → mac → n
+
     # ------------------------------------------------------------------ #
     #  Public API                                                          #
     # ------------------------------------------------------------------ #
@@ -186,6 +204,19 @@ class DataExtractor:
         # name (STP, DHCP, mDNS, …) so it matches Wireshark's protocol hierarchy.
         proto = record.protocol or "OTHER"
         self._proto_counts[record.display_protocol or proto] += 1
+
+        # ── Device inventory (real transmitting NICs) ────────
+        # The frame source MAC is the ground truth for "a device exists here".
+        # Bind it to whatever IP the frame carried so a host's IPv4 + IPv6
+        # collapse to one device, and probed-but-silent IPs never appear.
+        if record.eth_src and record.eth_src not in ("ff:ff:ff:ff:ff:ff",):
+            mac = record.eth_src
+            self._mac_pkts[mac] += 1
+            self._mac_protos[mac].add(record.display_protocol or proto)
+            src_ip = record.src_ip or (record.arp_src_ip if record.is_arp else None)
+            if src_ip and src_ip != "0.0.0.0":  # nosec B104 - DHCP-unspecified sentinel, not a socket bind
+                self._mac_ips[mac].add(src_ip)
+                self._ip_mac_counts[src_ip][mac] += 1
 
         # ── ARP (layer-2 host discovery / cache poisoning) ───
         if record.is_arp:
@@ -316,6 +347,78 @@ class DataExtractor:
                 self._arp_first_ts[sip] = ts
             self._arp_last_ts[sip] = ts
 
+    # Link-layer control protocols — a NIC that only ever emits these (and has no
+    # IP) is switch/bridge infrastructure, not a host endpoint.
+    _INFRA_PROTOS = {"STP", "CDP", "DTP", "VTP", "PVST", "LOOP", "SNAP", "ISL", "MRP"}
+    # A single MAC fronting more than this many distinct IPs is a router/gateway
+    # (or NAT), not one host — so its IPs must NOT be collapsed into one device.
+    _GATEWAY_IP_FANOUT = 4
+
+    @staticmethod
+    def _canonical_ip(ips: set, ip_mac_counts: dict, mac: str) -> Optional[str]:
+        """Pick the address that best names a device: a routable IPv4 first, then
+        a global IPv6, falling back to link-local only if nothing else exists."""
+        def _rank(ip: str) -> tuple:
+            is_v6 = ":" in ip
+            v4_ll = (not is_v6) and (ip.startswith("169.254.") or ip == "0.0.0.0")  # nosec B104 - link-local/unspecified rank, not a socket bind
+            v6_ll = is_v6 and ip.lower().startswith("fe80")
+            frames = ip_mac_counts.get(ip, {}).get(mac, 0)
+            # lower tuple sorts first: prefer non-link-local, prefer IPv4, prefer busier
+            return (v4_ll or v6_ll, is_v6, -frames, ip)
+        return sorted(ips, key=_rank)[0] if ips else None
+
+    def _build_device_inventory(self, r: ExtractionResult) -> None:
+        """Reconstruct the real device inventory from transmitting NICs.
+
+        A device is a MAC that actually sent a frame. Each device's IPv4/IPv6
+        addresses collapse to one node; an IP that only ever appears as a probe
+        *target* (ARP who-has / unanswered SYN) never becomes a device, because
+        being asked about is not evidence of existence.
+        """
+        # IPs with evidence of existence: anything seen as a frame/ARP source.
+        r.transmitted_ips = {
+            ip for ip in (set(self._ip_src_counts) | set(self._arp_ip_macs))
+            if ip and ip != "0.0.0.0"  # nosec B104 - DHCP-unspecified sentinel, not a socket bind
+        }
+
+        # IP → dominant source MAC (the NIC that sent the most frames for it).
+        ip_to_mac: dict = {}
+        for ip, macs in self._ip_mac_counts.items():
+            if ip and ip != "0.0.0.0" and macs:  # nosec B104 - DHCP-unspecified sentinel, not a socket bind
+                ip_to_mac[ip] = max(macs.items(), key=lambda kv: kv[1])[0]
+        r.ip_to_mac  = ip_to_mac
+        r.mac_to_ips = {m: set(ips) for m, ips in self._mac_ips.items()}
+
+        # One device record per transmitting MAC, and the IP → device-id map the
+        # graph uses to merge a host's addresses into a single node.
+        devices: list = []
+        ip_to_device: dict = {}
+        for mac, pkts in sorted(self._mac_pkts.items(), key=lambda kv: -kv[1]):
+            ips = set(self._mac_ips.get(mac, set()))
+            protos = self._mac_protos.get(mac, set())
+            gateway = len(ips) > self._GATEWAY_IP_FANOUT
+            if not ips:
+                kind = "infrastructure" if protos <= self._INFRA_PROTOS else "host"
+                dev_id = mac
+            elif gateway:
+                kind = "gateway"
+                dev_id = self._canonical_ip(ips, self._ip_mac_counts, mac) or mac
+            else:
+                kind = "endpoint"
+                dev_id = self._canonical_ip(ips, self._ip_mac_counts, mac) or mac
+            devices.append({
+                "id": dev_id, "mac": mac, "ips": sorted(ips),
+                "packets": pkts, "kind": kind,
+                "protocols": sorted(protos),
+            })
+            # A gateway fronts many hosts: keep those IPs as their own nodes.
+            # A real endpoint: fold every one of its addresses onto the one node.
+            if not gateway:
+                for ip in ips:
+                    ip_to_device[ip] = dev_id
+        r.devices = devices
+        r.ip_to_device = ip_to_device
+
     def finalize(self) -> ExtractionResult:
         """Commit aggregated data into ExtractionResult and return it."""
         r = self._r
@@ -348,6 +451,9 @@ class DataExtractor:
         }
         r.arp_total   = self._arp_total
         r.arp_replies = self._arp_replies
+
+        # Device inventory — the true set of hosts that actually exist
+        self._build_device_inventory(r)
 
         # Sort DNS / HTTP chronologically
         r.dns_queries    = sorted(r.dns_queries,    key=lambda x: x["ts"])

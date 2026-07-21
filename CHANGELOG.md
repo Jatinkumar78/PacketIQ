@@ -5,6 +5,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Network graph shows only real devices (no phantom hosts)
+
+**Fixed**
+- **The network connection graph no longer invents hosts.** It was drawing one
+  node for every IP an ARP sweep *probed* (e.g. `.101`–`.109`, the AWS metadata
+  IP `169.254.169.254`) — but being asked about in a who-has is not evidence a
+  device exists. A capture with 4 real machines rendered 16 nodes. A host is now
+  drawn **only with evidence it transmitted** (it sent a frame or answered ARP);
+  probed-but-silent addresses are never nodes.
+- **A host's IPv4 and IPv6 addresses now collapse to one device.** Each machine
+  appeared twice (its `192.168.x` and its `fe80::` link-local were separate dots).
+  The graph is now keyed on the physical NIC (MAC), so one machine is one node.
+- **A scanner's fan-out is shown as a count, not phantom dots.** The attacker node
+  carries a **"scanned N · M live"** badge instead of a spray of edges to hosts
+  that never responded.
+
+**Added**
+- **Device inventory in the extractor** (`transmitted_ips`, `ip_to_mac`,
+  `mac_to_ips`, `devices`, `ip_to_device`), reconstructed from the frame source
+  MAC now captured by the parser (`eth_src`/`eth_dst`). It classifies each NIC as
+  endpoint / gateway / infrastructure and never collapses a router's many IPs.
+- 4 regression tests (`tests/test_device_graph.py`) proving no phantom nodes,
+  IPv4+IPv6 merge, and the fan-out-as-count behaviour.
+
 ### Accurate composition, coordinated-recon detection, real network graph & a Possible-Attacks panel
 
 **Added**

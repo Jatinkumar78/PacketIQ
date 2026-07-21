@@ -29,6 +29,12 @@ class RawPacketRecord:
     timestamp: float
     size: int                       # total frame size in bytes
 
+    # Link layer (Ethernet/802.3) — identifies the physical NIC that sent the
+    # frame, so the device inventory can tell real hosts apart from probed-but-
+    # nonexistent IPs and merge a host's IPv4 + IPv6 addresses into one device.
+    eth_src: Optional[str] = None
+    eth_dst: Optional[str] = None
+
     # Network layer
     src_ip: Optional[str] = None
     dst_ip: Optional[str] = None
@@ -131,6 +137,13 @@ class PCAPParser:
                 timestamp=float(pkt.time),
                 size=len(pkt),
             )
+
+            # ── Link layer (frame source/destination MAC) ──────────────
+            # Works for both Ethernet II and 802.3/LLC frames (STP, CDP, DTP…).
+            l2 = pkt.getlayer("Ether") or pkt.getlayer("Dot3")
+            if l2 is not None:
+                record.eth_src = self._norm_mac(getattr(l2, "src", None))
+                record.eth_dst = self._norm_mac(getattr(l2, "dst", None))
 
             # ── Network layer ──────────────────────────────────────────
             if pkt.haslayer(IP):

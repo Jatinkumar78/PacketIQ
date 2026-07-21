@@ -291,82 +291,141 @@ _ATTACKER_EVENT_TYPES = {"PORT_SCAN", "HOST_SCAN", "ARP_SCAN", "ARP_SPOOFING",
 
 
 def _build_graph(result, events) -> dict:
-    """A real host-to-host network graph: nodes are hosts tagged with a *role*
-    (attacker / target / external / internal), edges are the actual conversations
-    plus the attacker→target scan/attack edges reconstructed from detections, so
-    the topology of the activity is visible — not just a top-talker bar chart."""
+    """A real device-to-device network graph.
+
+    Nodes are the *physical devices that actually exist* in the capture — a host
+    is drawn only if it transmitted a frame (or answered ARP); an IP that merely
+    appears as an ARP who-has target or an unanswered SYN destination is NOT a
+    device and is never drawn (that was the old "phantom host" bug). Each host's
+    IPv4 + IPv6 addresses collapse to a single node via the MAC-based device map,
+    so one machine is one dot. A scanner's fan-out is shown as a count on the
+    attacker node, not as dozens of invented target dots."""
     from packetiq.utils.helpers import get_service_name, is_private_ip
 
+    ip_to_device: dict = getattr(result, "ip_to_device", {}) or {}
+    transmitted: set = getattr(result, "transmitted_ips", None)
+
+    def node_of(ip: str) -> str:
+        """Collapse an address to its physical-device node id."""
+        return ip_to_device.get(ip, ip)
+
+    def exists(ip: str) -> bool:
+        """A host is real only with evidence it transmitted. When the inventory
+        is unavailable (empty — e.g. an L2-less or synthetic capture), fall back
+        to graphability so we never hide a host we simply couldn't attribute."""
+        if not ip or not _is_graphable_host(ip):
+            return False
+        if not transmitted:
+            return True
+        return ip in transmitted
+
+    # Packet weight per real device (merging each host's v4/v6 addresses).
     counts: dict = {}
     for ip, c in result.ip_src_counts.items():
-        if _is_graphable_host(ip):
-            counts[ip] = counts.get(ip, 0) + c
+        if exists(ip):
+            counts[node_of(ip)] = counts.get(node_of(ip), 0) + c
     for ip, c in result.ip_dst_counts.items():
-        if _is_graphable_host(ip):
-            counts[ip] = counts.get(ip, 0) + c
+        if exists(ip):
+            counts[node_of(ip)] = counts.get(node_of(ip), 0) + c
 
-    # Roles from detections: sources of scan/attack behaviour = attackers;
-    # their destinations (and probed hosts) = targets.
+    # Roles from detections. Attackers are the sources of scan/attack behaviour;
+    # targets are hosts on the receiving end of a detection that ACTUALLY EXIST
+    # (a C2 endpoint, a probed host that responded) — probed-but-silent addresses
+    # are counted for the fan-out badge, never drawn as phantom dots.
     attackers: set = set()
     targets: set = set()
+    scan_stats: dict = {}      # attacker node → {"scanned": set, "alive": set}
     for e in events:
-        if e.event_type.value in _ATTACKER_EVENT_TYPES and e.src_ip and _is_graphable_host(e.src_ip):
-            attackers.add(e.src_ip)
-        if e.dst_ip and _is_graphable_host(e.dst_ip):
-            targets.add(e.dst_ip)
-        for t in (e.evidence or {}).get("sample_targets", []) or []:
-            host = str(t).split(":")[0]
-            if _is_graphable_host(host):
-                targets.add(host)
+        is_attack = e.event_type.value in _ATTACKER_EVENT_TYPES
+        if is_attack and e.src_ip and exists(e.src_ip):
+            a = node_of(e.src_ip)
+            attackers.add(a)
+            probed: set = set()
+            if e.dst_ip and _is_graphable_host(e.dst_ip):
+                probed.add(e.dst_ip)
+            for t in (e.evidence or {}).get("sample_targets", []) or []:
+                host = str(t).split(":")[0]
+                if _is_graphable_host(host):
+                    probed.add(host)
+            st = scan_stats.setdefault(a, {"scanned": set(), "alive": set()})
+            for host in probed:
+                st["scanned"].add(node_of(host))
+                if exists(host):
+                    st["alive"].add(node_of(host))
+                    targets.add(node_of(host))
+        # Any detection's destination that really exists is a host of interest
+        # (e.g. a C2 server flagged by an IOC match) — mark it as a target too.
+        if e.dst_ip and exists(e.dst_ip):
+            targets.add(node_of(e.dst_ip))
+    # fold in the full ARP-sweep breadth (evidence carries only a sample)
+    for sender, tgts in (getattr(result, "arp_request_targets", {}) or {}).items():
+        a = node_of(sender)
+        if a in attackers:
+            st = scan_stats.setdefault(a, {"scanned": set(), "alive": set()})
+            for t in tgts:
+                st["scanned"].add(node_of(t))
+                if exists(t):
+                    st["alive"].add(node_of(t))
     flagged = attackers | targets
 
-    top = {ip for ip, _ in sorted(counts.items(), key=lambda x: -x[1])[:40]}
-    top |= {ip for ip in flagged if ip}          # always include hosts in the story
+    top = {n for n, _ in sorted(counts.items(), key=lambda x: -x[1])[:40]}
+    top |= {n for n in flagged if n}          # always include hosts in the story
     top = set(list(top)[:60])
 
-    def _role(ip: str) -> str:
-        if ip in attackers:
+    def _role(node: str) -> str:
+        if node in attackers:
             return "attacker"
-        if ip in targets:
+        if node in targets:
             return "target"
-        return "internal" if is_private_ip(ip) else "external"
+        return "internal" if is_private_ip(node) else "external"
 
-    nodes = [
-        {"id": ip, "packets": counts.get(ip, 0),
-         "internal": is_private_ip(ip),
-         "flagged": ip in flagged,
-         "role": _role(ip)}
-        for ip in top
-    ]
+    nodes = []
+    for node in top:
+        st = scan_stats.get(node)
+        nodes.append({
+            "id": node,
+            "packets": counts.get(node, 0),
+            "internal": is_private_ip(node),
+            "flagged": node in flagged,
+            "role": _role(node),
+            "mac": result.ip_to_mac.get(node, "") if hasattr(result, "ip_to_mac") else "",
+            # scanner fan-out shown ON the attacker, not as phantom target dots
+            "scanned": len(st["scanned"]) if st else 0,
+            "alive": len(st["alive"]) if st else 0,
+        })
 
     edges = []
     seen: set = set()
-    # 1) real conversations (flows), labelled with their service/protocol
-    for fl in sorted(result.flows.values(), key=lambda f: -f.bytes_total):
-        if fl.src_ip in top and fl.dst_ip in top:
-            k = (fl.src_ip, fl.dst_ip)
-            if k in seen:
-                continue
-            seen.add(k)
-            label = fl.service or get_service_name(fl.dst_port) if fl.dst_port else (fl.protocol or "")
-            edges.append({"source": fl.src_ip, "target": fl.dst_ip,
-                          "bytes": fl.bytes_total, "kind": "flow", "label": str(label)})
-            if len(edges) >= 90:
-                break
-    # 2) attack/scan edges from detections (attacker → each probed target)
+    # 1) attack/scan edges take precedence — attacker → each target that REALLY
+    #    EXISTS (a probe against a live host is the salient story, not "HTTP").
     for e in events:
-        if e.event_type.value not in _ATTACKER_EVENT_TYPES or not e.src_ip:
+        if e.event_type.value not in _ATTACKER_EVENT_TYPES or not e.src_ip or not exists(e.src_ip):
             continue
+        s = node_of(e.src_ip)
         dsts = set()
         if e.dst_ip:
             dsts.add(e.dst_ip)
         for t in (e.evidence or {}).get("sample_targets", []) or []:
             dsts.add(str(t).split(":")[0])
-        for d in dsts:
-            if e.src_ip in top and d in top and (e.src_ip, d) not in seen:
-                seen.add((e.src_ip, d))
-                edges.append({"source": e.src_ip, "target": d, "bytes": 0,
+        for raw in dsts:
+            d = node_of(raw)
+            if s in top and d in top and s != d and exists(raw) and (s, d) not in seen:
+                seen.add((s, d))
+                edges.append({"source": s, "target": d, "bytes": 0,
                               "kind": "attack", "label": e.event_type.value.replace("_", " ").lower()})
+    # 2) real conversations (flows), collapsed to device endpoints
+    for fl in sorted(result.flows.values(), key=lambda f: -f.bytes_total):
+        s, d = node_of(fl.src_ip), node_of(fl.dst_ip)
+        if s in top and d in top and s != d:
+            k = (s, d)
+            if k in seen:
+                continue
+            seen.add(k)
+            label = fl.service or get_service_name(fl.dst_port) if fl.dst_port else (fl.protocol or "")
+            edges.append({"source": s, "target": d,
+                          "bytes": fl.bytes_total, "kind": "flow", "label": str(label)})
+            if len(edges) >= 90:
+                break
     return {"nodes": nodes, "edges": edges}
 
 

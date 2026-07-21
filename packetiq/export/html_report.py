@@ -92,34 +92,71 @@ def _graphable(ip: str) -> bool:
 
 
 def _network_svg(result, events) -> str:
-    """A real host-to-host network graph: hosts coloured by role (attacker /
-    target / internal / external), conversation edges plus attacker→target
-    scan/attack edges (dashed red, arrowed), so the topology of the activity is
-    visible — not just a top-talker chart."""
+    """A real device-to-device network graph: one dot per physical host that
+    ACTUALLY EXISTS in the capture (it transmitted a frame / answered ARP), with
+    its IPv4 + IPv6 addresses merged to a single node. Probed-but-silent
+    addresses are never drawn — a scanner's fan-out is shown as a count on the
+    attacker, not as invented target dots. Hosts are coloured by role, with
+    dashed-red arrowed scan/attack edges over the conversation edges."""
+    ip_to_device = getattr(result, "ip_to_device", {}) or {}
+    transmitted = getattr(result, "transmitted_ips", None)
+
+    def node_of(ip: str) -> str:
+        return ip_to_device.get(ip, ip)
+
+    def exists(ip: str) -> bool:
+        if not _graphable(ip):
+            return False
+        if not transmitted:      # inventory unavailable → fall back to graphability
+            return True
+        return ip in transmitted
+
     counts: dict = {}
     for ip, c in result.ip_src_counts.items():
-        if _graphable(ip):
-            counts[ip] = counts.get(ip, 0) + c
+        if exists(ip):
+            counts[node_of(ip)] = counts.get(node_of(ip), 0) + c
     for ip, c in result.ip_dst_counts.items():
-        if _graphable(ip):
-            counts[ip] = counts.get(ip, 0) + c
+        if exists(ip):
+            counts[node_of(ip)] = counts.get(node_of(ip), 0) + c
 
-    attackers = {e.src_ip for e in events
-                 if e.event_type.value in _GRAPH_ATTACK_EVENTS and e.src_ip and _graphable(e.src_ip)}
-    targets = {e.dst_ip for e in events if e.dst_ip and _graphable(e.dst_ip)}
+    attackers: set = set()
+    targets: set = set()
+    scan_stats: dict = {}
     for e in events:
+        if e.event_type.value not in _GRAPH_ATTACK_EVENTS or not e.src_ip or not exists(e.src_ip):
+            continue
+        a = node_of(e.src_ip)
+        attackers.add(a)
+        probed: set = set()
+        if e.dst_ip and _graphable(e.dst_ip):
+            probed.add(e.dst_ip)
         for t in (getattr(e, "evidence", {}) or {}).get("sample_targets", []) or []:
             h = str(t).split(":")[0]
             if _graphable(h):
-                targets.add(h)
+                probed.add(h)
+        st = scan_stats.setdefault(a, {"scanned": set(), "alive": set()})
+        for h in probed:
+            st["scanned"].add(node_of(h))
+            if exists(h):
+                st["alive"].add(node_of(h))
+                targets.add(node_of(h))
+    for sender, tgts in (getattr(result, "arp_request_targets", {}) or {}).items():
+        a = node_of(sender)
+        if a in attackers:
+            st = scan_stats.setdefault(a, {"scanned": set(), "alive": set()})
+            for t in tgts:
+                st["scanned"].add(node_of(t))
+                if exists(t):
+                    st["alive"].add(node_of(t))
 
-    top = [ip for ip, _ in sorted(counts.items(), key=lambda x: -x[1])[:16]]
-    for ip in (attackers | targets):
-        if ip not in top and _graphable(ip):
-            top.append(ip)
+    top = [n for n, _ in sorted(counts.items(), key=lambda x: -x[1])[:16]]
+    for n in (attackers | targets):
+        if n not in top:
+            top.append(n)
     top = top[:20]
     if len(top) < 2:
-        return "<p class='muted'>Not enough distinct hosts to graph.</p>"
+        return ("<p class='muted'>Only one active device observed in this capture — "
+                "no host-to-host connections to graph.</p>")
 
     W = H = 560
     cx = cy = W / 2
@@ -129,21 +166,26 @@ def _network_svg(result, events) -> str:
         ang = 2 * math.pi * i / len(top) - math.pi / 2
         pos[ip] = (cx + R * math.cos(ang), cy + R * math.sin(ang))
 
-    # conversation edges + attack/scan edges
+    # conversation edges + attack/scan edges (all collapsed to device nodes)
     flow_edges: set = set()
     for fl in sorted(result.flows.values(), key=lambda f: -f.bytes_total):
-        if fl.src_ip in pos and fl.dst_ip in pos and len(flow_edges) < 40:
-            flow_edges.add((fl.src_ip, fl.dst_ip))
+        s, d = node_of(fl.src_ip), node_of(fl.dst_ip)
+        if s in pos and d in pos and s != d and len(flow_edges) < 40:
+            flow_edges.add((s, d))
     attack_edges: set = set()
     for e in events:
-        if e.event_type.value not in _GRAPH_ATTACK_EVENTS or e.src_ip not in pos:
+        if e.event_type.value not in _GRAPH_ATTACK_EVENTS or not e.src_ip or not exists(e.src_ip):
+            continue
+        s = node_of(e.src_ip)
+        if s not in pos:
             continue
         dsts = {e.dst_ip} if e.dst_ip else set()
         for t in (getattr(e, "evidence", {}) or {}).get("sample_targets", []) or []:
             dsts.add(str(t).split(":")[0])
-        for d in dsts:
-            if d in pos:
-                attack_edges.add((e.src_ip, d))
+        for raw in dsts:
+            d = node_of(raw)
+            if d in pos and s != d and exists(raw):
+                attack_edges.add((s, d))
     flow_edges -= attack_edges
 
     parts = [f'<svg viewBox="0 0 {W} {H}" width="100%" style="max-width:620px">',
@@ -177,6 +219,11 @@ def _network_svg(result, events) -> str:
         parts.append(f'<circle cx="{x:.0f}" cy="{y:.0f}" r="{r:.0f}" fill="{fill}" opacity="0.9"{stroke}/>')
         parts.append(f'<text x="{x:.0f}" y="{y - r - 4:.0f}" font-size="10" fill="#475569" '
                      f'text-anchor="middle">{_esc(ip)}</text>')
+        st = scan_stats.get(ip)
+        if st and st["scanned"]:
+            parts.append(
+                f'<text x="{x:.0f}" y="{y + r + 12:.0f}" font-size="9" fill="#dc2626" '
+                f'text-anchor="middle">scanned {len(st["scanned"])} · {len(st["alive"])} live</text>')
     parts.append("</svg>")
     parts.append('<div class="legend"><span class="dot" style="background:#dc2626"></span>attacker '
                  '<span class="dot" style="background:#f59e0b"></span>target '
