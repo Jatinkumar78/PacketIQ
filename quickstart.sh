@@ -39,6 +39,14 @@ if [ ! -d ".venv" ]; then
   "$BOOT_PY" -m venv .venv
 fi
 
+# macOS: make sure .venv isn't flagged UF_HIDDEN. If it is, pip writes editable
+# `.pth` files hidden too, and CPython's site.py silently skips hidden `.pth`
+# files — which would break `pip install -e .` (live-edit) for developers.
+# Harmless to run every time; no-op on Linux/Windows (no chflags).
+if command -v chflags >/dev/null 2>&1; then
+  chflags -R nohidden .venv >/dev/null 2>&1 || true
+fi
+
 # Use explicit venv paths (no reliance on 'activate' / PATH)
 VENV_PY=".venv/bin/python"
 [ -x "$VENV_PY" ] || VENV_PY=".venv/bin/python3"

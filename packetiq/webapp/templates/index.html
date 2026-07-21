@@ -1372,7 +1372,8 @@ tbody tr:hover td{background:var(--surface2)}
         </div>
         <div class="card" style="margin-bottom:16px">
           <div style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-            <select class="filter-input" id="live-iface" style="min-width:160px"></select>
+            <select class="filter-input" id="live-iface" style="min-width:260px"></select>
+            <button class="btn btn-secondary" id="live-refresh" onclick="loadInterfaces()" title="Rescan interfaces (auto-refreshes too)" style="padding:8px 12px">🔄</button>
             <select class="filter-input" id="live-threshold" style="width:150px">
               <option value="LOW">Severity ≥ LOW</option>
               <option value="MEDIUM">Severity ≥ MEDIUM</option>
@@ -1385,6 +1386,7 @@ tbody tr:hover td{background:var(--surface2)}
             <button class="btn btn-secondary" id="live-dl" onclick="downloadLivePcap()" style="display:none">⬇ Download PCAP</button>
             <span id="live-status" style="font-size:12px;color:var(--text-sub)"></span>
           </div>
+          <div id="live-iface-hint" style="padding:0 16px 8px;font-size:11.5px;color:var(--text-sub)"></div>
           <div id="live-priv" style="padding:0 16px 8px;font-size:12px;color:var(--high);display:none"></div>
           <div id="live-setup-wrap" style="padding:0 16px 14px;display:none">
             <button class="btn btn-primary" id="live-setup" onclick="setupCapture()">🔓 Enable live capture (one-time)</button>
@@ -2338,7 +2340,8 @@ document.querySelectorAll('.nav-item[data-panel]').forEach(el=>{
     if(pan) pan.classList.add('active');
     if(el.dataset.panel==='feeds')   refreshFeeds(true);
     if(el.dataset.panel==='history') loadHistory();
-    if(el.dataset.panel==='live' && !liveSid) loadInterfaces();
+    if(el.dataset.panel==='live'){ if(!liveSid) loadInterfaces(); startIfaceAutoRefresh(); }
+    else { stopIfaceAutoRefresh(); }
     if(el.dataset.panel==='packets') ensurePackets();
     if(el.dataset.panel==='cve')     ensureCVE();
   });
@@ -2968,14 +2971,66 @@ function openLive(){
   const nav=document.querySelector('.nav-item[data-panel="live"]'); if(nav) nav.classList.add('active');
   document.getElementById('panel-live').classList.add('active');
   loadInterfaces();
+  startIfaceAutoRefresh();
 }
 
-async function loadInterfaces(){
+/* Dynamic, Wireshark-style interface list: re-scanned on a timer so a NIC you
+   plug in appears without reloading the page. The <select> is only rebuilt when
+   the set actually changes, and the user's current choice is always preserved. */
+let ifaceRefresh = null, lastIfaceSig = '';
+const IFACE_ICON = {wifi:'📶', ethernet:'🔌', bridge:'🌉', vpn:'🔒', loopback:'↩', system:'⚙', virtual:'🖧', wwan:'📡', other:'•'};
+
+function startIfaceAutoRefresh(){
+  if(ifaceRefresh) return;
+  ifaceRefresh = setInterval(()=>{
+    const panel = document.getElementById('panel-live');
+    // Only while the Live panel is visible and we're not already capturing.
+    if(!panel || !panel.classList.contains('active') || liveSid) return;
+    loadInterfaces(true);
+  }, 3000);
+}
+function stopIfaceAutoRefresh(){ if(ifaceRefresh){ clearInterval(ifaceRefresh); ifaceRefresh=null; } }
+
+function ifaceOptionLabel(d){
+  const icon = IFACE_ICON[d.kind] || '•';
+  const dot  = d.up===true ? '● up' : (d.up===false ? '○ down' : '· ?');
+  let txt = icon+' '+d.name;
+  if(d.label && d.label!==d.name) txt += ' — '+d.label;
+  if(d.ip) txt += ' · '+d.ip;
+  txt += '   '+dot;
+  if(d.recommended) txt += '  ★';
+  return txt;
+}
+
+async function loadInterfaces(quiet){
   const sel = document.getElementById('live-iface');
   const priv = document.getElementById('live-priv');
+  const hint = document.getElementById('live-iface-hint');
   try{
     const j = await (await fetch('/api/live/interfaces')).json();
-    sel.innerHTML = (j.interfaces||[]).map(i=>`<option ${i===j.default?'selected':''}>${esc(i)}</option>`).join('') || '<option>no interfaces</option>';
+    let details = j.details;
+    if(!details || !details.length){   // fallback: names only
+      details = (j.interfaces||[]).map(n=>({name:n,label:n,ip:'',kind:'other',up:null,is_default:n===j.default,recommended:n===j.default}));
+    }
+    // Rebuild the dropdown only when the interface set/state changed, so an open
+    // dropdown or the user's selection isn't disturbed by the 3s auto-refresh.
+    const sig = details.map(d=>`${d.name}|${d.up}|${d.ip}|${d.recommended}`).join(',');
+    if(sig !== lastIfaceSig){
+      const prev = sel.value;
+      sel.innerHTML = details.map(d=>`<option value="${esc(d.name)}">${esc(ifaceOptionLabel(d))}</option>`).join('')
+                      || '<option value="">no interfaces found</option>';
+      const stillThere = details.some(d=>d.name===prev);
+      const want = stillThere ? prev
+                 : (details.find(d=>d.recommended) || details.find(d=>d.is_default) || details[0] || {}).name;
+      if(want) sel.value = want;
+      lastIfaceSig = sig;
+    }
+    // Live status line (Wireshark-esque: count + link summary + auto-refresh note).
+    if(hint){
+      const upN = details.filter(d=>d.up===true).length;
+      hint.innerHTML = '🔄 Live interface scan — '+details.length+' found, '+upN+' with an active link. '
+                     + 'Plug in an adapter and it appears here automatically. ● = link up, ○ = no cable/link, ★ = recommended.';
+    }
     const plat = j.platform || 'other';
     const setupWrap = document.getElementById('live-setup-wrap');
     const setupBtn = document.getElementById('live-setup');
@@ -2993,10 +3048,10 @@ async function loadInterfaces(){
       document.getElementById('live-setup-status').textContent='';
     } else {
       priv.style.display='block'; priv.style.color='var(--text-sub)';
-      priv.innerHTML = 'ℹ Capturing your host\'s traffic on the selected interface. Tip: <b>lo0</b> only shows localhost (incl. PacketIQ itself) — pick <b>'+esc(j.default||'en0')+'</b> for real network traffic.';
+      priv.innerHTML = 'ℹ Capturing your host\'s traffic on the selected interface. Tip: <b>lo0</b> only shows localhost (incl. PacketIQ itself) — pick the <b>★ recommended</b> interface for real network traffic.';
       setupWrap.style.display='none';
     }
-  }catch(e){ sel.innerHTML='<option>error loading interfaces</option>'; }
+  }catch(e){ if(!quiet) sel.innerHTML='<option value="">error loading interfaces</option>'; }
 }
 
 async function setupCapture(){

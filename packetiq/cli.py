@@ -1093,6 +1093,34 @@ def vulns_cmd(pcap_file: str, as_json: bool):
                     f"(of {data['totals']['kev_catalog']} in CISA KEV).", status="ok")
 
 
+def _print_interfaces():
+    """Print a Wireshark-style capture-interface list (name, friendly, IP, link)."""
+    try:
+        from packetiq.net_interfaces import list_interfaces
+        recs = list_interfaces()
+    except Exception as exc:  # pragma: no cover - defensive
+        ui.print_status(f"Could not enumerate interfaces: {exc}", status="error")
+        return
+    if not recs:
+        ui.print_status("No capture interfaces found.", status="error")
+        return
+    ui.print_section("CAPTURE INTERFACES", "★ = recommended · ● link up · ○ no link")
+    for r in recs:
+        # Pad the plain text to fixed widths first, THEN colour, so rich markup
+        # characters don't throw off column alignment.
+        if r["up"] is True:
+            link = "[green]" + f"{'● up':<7}" + "[/green]"
+        elif r["up"] is False:
+            link = "[dim]" + f"{'○ down':<7}" + "[/dim]"
+        else:
+            link = "[dim]" + f"{'· ?':<7}" + "[/dim]"
+        star = "[bold yellow]★[/bold yellow]" if r["recommended"] else " "
+        label = r["label"] if r["label"] and r["label"] != r["name"] else ""
+        ip = f"[cyan]{r['ip']:<15}[/cyan]" if r["ip"] else "[dim]" + f"{'—':<15}" + "[/dim]"
+        ui.print_raw(f"  {star} [bold]{r['name']:<9}[/bold] {link} {ip} [dim]{label}[/dim]")
+    ui.print_raw("\n  Start monitoring:  [bold]sudo packetiq live -i <name>[/bold]")
+
+
 @main.command("live")
 @click.option("--interface", "-i", default=None, help="Network interface to sniff (e.g. en0, eth0).")
 @click.option("--read", "read_pcap", default=None, type=click.Path(exists=True),
@@ -1102,17 +1130,23 @@ def vulns_cmd(pcap_file: str, as_json: bool):
 @click.option("--threshold", type=click.Choice(["LOW", "MEDIUM", "HIGH", "CRITICAL"], case_sensitive=False),
               default="HIGH", show_default=True, help="Minimum severity to alert on.")
 @click.option("--alert/--no-alert", default=False, help="Also send Telegram/other-channel alerts for findings.")
-def live_cmd(interface, read_pcap, window, interval, threshold, alert):
+@click.option("--list", "list_ifaces", is_flag=True, help="List capture interfaces (friendly name, IP, link status) and exit.")
+def live_cmd(interface, read_pcap, window, interval, threshold, alert, list_ifaces):
     """
     Real-time monitoring: sniff an interface (or replay a PCAP) and alert on
     findings as they appear — a lightweight IDS built on the same detectors.
 
     \b
     Example:
+        packetiq live --list                     # see interfaces (like Wireshark)
         sudo packetiq live -i en0
         packetiq live --read capture.pcap        # offline replay, no root
     """
     from packetiq import live as live_mod
+
+    if list_ifaces:
+        _print_interfaces()
+        return
 
     ui.print_section("LIVE MONITOR", f"threshold: {threshold.upper()}")
 
@@ -1141,7 +1175,9 @@ def live_cmd(interface, read_pcap, window, interval, threshold, alert):
         return
 
     if not interface:
-        ui.print_status("Provide -i/--interface to sniff, or --read PCAP to replay.", status="error")
+        ui.print_status("Provide -i/--interface to sniff, or --read PCAP to replay. "
+                        "Available interfaces:", status="error")
+        _print_interfaces()
         sys.exit(1)
 
     ui.print_status(f"Sniffing {interface} (Ctrl+C to stop)...", status="loading")

@@ -5,6 +5,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Dynamic, Wireshark-style Live Monitor & reliable editable installs
+
+**Added**
+- **Live, self-refreshing capture-interface picker.** The Live Monitor no longer
+  shows a static, cryptic `en0/en3/…` list. A new `packetiq/net_interfaces.py`
+  enumerates interfaces with **friendly names** (macOS `networksetup` hardware
+  ports — "Wi-Fi", "Ethernet Adapter (en3)", "Thunderbolt Bridge"), **IPv4**,
+  **link status** (● up / ○ down), and a **kind** icon, ranked best-first with the
+  active NIC **★ recommended**. The web picker **re-scans every 3 s** (and on a new
+  🔄 button), so an adapter you plug in **appears on its own without reloading** —
+  just like Wireshark — while preserving your current selection.
+- **`packetiq live --list`** prints the same interface table in the terminal, and
+  running `packetiq live` with no `-i` now lists the available interfaces.
+- 6 new tests (`tests/test_net_interfaces.py`) covering classification, the macOS
+  `networksetup`/`ifconfig` parsers, ranking and graceful degradation.
+
+**Fixed**
+- **Editable installs (`pip install -e .`) silently doing nothing on macOS.**
+  Root cause: when the `.venv` tree carries the macOS `UF_HIDDEN` flag, pip writes
+  the editable `.pth` hidden, and CPython's `site.py` **deliberately skips hidden
+  `.pth` files** — so `import packetiq` / the `packetiq` command failed outside the
+  repo and source edits never took effect. `quickstart.sh` now clears the flag on
+  macOS (`chflags -R nohidden .venv`), and `docs/RELEASE.md` documents the one-time
+  fix plus the `--config-settings editable_mode=compat` editable-dev install. With
+  the flag cleared, editable installs work reliably: edits to `packetiq/` take
+  effect immediately **and** the console script resolves from any directory.
+
 ### Reliable AI provider selection & a reproducible local copilot
 
 **Fixed**

@@ -2293,20 +2293,31 @@ def create_app() -> FastAPI:
     # ── Live capture ────────────────────────────────────────────────────
     @app.get("/api/live/interfaces")
     async def live_interfaces():
-        default = None
+        """Live, Wireshark-style interface list.
+
+        Re-enumerated on every call (the UI polls it) so a NIC plugged in after
+        the page loaded shows up on the next refresh. Each `details` entry carries
+        a friendly name, IPv4, link/up status and kind so the user can identify
+        the right adapter; `interfaces`/`default` stay for backward compatibility.
+        """
+        details, default = [], None
         try:
-            from scapy.all import get_if_list
-            from scapy.config import conf
-            ifs = list(get_if_list())
-            default = str(conf.iface) if conf.iface else None
-            # surface the active interface first so users don't default to lo0
-            if default in ifs:
-                ifs = [default] + [i for i in ifs if i != default]
+            from packetiq.net_interfaces import list_interfaces
+            details = await asyncio.get_event_loop().run_in_executor(None, list_interfaces)
+            default = next((d["name"] for d in details if d.get("recommended")), None)
         except Exception:
-            ifs = []
+            details = []
+        # Names only, in the same best-first order (compat with older callers/tests).
+        ifs = [d["name"] for d in details]
+        if not ifs:  # last-resort fallback if the rich helper failed entirely
+            try:
+                from scapy.all import get_if_list
+                ifs = list(get_if_list())
+            except Exception:
+                ifs = []
         capture_ok, plat = _capture_privilege()
-        return {"interfaces": ifs, "default": default, "platform": plat,
-                "elevated": capture_ok, "capture_ok": capture_ok}
+        return {"interfaces": ifs, "details": details, "default": default,
+                "platform": plat, "elevated": capture_ok, "capture_ok": capture_ok}
 
     @app.post("/api/live/setup-capture")
     async def live_setup_capture():
