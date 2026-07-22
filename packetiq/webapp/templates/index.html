@@ -1181,8 +1181,9 @@ tbody tr:hover td{background:var(--surface2)}
               <span style="color:#dc2626">●</span> attacker
               <span style="color:#f59e0b">●</span> target
               <span style="color:#3b82f6">●</span> internal
-              <span style="color:#94a3b8">●</span> external
+              <span style="color:#14b8a6">■</span> switch/infra
               &nbsp;<span style="color:#dc2626">▬</span> scan/attack
+              <span style="color:#14b8a6">┈</span> L2 segment
             </span>
           </div>
           <canvas id="net-graph" height="420" style="width:100%;display:block;cursor:grab"></canvas>
@@ -1213,6 +1214,22 @@ tbody tr:hover td{background:var(--surface2)}
 
       <!-- ASSETS -->
       <div class="panel" id="panel-assets">
+        <div class="sec-header" style="margin-bottom:12px">
+          <div>
+            <div class="sec-title">Device Inventory</div>
+            <div class="sec-sub">Every physical device (NIC) that actually transmitted in this capture — identified by MAC, with vendor and IP. Probed-but-silent addresses are excluded.</div>
+          </div>
+          <span class="result-count" id="device-count">0 devices</span>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden;margin-bottom:20px">
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr><th>Device</th><th>MAC</th><th>Vendor</th><th>Role</th><th>Protocols</th><th class="num">Packets</th></tr></thead>
+              <tbody id="device-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="sec-title" style="margin-bottom:16px">Asset Fingerprints</div>
         <div class="card" style="padding:0;overflow:hidden">
           <div class="tbl-wrap">
@@ -2313,18 +2330,21 @@ function drawGraph(graph){
       n.x=Math.max(n.r,Math.min(W-n.r,n.x)); n.y=Math.max(n.r,Math.min(H-n.r,n.y)); });
 
     ctx.clearRect(0,0,W,H);
-    const roleColor = n => n.role==='attacker' ? '#dc2626'
-                        : n.role==='target'   ? '#f59e0b'
-                        : n.role==='external' ? '#94a3b8'
-                        : n.internal          ? '#3b82f6' : '#94a3b8';
-    // edges: scan/attack edges are red + dashed + arrowed; normal flows grey
+    const roleColor = n => n.role==='attacker'       ? '#dc2626'
+                        : n.role==='target'          ? '#f59e0b'
+                        : n.role==='infrastructure'  ? '#14b8a6'
+                        : n.role==='external'        ? '#94a3b8'
+                        : n.internal                 ? '#3b82f6' : '#94a3b8';
+    // edges: attack = red dashed + arrow; L2 segment = faint dotted, no arrow
+    // (switch↔host membership, not a conversation); flows = grey + arrow.
     edges.forEach(e=>{ const a=idx[e.source],b=idx[e.target];
-      const attack = e.kind==='attack';
-      ctx.strokeStyle = attack ? 'rgba(220,38,38,0.55)' : 'rgba(148,163,184,0.22)';
+      const attack = e.kind==='attack', segment = e.kind==='segment';
+      ctx.strokeStyle = attack ? 'rgba(220,38,38,0.55)' : segment ? 'rgba(20,184,166,0.28)' : 'rgba(148,163,184,0.22)';
       ctx.lineWidth = attack ? 1.6 : 1;
-      ctx.setLineDash(attack ? [5,4] : []);
+      ctx.setLineDash(attack ? [5,4] : segment ? [2,4] : []);
       ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
       ctx.setLineDash([]);
+      if(segment) return;  // L2 membership has no direction — skip the arrowhead
       // arrowhead pointing at the target (direction of the connection/attack)
       const ang=Math.atan2(b.y-a.y,b.x-a.x); const ex=b.x-Math.cos(ang)*(b.r+2), ey=b.y-Math.sin(ang)*(b.r+2);
       ctx.fillStyle = attack ? 'rgba(220,38,38,0.7)' : 'rgba(148,163,184,0.35)';
@@ -2335,10 +2355,20 @@ function drawGraph(graph){
     });
     nodes.forEach(n=>{
       const c = roleColor(n);
-      ctx.beginPath(); ctx.arc(n.x,n.y,n.r,0,7); ctx.fillStyle=c; ctx.globalAlpha=0.9; ctx.fill(); ctx.globalAlpha=1;
+      ctx.globalAlpha=0.9; ctx.fillStyle=c;
+      if(n.role==='infrastructure'){
+        // a switch/infra NIC is drawn as a rounded square to read as a device
+        const s=n.r*1.5, x=n.x-s/2, y=n.y-s/2, rad=3;
+        ctx.beginPath();
+        ctx.moveTo(x+rad,y); ctx.arcTo(x+s,y,x+s,y+s,rad); ctx.arcTo(x+s,y+s,x,y+s,rad);
+        ctx.arcTo(x,y+s,x,y,rad); ctx.arcTo(x,y,x+s,y,rad); ctx.closePath(); ctx.fill();
+      } else {
+        ctx.beginPath(); ctx.arc(n.x,n.y,n.r,0,7); ctx.fill();
+      }
+      ctx.globalAlpha=1;
       if(n.role==='attacker'){ ctx.strokeStyle='#fecaca'; ctx.lineWidth=2; ctx.stroke(); }
-      if(n.r>8 || n.flagged || nodes.length<=20){ ctx.fillStyle='#cbd5e1'; ctx.font='10px sans-serif'; ctx.textAlign='center';
-        ctx.fillText(n.id, n.x, n.y-n.r-3); }
+      if(n.r>8 || n.flagged || n.role==='infrastructure' || nodes.length<=20){ ctx.fillStyle='#cbd5e1'; ctx.font='10px sans-serif'; ctx.textAlign='center';
+        ctx.fillText(n.label||n.id, n.x, n.y-n.r-4); }
       // A scanner's fan-out is shown as a count on the attacker — NOT as a node
       // per probed IP (probed ≠ exists). "scanned N · M live" tells the real story.
       if(n.role==='attacker' && n.scanned>0){ ctx.fillStyle='#f87171'; ctx.font='9px sans-serif'; ctx.textAlign='center';
@@ -2362,7 +2392,24 @@ window.addEventListener('resize', ()=>{
 });
 
 /* ── Assets ── */
+const ROLE_BADGE = {endpoint:'INFO', gateway:'MEDIUM', infrastructure:'INFO', host:'INFO'};
 function renderAssets(d){
+  const devs = d.devices||[];
+  document.getElementById('device-count').textContent = devs.length + (devs.length===1?' device':' devices');
+  document.getElementById('device-tbody').innerHTML = devs.map(v=>{
+    const ips = (v.ips||[]).length ? (v.ips||[]).map(esc).join('<br>') : '<span style="color:var(--text-sub)">— (no IP)</span>';
+    const vendor = v.vendor ? esc(v.vendor) : '<span style="color:var(--text-sub)">unknown</span>';
+    const protos = (v.protocols||[]).slice(0,6).map(p=>`<span class="ttp-tag">${esc(p)}</span>`).join(' ');
+    return `<tr>
+      <td class="ip-text">${ips}</td>
+      <td class="mono" style="color:var(--text-sub)">${esc(v.mac||'')}</td>
+      <td>${vendor}</td>
+      <td><span class="badge badge-${ROLE_BADGE[v.kind]||'INFO'}">${esc(v.kind_label||'Host')}</span></td>
+      <td>${protos}</td>
+      <td class="num mono">${(v.packets||0).toLocaleString()}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6"><div class="no-data" style="padding:24px"><p>No devices observed</p></div></td></tr>';
+
   const fps = d.fingerprints||[];
   document.getElementById('fp-tbody').innerHTML = fps.map(f=>`
     <tr>

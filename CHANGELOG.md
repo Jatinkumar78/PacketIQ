@@ -26,8 +26,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `mac_to_ips`, `devices`, `ip_to_device`), reconstructed from the frame source
   MAC now captured by the parser (`eth_src`/`eth_dst`). It classifies each NIC as
   endpoint / gateway / infrastructure and never collapses a router's many IPs.
-- 4 regression tests (`tests/test_device_graph.py`) proving no phantom nodes,
-  IPv4+IPv6 merge, and the fan-out-as-count behaviour.
+- **The graph now shows the *complete* real device inventory.** Infrastructure
+  NICs that carry no IP (a switch broadcasting STP/CDP, a host booting over DHCP)
+  are drawn as distinct teal squares, and when exactly one switch is present its
+  members are linked by faint dotted **"L2 segment"** edges — so the graph reads
+  as a real switched topology (switch at the hub) instead of a few floating dots.
+- **Device Inventory table** in the Assets panel, the HTML report, and the CLI
+  `analyze` output: one row per transmitting NIC with **vendor (from the MAC OUI)**,
+  MAC, IP address(es), role and packet count. New `oui_vendor()` helper (a curated,
+  partial OUI map — returns "" when unknown rather than guessing).
+- 6 regression tests (`tests/test_device_graph.py`) proving no phantom nodes,
+  IPv4+IPv6 merge, fan-out-as-count, and switch/infra + L2-segment rendering.
 
 ### Accurate composition, coordinated-recon detection, real network graph & a Possible-Attacks panel
 

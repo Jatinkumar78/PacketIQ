@@ -247,6 +247,31 @@ def _ser_fp(f) -> dict:
     }
 
 
+_DEVICE_KIND_LABEL = {"endpoint": "Host", "gateway": "Gateway/Router",
+                      "infrastructure": "Switch/Infra", "host": "Host (no IP)"}
+
+
+def _devices_payload(result) -> list:
+    """The real device inventory: one entry per NIC that actually transmitted,
+    with vendor (OUI), its IP address(es), packet count and kind. Purely grounded
+    in the capture — probed-but-silent addresses are never listed as devices."""
+    from packetiq.utils.helpers import oui_vendor
+    out = []
+    for d in sorted(getattr(result, "devices", []) or [], key=lambda x: -x.get("packets", 0)):
+        ips = [ip for ip in d.get("ips", []) if ip]
+        out.append({
+            "mac":      d.get("mac", ""),
+            "vendor":   oui_vendor(d.get("mac", "")),
+            "ips":      ips,
+            "primary":  d.get("id", ""),
+            "kind":     d.get("kind", "endpoint"),
+            "kind_label": _DEVICE_KIND_LABEL.get(d.get("kind", "endpoint"), "Host"),
+            "packets":  d.get("packets", 0),
+            "protocols": d.get("protocols", [])[:8],
+        })
+    return out
+
+
 def _ser_attr(a) -> dict:
     return {
         "name":           a.actor_name,
@@ -327,6 +352,11 @@ def _build_graph(result, events) -> dict:
     for ip, c in result.ip_dst_counts.items():
         if exists(ip):
             counts[node_of(ip)] = counts.get(node_of(ip), 0) + c
+    # Seed every real IP device from the inventory, so a host that only ever spoke
+    # ARP (no IP-layer packets) still appears — it provably exists.
+    for dev in getattr(result, "devices", []) or []:
+        if dev.get("kind") in ("endpoint", "gateway"):
+            counts.setdefault(dev["id"], dev.get("packets", 0))
 
     # Roles from detections. Attackers are the sources of scan/attack behaviour;
     # targets are hosts on the receiving end of a detection that ACTUALLY EXIST
@@ -379,20 +409,60 @@ def _build_graph(result, events) -> dict:
             return "target"
         return "internal" if is_private_ip(node) else "external"
 
+    from packetiq.utils.helpers import oui_vendor
+    dev_by_id: dict = {d["id"]: d for d in getattr(result, "devices", []) or []}
+
+    def _device_label(dev: dict) -> str:
+        """A friendly name for a NIC that has no IP (switch / booting host)."""
+        vendor = oui_vendor(dev.get("mac", ""))
+        protos = set(dev.get("protocols", []))
+        short = (dev.get("mac", "") or "")[-8:]
+        if dev.get("kind") == "infrastructure":
+            return (f"{vendor} switch" if vendor else "Switch") + f" · {short}"
+        base = f"{vendor} host" if vendor else "Host"
+        return base + (" (DHCP)" if "DHCP" in protos else " (no IP)") + f" · {short}"
+
     nodes = []
     for node in top:
         st = scan_stats.get(node)
+        mac = result.ip_to_mac.get(node, "") if hasattr(result, "ip_to_mac") else ""
+        dev = dev_by_id.get(node, {})
         nodes.append({
             "id": node,
+            "label": node,
             "packets": counts.get(node, 0),
             "internal": is_private_ip(node),
             "flagged": node in flagged,
             "role": _role(node),
-            "mac": result.ip_to_mac.get(node, "") if hasattr(result, "ip_to_mac") else "",
+            "kind": dev.get("kind", "endpoint"),
+            "mac": mac,
+            "vendor": oui_vendor(mac),
             # scanner fan-out shown ON the attacker, not as phantom target dots
             "scanned": len(st["scanned"]) if st else 0,
             "alive": len(st["alive"]) if st else 0,
         })
+
+    # Real devices that transmitted but carry no IP (a switch broadcasting
+    # STP/CDP, a host still booting over DHCP). They exist on the segment, so the
+    # topology is incomplete without them — draw them as distinct infra nodes.
+    infra_ids: list = []
+    for dev in getattr(result, "devices", []) or []:
+        if dev["id"] in top or ":" not in str(dev["id"]) or "." in str(dev["id"]):
+            continue  # already drawn as an IP node, or not a MAC-only device
+        infra_ids.append(dev["id"])
+        nodes.append({
+            "id": dev["id"],
+            "label": _device_label(dev),
+            "packets": dev.get("packets", 0),
+            "internal": True,
+            "flagged": False,
+            "role": "infrastructure",
+            "kind": dev.get("kind", "infrastructure"),
+            "mac": dev.get("mac", ""),
+            "vendor": oui_vendor(dev.get("mac", "")),
+            "scanned": 0, "alive": 0,
+        })
+    node_ids = {n["id"] for n in nodes}
 
     edges = []
     seen: set = set()
@@ -426,6 +496,18 @@ def _build_graph(result, events) -> dict:
                           "bytes": fl.bytes_total, "kind": "flow", "label": str(label)})
             if len(edges) >= 90:
                 break
+    # 3) L2-segment edges: when exactly ONE switch is present, every other device
+    #    provably shares its broadcast domain (they appear alongside its STP/CDP in
+    #    the same capture). Draw that membership as subtle dotted links so the graph
+    #    reads as a real switched topology — clearly distinct from conversations.
+    switches = [n for n in nodes if n["kind"] == "infrastructure"]
+    if len(switches) == 1:
+        sw = switches[0]["id"]
+        for n in nodes:
+            if n["id"] != sw and n["id"] in node_ids and (sw, n["id"]) not in seen:
+                seen.add((sw, n["id"]))
+                edges.append({"source": sw, "target": n["id"], "bytes": 0,
+                              "kind": "segment", "label": "L2 segment"})
     return {"nodes": nodes, "edges": edges}
 
 
@@ -620,6 +702,7 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
         "attack_coverage": _attack_coverage(events),
         "threat_intel_matches": _threat_intel_matches(events),
         "fingerprints":  [_ser_fp(f) for f in fps],
+        "devices":       _devices_payload(result),
         "sigma_rules":   [{"title": r.title, "level": r.level, "yaml": r.raw_yaml} for r in sigma],
         "attributions":  [_ser_attr(a) for a in attrs],
         "graph":         _build_graph(result, events),

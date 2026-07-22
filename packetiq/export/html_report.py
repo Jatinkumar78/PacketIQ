@@ -118,6 +118,10 @@ def _network_svg(result, events) -> str:
     for ip, c in result.ip_dst_counts.items():
         if exists(ip):
             counts[node_of(ip)] = counts.get(node_of(ip), 0) + c
+    # Seed every real IP device (incl. ARP-only hosts) from the inventory.
+    for dev in (getattr(result, "devices", []) or []):
+        if dev.get("kind") in ("endpoint", "gateway"):
+            counts.setdefault(dev["id"], dev.get("packets", 0))
 
     attackers: set = set()
     targets: set = set()
@@ -154,16 +158,40 @@ def _network_svg(result, events) -> str:
         if n not in top:
             top.append(n)
     top = top[:20]
-    if len(top) < 2:
+
+    # Real devices with no IP (a switch broadcasting STP/CDP, a host booting over
+    # DHCP) — they exist on the segment, so include them for a complete topology.
+    from packetiq.utils.helpers import oui_vendor
+    infra_ids: list = []
+    labels: dict = {}
+    kinds: dict = {}
+    for dev in (getattr(result, "devices", []) or []):
+        did = str(dev["id"])
+        if did in top or "." in did or ":" not in did:
+            continue
+        infra_ids.append(did)
+        kinds[did] = dev.get("kind", "infrastructure")
+        vendor = oui_vendor(dev.get("mac", ""))
+        short = (dev.get("mac", "") or "")[-8:]
+        if dev.get("kind") == "infrastructure":
+            labels[did] = (f"{vendor} switch" if vendor else "Switch") + f" · {short}"
+        else:
+            protos = set(dev.get("protocols", []))
+            base = f"{vendor} host" if vendor else "Host"
+            labels[did] = base + (" (DHCP)" if "DHCP" in protos else " (no IP)")
+    infra_ids = infra_ids[:6]
+
+    if len(top) + len(infra_ids) < 2:
         return ("<p class='muted'>Only one active device observed in this capture — "
                 "no host-to-host connections to graph.</p>")
+    ring = top + infra_ids
 
     W = H = 560
     cx = cy = W / 2
     R = 210
     pos = {}
-    for i, ip in enumerate(top):
-        ang = 2 * math.pi * i / len(top) - math.pi / 2
+    for i, ip in enumerate(ring):
+        ang = 2 * math.pi * i / len(ring) - math.pi / 2
         pos[ip] = (cx + R * math.cos(ang), cy + R * math.sin(ang))
 
     # conversation edges + attack/scan edges (all collapsed to device nodes)
@@ -187,6 +215,14 @@ def _network_svg(result, events) -> str:
             if d in pos and s != d and exists(raw):
                 attack_edges.add((s, d))
     flow_edges -= attack_edges
+    # L2-segment edges: one switch → every other device that shares its domain
+    segment_edges: set = set()
+    switch_ids = [i for i in infra_ids if kinds.get(i) == "infrastructure"]
+    if len(switch_ids) == 1:
+        sw = switch_ids[0]
+        for other in ring:
+            if other != sw and (other, sw) not in attack_edges:
+                segment_edges.add((sw, other))
 
     parts = [f'<svg viewBox="0 0 {W} {H}" width="100%" style="max-width:620px">',
              '<defs><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">'
@@ -206,19 +242,31 @@ def _network_svg(result, events) -> str:
         return (f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2s:.0f}" y2="{y2s:.0f}" '
                 f'stroke="#94a3b8" stroke-width="1" opacity="0.4" marker-end="url(#ahg)"/>')
 
+    # L2-segment links drawn first (faint, dotted, no arrow — a membership, not a flow)
+    for a, b in segment_edges:
+        x1, y1 = pos[a]; x2, y2 = pos[b]
+        parts.append(f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
+                     f'stroke="#14b8a6" stroke-width="1" stroke-dasharray="2,4" opacity="0.4"/>')
     for a, b in flow_edges:
         parts.append(_edge(a, b, False))
     for a, b in attack_edges:
         parts.append(_edge(a, b, True))
 
     for ip, (x, y) in pos.items():
-        fill = ("#dc2626" if ip in attackers else "#f59e0b" if ip in targets
+        is_infra = ip in infra_ids
+        fill = ("#14b8a6" if is_infra else "#dc2626" if ip in attackers
+                else "#f59e0b" if ip in targets
                 else "#3b82f6" if is_private_ip(ip) else "#94a3b8")
         r = 6 + min(12, math.log10(max(counts.get(ip, 1), 1)) * 4)
         stroke = ' stroke="#fecaca" stroke-width="2"' if ip in attackers else ''
-        parts.append(f'<circle cx="{x:.0f}" cy="{y:.0f}" r="{r:.0f}" fill="{fill}" opacity="0.9"{stroke}/>')
+        if is_infra:
+            s = r * 1.7
+            parts.append(f'<rect x="{x - s / 2:.0f}" y="{y - s / 2:.0f}" width="{s:.0f}" height="{s:.0f}" '
+                         f'rx="3" fill="{fill}" opacity="0.9"/>')
+        else:
+            parts.append(f'<circle cx="{x:.0f}" cy="{y:.0f}" r="{r:.0f}" fill="{fill}" opacity="0.9"{stroke}/>')
         parts.append(f'<text x="{x:.0f}" y="{y - r - 4:.0f}" font-size="10" fill="#475569" '
-                     f'text-anchor="middle">{_esc(ip)}</text>')
+                     f'text-anchor="middle">{_esc(labels.get(ip, ip))}</text>')
         st = scan_stats.get(ip)
         if st and st["scanned"]:
             parts.append(
@@ -228,8 +276,9 @@ def _network_svg(result, events) -> str:
     parts.append('<div class="legend"><span class="dot" style="background:#dc2626"></span>attacker '
                  '<span class="dot" style="background:#f59e0b"></span>target '
                  '<span class="dot" style="background:#3b82f6"></span>internal '
-                 '<span class="dot" style="background:#94a3b8"></span>external '
-                 '&nbsp;<span style="color:#dc2626">▬▶</span> scan/attack</div>')
+                 '<span class="dot" style="background:#14b8a6;border-radius:2px"></span>switch/infra '
+                 '&nbsp;<span style="color:#dc2626">▬▶</span> scan/attack '
+                 '<span style="color:#14b8a6">┈</span> L2 segment</div>')
     return "".join(parts)
 
 
@@ -276,6 +325,43 @@ def _traffic_composition(result) -> str:
             + (" — a low completion rate is consistent with scanning/SYN floods)" if comp < 40 else ")")
         )
     return tbl + f"<p class='muted' style='margin-top:8px'>{' · '.join(metrics)}.</p>"
+
+
+_DEVICE_KIND_LABEL = {"endpoint": "Host", "gateway": "Gateway/Router",
+                      "infrastructure": "Switch/Infra", "host": "Host (no IP)"}
+
+
+def _device_inventory_table(result) -> str:
+    """The real device inventory — one row per NIC that actually transmitted a
+    frame, identified by MAC with vendor (OUI) and IP address(es). Grounded
+    entirely in the capture: an address that was only *probed* never appears."""
+    from packetiq.utils.helpers import oui_vendor
+    devices = getattr(result, "devices", []) or []
+    if not devices:
+        return "<p class='muted'>No transmitting devices observed.</p>"
+    rows = []
+    for d in sorted(devices, key=lambda x: -x.get("packets", 0)):
+        ips = ", ".join(ip for ip in d.get("ips", []) if ip) or "— (no IP)"
+        vendor = oui_vendor(d.get("mac", "")) or "unknown"
+        kind = _DEVICE_KIND_LABEL.get(d.get("kind", "endpoint"), "Host")
+        protos = ", ".join(d.get("protocols", [])[:6])
+        rows.append(
+            f"<tr><td>{_esc(ips)}</td>"
+            f"<td class='mono'>{_esc(d.get('mac', ''))}</td>"
+            f"<td>{_esc(vendor)}</td>"
+            f"<td><span class='pill'>{_esc(kind)}</span></td>"
+            f"<td class='muted'>{_esc(protos)}</td>"
+            f"<td class='num'>{d.get('packets', 0):,}</td></tr>"
+        )
+    n = len(devices)
+    return (
+        f"<p class='muted' style='margin-bottom:8px'>{n} physical "
+        f"device{'s' if n != 1 else ''} transmitted in this capture "
+        f"(identified by NIC/MAC; probed-but-silent addresses excluded).</p>"
+        "<table><thead><tr><th>IP address(es)</th><th>MAC</th><th>Vendor</th>"
+        "<th>Role</th><th>Protocols</th><th class='num'>Packets</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
 
 
 def _top_talkers_table(result) -> str:
@@ -959,6 +1045,9 @@ def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
 
   <h2>Network connection graph</h2>
   {_network_svg(result, events)}
+
+  <h2>Device inventory</h2>
+  {_device_inventory_table(result)}
 
   <h2>Detection events ({len(events)})</h2>
   <table><thead><tr><th>Severity</th><th>Precision</th><th>Type</th><th>Source</th><th>Destination</th><th>Conf.</th><th>Description</th></tr></thead>

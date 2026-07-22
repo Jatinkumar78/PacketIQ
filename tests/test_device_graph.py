@@ -11,10 +11,11 @@ and a host's addresses collapse to a single physical-device node.
 from packetiq.detection.engine import DetectionEngine
 from packetiq.extractor.data_extractor import DataExtractor
 from packetiq.parser.pcap_parser import PCAPParser
-from packetiq.webapp.app import _build_graph
+from packetiq.webapp.app import _build_graph, _devices_payload
 
 MAC_A = "00:e0:4c:36:14:02"   # the attacker NIC (.200 + an IPv6 link-local)
 MAC_B = "00:e0:4c:68:01:74"   # a live host  (.202 + an IPv6 link-local)
+MAC_SW = "00:1b:d4:c7:4b:89"  # a Cisco switch (broadcasts STP, no IP)
 
 
 def _lab_like_pcap(path: str) -> None:
@@ -105,3 +106,47 @@ def test_attacker_fanout_is_a_count_not_phantom_nodes(tmp_path):
     assert attacker["scanned"] >= 25
     assert attacker["alive"] >= 1
     assert len(g["nodes"]) == 2
+
+
+def _pcap_with_switch(path: str) -> None:
+    """Same lab, plus a Cisco switch broadcasting STP (a real device with no IP)."""
+    from scapy.all import ARP, LLC, STP, Dot3, Ether, wrpcap
+    pkts = []
+    t = 1700000000.0
+    # a live host so there's an IP endpoint to attach the switch to
+    for _ in range(2):
+        pk = (Ether(src=MAC_B, dst="ff:ff:ff:ff:ff:ff")
+              / ARP(op=1, hwsrc=MAC_B, psrc="192.168.1.202", pdst="192.168.1.1"))
+        pk.time = t; t += 0.01
+        pkts.append(pk)
+    # the switch: STP BPDUs (802.3 + LLC), no IP layer at all
+    for _ in range(5):
+        bpdu = Dot3(src=MAC_SW, dst="01:80:c2:00:00:00") / LLC() / STP()
+        bpdu.time = t; t += 0.01
+        pkts.append(bpdu)
+    wrpcap(path, pkts)
+
+
+def test_switch_appears_as_infrastructure_device(tmp_path):
+    p = str(tmp_path / "sw.pcap")
+    _pcap_with_switch(p)
+    result, _ = _analyze(p)
+    kinds = {d["id"]: d["kind"] for d in result.devices}
+    assert kinds.get(MAC_SW) == "infrastructure"       # STP-only NIC = switch
+    # it is surfaced in the device inventory payload with a vendor from its OUI
+    payload = {d["mac"]: d for d in _devices_payload(result)}
+    assert payload[MAC_SW]["vendor"] == "Cisco"
+    assert payload[MAC_SW]["ips"] == []                # a switch has no IP here
+
+
+def test_graph_draws_switch_node_and_l2_segment_edges(tmp_path):
+    p = str(tmp_path / "sw.pcap")
+    _pcap_with_switch(p)
+    result, events = _analyze(p)
+    g = _build_graph(result, events)
+    infra = [n for n in g["nodes"] if n["role"] == "infrastructure"]
+    assert len(infra) == 1 and infra[0]["id"] == MAC_SW
+    # the single switch is linked to the host by an L2-segment edge (topology),
+    # which is a membership, not a conversation/attack
+    seg = [e for e in g["edges"] if e["kind"] == "segment"]
+    assert seg and all(e["source"] == MAC_SW for e in seg)

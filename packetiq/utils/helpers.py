@@ -290,3 +290,57 @@ def same_org_network(ip_a: str, ip_b: str, prefix: int = 16) -> bool:
     # both public → same organisation only if they share the same prefix block
     same_prefix = prefix if a.version == 4 else 48
     return b in ipaddress.ip_network(f"{ip_a}/{same_prefix}", strict=False)
+
+
+# ── MAC OUI → vendor (partial, curated) ───────────────────────────────────────
+# A best-effort identification of a NIC's manufacturer from the first 3 octets
+# (the IEEE OUI). Deliberately partial — a curated set of the vendors commonly
+# seen in enterprise/lab captures — and returns "" when unknown rather than
+# guessing, so the device inventory never shows a fabricated vendor.
+_OUI_VENDOR = {
+    "00:1b:d4": "Cisco", "00:00:0c": "Cisco", "00:1a:a1": "Cisco", "00:1e:14": "Cisco",
+    "00:1e:4a": "Cisco", "00:24:14": "Cisco", "cc:46:d6": "Cisco", "00:0c:29": "VMware",
+    "00:05:69": "VMware", "00:50:56": "VMware", "00:1c:14": "VMware", "08:00:27": "VirtualBox",
+    "52:54:00": "QEMU/KVM", "00:16:3e": "Xen", "00:15:5d": "Microsoft Hyper-V",
+    "00:e0:4c": "Realtek", "52:54:ab": "Realtek", "00:1a:4b": "Hewlett-Packard",
+    "08:62:66": "Hewlett-Packard", "00:21:5a": "Hewlett-Packard", "3c:d9:2b": "Hewlett-Packard",
+    "00:1b:78": "Hewlett-Packard", "00:0e:7f": "Hewlett-Packard", "00:26:55": "Hewlett-Packard",
+    "00:1c:c4": "Hewlett-Packard", "00:14:22": "Dell", "00:21:9b": "Dell", "18:03:73": "Dell",
+    "b8:2a:72": "Dell", "00:1e:c9": "Dell", "f8:bc:12": "Dell", "00:1b:21": "Intel",
+    "00:1c:c0": "Intel", "00:15:17": "Intel", "3c:97:0e": "Intel", "a0:88:b4": "Intel",
+    "00:aa:00": "Intel", "8c:16:45": "Intel", "00:03:93": "Apple", "00:1e:c2": "Apple",
+    "00:25:00": "Apple", "3c:07:54": "Apple", "a4:5e:60": "Apple", "f0:18:98": "Apple",
+    "ac:bc:32": "Apple", "00:1d:4f": "Apple", "d0:23:db": "Apple", "00:26:bb": "Apple",
+    "00:09:0f": "Fortinet", "00:0d:b9": "PC Engines", "00:90:a9": "Western Digital",
+    "b0:27:eb": "Raspberry Pi", "dc:a6:32": "Raspberry Pi", "e4:5f:01": "Raspberry Pi",
+    "00:1f:29": "Hewlett-Packard", "00:24:e8": "Dell", "00:12:3f": "Dell",
+    "00:07:e9": "Intel", "00:13:72": "Dell", "00:0f:1f": "Dell", "d4:be:d9": "Dell",
+    "00:50:ba": "D-Link", "00:1c:f0": "D-Link", "00:26:5a": "D-Link", "c8:be:19": "D-Link",
+    "00:1d:7e": "Cisco-Linksys", "00:23:69": "Cisco-Linksys", "00:25:9c": "Cisco-Linksys",
+    "00:14:bf": "Cisco-Linksys", "00:18:39": "Cisco-Linksys", "00:1e:e5": "Cisco-Linksys",
+    "00:90:4c": "Epson", "b4:2e:99": "GIGA-BYTE", "1c:1b:0d": "GIGA-BYTE",
+    "00:24:1d": "GIGA-BYTE", "00:1f:d0": "GIGA-BYTE", "40:8d:5c": "GIGA-BYTE",
+    "00:0d:88": "D-Link", "00:19:e0": "TP-Link", "00:27:19": "TP-Link", "50:c7:bf": "TP-Link",
+    "14:cc:20": "TP-Link", "a4:2b:b0": "TP-Link", "00:1d:0f": "TP-Link",
+    "00:04:96": "Extreme", "00:1f:45": "Enterasys", "00:e0:1e": "Cisco",
+    "00:60:2f": "Cisco", "00:d0:58": "Cisco", "00:0a:41": "Cisco", "00:11:20": "Cisco",
+}
+
+
+def oui_vendor(mac: str) -> str:
+    """Best-effort NIC-manufacturer name from a MAC's OUI, or "" when unknown.
+    Locally-administered / multicast MACs (bit 0x2 of the first octet set) carry
+    no real OUI, so no vendor is claimed for them."""
+    if not mac or len(mac) < 8:
+        return ""
+    mac = mac.strip().lower().replace("-", ":")
+    parts = mac.split(":")
+    if len(parts) < 3:
+        return ""
+    try:
+        first = int(parts[0], 16)
+    except ValueError:
+        return ""
+    if first & 0x2:                       # locally-administered / randomised MAC
+        return ""
+    return _OUI_VENDOR.get(":".join(parts[:3]), "")

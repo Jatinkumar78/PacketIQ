@@ -203,6 +203,35 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
         max_rows=top if not full else 9999,
     )
 
+    # ── Device inventory (real transmitting NICs) ──────────────────────
+    devices = getattr(result, "devices", []) or []
+    if devices:
+        from packetiq.utils.helpers import oui_vendor
+        _KIND = {"endpoint": "Host", "gateway": "Gateway", "infrastructure": "Switch/Infra",
+                 "host": "Host (no IP)"}
+        ui.print_section("DEVICE INVENTORY",
+                         f"{len(devices)} physical device(s) that actually transmitted")
+        dev_rows = [
+            [", ".join(d.get("ips", [])) or "— (no IP)",
+             d.get("mac", ""),
+             oui_vendor(d.get("mac", "")) or "unknown",
+             _KIND.get(d.get("kind", "endpoint"), "Host"),
+             f"{d.get('packets', 0):,}"]
+            for d in sorted(devices, key=lambda x: -x.get("packets", 0))
+        ]
+        ui.print_table(
+            "Devices on the wire (by NIC/MAC — probed-but-silent IPs excluded)",
+            columns=[
+                ("IP address(es)", "bold green", "left"),
+                ("MAC",            "dim white",  "left"),
+                ("Vendor",         "cyan",       "left"),
+                ("Role",           "yellow",     "left"),
+                ("Packets",        "cyan",       "right"),
+            ],
+            rows=dev_rows,
+            max_rows=9999 if full else 20,
+        )
+
     # ── Top destinations ───────────────────────────────────────────────
     ui.print_section("TOP DESTINATIONS", "destination IPs by packet volume")
     dests = DataExtractor.top_destinations(result, n=top)
