@@ -16,6 +16,13 @@ from packetiq.detection.models import DetectionEvent
 from packetiq.extractor.data_extractor import ExtractionResult
 from packetiq.utils.helpers import format_bytes, format_duration, is_private_ip, ts_to_str
 
+# An evidence-rich capture can touch thousands of external IPs. Enumerating all of
+# them buries the actual findings (detections, attack chains, MITRE) and overflows
+# a local model's context window, so it silently truncates and drops the evidence
+# it most needs. We cap every long IP/domain enumeration to the top entries by
+# volume and add an "… and N more" line, keeping the context signal-dense.
+_MAX_IP_LIST = 30
+
 
 def build_context(
     file_meta: dict,
@@ -99,10 +106,18 @@ def _network_topology(result: ExtractionResult) -> str:
         scope = "INTERNAL" if is_private_ip(ip) else "EXTERNAL"
         lines.append(f"  {ip:<20} {cnt:>7,} pkts  [{scope}]")
 
-    if result.external_ips:
-        lines.append("\n=== EXTERNAL IP CONTACTS ===")
-        for ip in sorted(result.external_ips):
-            lines.append(f"  {ip}")
+    ext = result.external_ips
+    if ext:
+        # Rank external contacts by traffic volume and cap the list — the top
+        # peers are what an analyst needs; the long tail only buries the findings.
+        dst = result.ip_dst_counts
+        ranked = sorted(ext, key=lambda ip: dst.get(ip, 0), reverse=True)
+        shown = ranked[:_MAX_IP_LIST]
+        lines.append(f"\n=== EXTERNAL IP CONTACTS ({len(ext)} total, top {len(shown)} by volume) ===")
+        for ip in shown:
+            lines.append(f"  {ip:<20} {dst.get(ip, 0):>7,} pkts")
+        if len(ext) > len(shown):
+            lines.append(f"  … and {len(ext) - len(shown):,} more external IPs")
 
     return "\n".join(lines)
 
@@ -225,9 +240,11 @@ def _ioc_summary(
         if e.src_ip and e.severity.value in ("CRITICAL", "HIGH")
     })
     if attacker_ips:
-        lines.append("Suspected Attacker IPs (HIGH/CRITICAL events):")
-        for ip in attacker_ips:
+        lines.append(f"Suspected Attacker IPs (HIGH/CRITICAL events) — {len(attacker_ips)}:")
+        for ip in attacker_ips[:_MAX_IP_LIST]:
             lines.append(f"  {ip}")
+        if len(attacker_ips) > _MAX_IP_LIST:
+            lines.append(f"  … and {len(attacker_ips) - _MAX_IP_LIST:,} more")
 
     # Target IPs
     target_ips = sorted({
@@ -235,15 +252,22 @@ def _ioc_summary(
         if e.dst_ip and e.severity.value in ("CRITICAL", "HIGH")
     })
     if target_ips:
-        lines.append("Targeted IPs:")
-        for ip in target_ips:
+        lines.append(f"Targeted IPs — {len(target_ips)}:")
+        for ip in target_ips[:_MAX_IP_LIST]:
             lines.append(f"  {ip}")
+        if len(target_ips) > _MAX_IP_LIST:
+            lines.append(f"  … and {len(target_ips) - _MAX_IP_LIST:,} more")
 
-    # External IPs contacted
+    # External IPs contacted (top by volume; the full set is a count, not a dump)
     if result.external_ips:
-        lines.append("External IPs Contacted:")
-        for ip in sorted(result.external_ips):
+        ext = sorted(result.external_ips,
+                     key=lambda ip: result.ip_dst_counts.get(ip, 0), reverse=True)
+        shown = ext[:_MAX_IP_LIST]
+        lines.append(f"External IPs Contacted ({len(ext)} total, top {len(shown)} by volume):")
+        for ip in shown:
             lines.append(f"  {ip}")
+        if len(ext) > len(shown):
+            lines.append(f"  … and {len(ext) - len(shown):,} more")
 
     # Suspicious domains
     suspicious_domains = sorted({

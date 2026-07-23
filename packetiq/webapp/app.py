@@ -268,6 +268,36 @@ def _devices_payload(result) -> list:
             "kind_label": _DEVICE_KIND_LABEL.get(d.get("kind", "endpoint"), "Host"),
             "packets":  d.get("packets", 0),
             "protocols": d.get("protocols", [])[:8],
+            "chassis":  d.get("chassis"),
+        })
+    return out
+
+
+def _chassis_payload(result) -> list:
+    """Same-chassis inference notes: NICs that are LIKELY one physical device —
+    typically a managed switch presenting an STP/CDP control-plane MAC and a DHCP
+    management-interface MAC on the same OUI. Surfaced as an explicit inference;
+    the NICs are never merged, because the packets prove two distinct MACs.
+    Grounded entirely in result.chassis_groups."""
+    from packetiq.utils.helpers import oui_vendor
+    out = []
+    for g in getattr(result, "chassis_groups", []) or []:
+        macs = g.get("macs", [])
+        vendor = ""
+        for m in macs:
+            vendor = oui_vendor(m) or vendor
+        out.append({
+            "oui": g.get("oui", ""),
+            "vendor": vendor,
+            "macs": macs,
+            "note": (
+                (f"{vendor} " if vendor else "")
+                + "NICs " + " and ".join(macs) + " share OUI " + g.get("oui", "")
+                + " — likely the same physical switch (a control-plane NIC doing "
+                "STP/CDP and a management interface). Shown as separate NICs "
+                "because the packets prove two distinct MACs; PacketIQ does not "
+                "merge them on inference."
+            ),
         })
     return out
 
@@ -703,6 +733,7 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
         "threat_intel_matches": _threat_intel_matches(events),
         "fingerprints":  [_ser_fp(f) for f in fps],
         "devices":       _devices_payload(result),
+        "chassis_groups": _chassis_payload(result),
         "sigma_rules":   [{"title": r.title, "level": r.level, "yaml": r.raw_yaml} for r in sigma],
         "attributions":  [_ser_attr(a) for a in attrs],
         "graph":         _build_graph(result, events),
@@ -1350,10 +1381,13 @@ def _ollama_num_ctx(prompt_chars: int, reply_tokens: int) -> int:
     Override the cap with OLLAMA_NUM_CTX."""
     est = (prompt_chars // 4) + reply_tokens + 256
     env = _read_env()
+    # 16384 default cap so an evidence-rich capture (many detections + top talkers)
+    # fits without truncation; still small enough for a 7B model on a laptop, and
+    # the context builder now caps long IP lists so most captures stay well under it.
     try:
-        cap = int((os.environ.get("OLLAMA_NUM_CTX") or env.get("OLLAMA_NUM_CTX") or "8192").strip())
+        cap = int((os.environ.get("OLLAMA_NUM_CTX") or env.get("OLLAMA_NUM_CTX") or "16384").strip())
     except ValueError:
-        cap = 8192
+        cap = 16384
     for size in (2048, 4096, 8192, 16384, 32768):
         if est <= size:
             return min(size, cap)

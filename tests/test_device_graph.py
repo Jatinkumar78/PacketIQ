@@ -11,7 +11,7 @@ and a host's addresses collapse to a single physical-device node.
 from packetiq.detection.engine import DetectionEngine
 from packetiq.extractor.data_extractor import DataExtractor
 from packetiq.parser.pcap_parser import PCAPParser
-from packetiq.webapp.app import _build_graph, _devices_payload
+from packetiq.webapp.app import _build_graph, _chassis_payload, _devices_payload
 
 MAC_A = "00:e0:4c:36:14:02"   # the attacker NIC (.200 + an IPv6 link-local)
 MAC_B = "00:e0:4c:68:01:74"   # a live host  (.202 + an IPv6 link-local)
@@ -150,3 +150,59 @@ def test_graph_draws_switch_node_and_l2_segment_edges(tmp_path):
     # which is a membership, not a conversation/attack
     seg = [e for e in g["edges"] if e["kind"] == "segment"]
     assert seg and all(e["source"] == MAC_SW for e in seg)
+
+
+# A managed switch commonly shows two MACs on one OUI: a control-plane MAC doing
+# STP/CDP and a management interface doing DHCP. They are one physical chassis,
+# but the packets prove two distinct MACs, so PacketIQ shows two NIC nodes and
+# flags the same-chassis relationship as an explicit *inference* — never a merge.
+MAC_SW_MGMT = "00:1b:d4:c7:4b:c0"   # same Cisco OUI (00:1b:d4) as MAC_SW, mgmt NIC
+
+
+def _pcap_switch_two_macs(path: str) -> None:
+    from scapy.all import BOOTP, DHCP, IP, LLC, STP, UDP, Dot3, Ether, wrpcap
+    pkts = []
+    t = 1700000000.0
+    # control-plane MAC: STP BPDUs (infrastructure, no IP)
+    for _ in range(5):
+        bpdu = Dot3(src=MAC_SW, dst="01:80:c2:00:00:00") / LLC() / STP()
+        bpdu.time = t; t += 0.01
+        pkts.append(bpdu)
+    # management MAC on the SAME OUI: DHCP DISCOVER (source IP 0.0.0.0 → no IP,
+    # non-infra protocol → kind 'host', an IP-less L2 device)
+    for _ in range(2):
+        dh = (Ether(src=MAC_SW_MGMT, dst="ff:ff:ff:ff:ff:ff")
+              / IP(src="0.0.0.0", dst="255.255.255.255") / UDP(sport=68, dport=67)  # nosec B104
+              / BOOTP(chaddr=b"\x00\x1b\xd4\xc7\x4b\xc0")
+              / DHCP(options=[("message-type", "discover"), "end"]))
+        dh.time = t; t += 0.01
+        pkts.append(dh)
+    wrpcap(path, pkts)
+
+
+def test_same_oui_switch_macs_flagged_as_one_chassis(tmp_path):
+    p = str(tmp_path / "chassis.pcap")
+    _pcap_switch_two_macs(p)
+    result, _ = _analyze(p)
+    # both NICs remain distinct devices (never merged)
+    macs = {d["mac"] for d in result.devices}
+    assert {MAC_SW, MAC_SW_MGMT} <= macs
+    # …but they are flagged as the same physical chassis (same OUI, one is infra)
+    assert len(result.chassis_groups) == 1
+    grp = result.chassis_groups[0]
+    assert grp["oui"] == "00:1b:d4"
+    assert grp["macs"] == sorted([MAC_SW, MAC_SW_MGMT])
+    # each grouped device carries the chassis stamp; the note reaches the payload
+    stamped = {d["mac"]: d.get("chassis") for d in result.devices}
+    assert stamped[MAC_SW] == "00:1b:d4" and stamped[MAC_SW_MGMT] == "00:1b:d4"
+    notes = _chassis_payload(result)
+    assert notes and "likely the same physical switch" in notes[0]["note"]
+
+
+def test_distinct_vendor_endpoints_are_not_a_chassis(tmp_path):
+    # The lab capture has three real PCs (two Realtek, one HP) — none IP-less,
+    # so no false same-chassis grouping is ever produced for real endpoints.
+    p = str(tmp_path / "lab.pcap")
+    _lab_like_pcap(p)
+    result, _ = _analyze(p)
+    assert result.chassis_groups == []

@@ -354,13 +354,33 @@ def _device_inventory_table(result) -> str:
             f"<td class='num'>{d.get('packets', 0):,}</td></tr>"
         )
     n = len(devices)
+    # Same-chassis inference notes (e.g. a switch's STP MAC + its DHCP management
+    # MAC on one OUI). Stated as an inference; the NICs are never merged.
+    chassis_html = ""
+    for g in (getattr(result, "chassis_groups", []) or []):
+        macs = g.get("macs", [])
+        vendor = ""
+        for m in macs:
+            vendor = oui_vendor(m) or vendor
+        note = (
+            (f"{vendor} " if vendor else "")
+            + "NICs " + " and ".join(macs) + " share OUI " + g.get("oui", "")
+            + " — likely the same physical switch (a control-plane NIC doing "
+            "STP/CDP and a management interface). Shown as separate NICs because "
+            "the packets prove two distinct MACs; PacketIQ does not merge them on "
+            "inference."
+        )
+        chassis_html += (
+            "<p class='muted' style='margin-top:8px;border-left:3px solid #14b8a6;"
+            f"padding-left:10px'>{_esc(note)}</p>"
+        )
     return (
         f"<p class='muted' style='margin-bottom:8px'>{n} physical "
         f"device{'s' if n != 1 else ''} transmitted in this capture "
         f"(identified by NIC/MAC; probed-but-silent addresses excluded).</p>"
         "<table><thead><tr><th>IP address(es)</th><th>MAC</th><th>Vendor</th>"
         "<th>Role</th><th>Protocols</th><th class='num'>Packets</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table>"
+        f"<tbody>{''.join(rows)}</tbody></table>{chassis_html}"
     )
 
 

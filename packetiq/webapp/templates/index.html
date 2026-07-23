@@ -893,7 +893,7 @@ tbody tr:hover td{background:var(--surface2)}
       <div id="upload-err"></div>
       <div style="text-align:center;margin-top:14px;font-size:13px;color:var(--text-sub)">
         — or —
-        <a href="#" onclick="openLive();return false;" style="color:var(--accent2);text-decoration:none;font-weight:600;margin-left:4px">🛰 Monitor live traffic on an interface →</a>
+        <a href="#" onclick="openLive();return false;" style="color:var(--accent2);text-decoration:none;font-weight:600;margin-left:4px">Monitor live traffic on an interface →</a>
       </div>
     </div>
 
@@ -1153,7 +1153,7 @@ tbody tr:hover td{background:var(--surface2)}
             <div class="sec-sub">MITRE ATT&amp;CK mapped attack sequences</div>
           </div>
           <div class="sec-actions">
-            <a class="btn btn-secondary btn-sm" id="nav-dl" href="#" target="_blank" rel="noopener" title="Open in the official MITRE ATT&CK Navigator">⬇ ATT&CK Navigator layer</a>
+            <a class="btn btn-secondary btn-sm" id="nav-dl" href="#" target="_blank" rel="noopener" title="Open in the official MITRE ATT&CK Navigator">ATT&CK Navigator layer</a>
           </div>
         </div>
         <div id="attack-matrix" style="margin-bottom:18px"></div>
@@ -1164,7 +1164,7 @@ tbody tr:hover td{background:var(--surface2)}
       <div class="panel" id="panel-predictions">
         <div class="sec-header">
           <div>
-            <div class="sec-title">🔮 Possible Attacks — Threat Forecast</div>
+            <div class="sec-title">Possible Attacks — Threat Forecast</div>
             <div class="sec-sub">Attacks this capture is exposed to, predicted from the observed services &amp; behaviour — with the reason for each</div>
           </div>
         </div>
@@ -1229,6 +1229,7 @@ tbody tr:hover td{background:var(--surface2)}
             </table>
           </div>
         </div>
+        <div id="chassis-notes" style="margin-bottom:20px"></div>
 
         <div class="sec-title" style="margin-bottom:16px">Asset Fingerprints</div>
         <div class="card" style="padding:0;overflow:hidden">
@@ -1260,8 +1261,8 @@ tbody tr:hover td{background:var(--surface2)}
             <div class="sec-sub">Auto-generated rules compatible with Splunk, Elastic, Sentinel, QRadar</div>
           </div>
           <div class="sec-actions">
-            <a class="btn btn-secondary btn-sm" id="report-dl" target="_blank">📄 HTML Report</a>
-            <a class="btn btn-secondary btn-sm" id="stix-dl" download>🛰 STIX 2.1</a>
+            <a class="btn btn-secondary btn-sm" id="report-dl" target="_blank">HTML Report</a>
+            <a class="btn btn-secondary btn-sm" id="stix-dl" download>STIX 2.1</a>
             <a class="btn btn-secondary btn-sm" id="sigma-dl" download>
               <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Download ZIP
@@ -1292,12 +1293,12 @@ tbody tr:hover td{background:var(--surface2)}
           <div class="card">
             <div class="card-header"><div class="card-title">Reports &amp; Detections</div></div>
             <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
-              <a class="btn btn-secondary" id="exp-html" target="_blank">📄 Open HTML Report (offline, shareable)</a>
-              <a class="btn btn-primary" id="exp-pdf" target="_blank">🖨 Save court-ready PDF report</a>
-              <a class="btn btn-secondary" id="exp-nav" download>🎯 Download ATT&CK Navigator layer (.json)</a>
-              <a class="btn btn-secondary" id="exp-sigma" download>🧩 Download SIGMA rules (.zip)</a>
-              <a class="btn btn-secondary" id="exp-stix" download>🛰 Download STIX 2.1 bundle (.json)</a>
-              <button class="btn btn-secondary" id="exp-aireport" onclick="downloadAiReport()">📝 Generate AI SOC report (.md)</button>
+              <a class="btn btn-secondary" id="exp-html" target="_blank">Open HTML Report (offline, shareable)</a>
+              <a class="btn btn-primary" id="exp-pdf" target="_blank">Save court-ready PDF report</a>
+              <a class="btn btn-secondary" id="exp-nav" download>Download ATT&CK Navigator layer (.json)</a>
+              <a class="btn btn-secondary" id="exp-sigma" download>Download SIGMA rules (.zip)</a>
+              <a class="btn btn-secondary" id="exp-stix" download>Download STIX 2.1 bundle (.json)</a>
+              <button class="btn btn-secondary" id="exp-aireport" onclick="downloadAiReport()">Generate AI SOC report (.md)</button>
               <div id="aireport-msg" style="font-size:12px;color:var(--text-sub)"></div>
             </div>
           </div>
@@ -1309,7 +1310,7 @@ tbody tr:hover td{background:var(--surface2)}
               <label style="font-size:12px;color:var(--text-sub);display:flex;align-items:center;gap:6px">
                 <input type="checkbox" id="misp-verify" checked> Verify TLS certificate
               </label>
-              <button class="btn btn-primary" id="misp-push" onclick="pushMisp()">🚀 Push indicators to MISP</button>
+              <button class="btn btn-primary" id="misp-push" onclick="pushMisp()">Push indicators to MISP</button>
               <div id="misp-result" style="font-size:12px;color:var(--text-sub)"></div>
             </div>
           </div>
@@ -1322,8 +1323,8 @@ tbody tr:hover td{background:var(--surface2)}
           <div style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
             <input class="filter-input" id="ev-ip" placeholder="IP (e.g. 45.33.32.156)" style="width:220px">
             <input class="filter-input" id="ev-port" placeholder="Port (optional)" style="width:140px">
-            <button class="btn btn-secondary" onclick="downloadEvidence()">⬇ Download evidence.pcap</button>
-            <span id="ev-hint" style="font-size:12px;color:var(--text-sub)">Tip: every threat in the Events table has a ⬇ button too.</span>
+            <button class="btn btn-secondary" onclick="downloadEvidence()">Download evidence.pcap</button>
+            <span id="ev-hint" style="font-size:12px;color:var(--text-sub)">Tip: every threat in the Events table has a download button too.</span>
           </div>
         </div>
         <div class="card" style="margin-top:16px">
@@ -1332,9 +1333,9 @@ tbody tr:hover td{background:var(--surface2)}
             <span class="result-count" id="notify-channels">checking channels…</span>
           </div>
           <div style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-            <button class="btn btn-primary" onclick="openTelegram()">✈️ Connect Telegram</button>
-            <button class="btn btn-secondary" onclick="testNotify()">🔔 Send test alert</button>
-            <button class="btn btn-secondary" onclick="sendFindings()" title="Sends a detailed SOC brief plus a full professional PDF report to Telegram">📣 Send report + PDF</button>
+            <button class="btn btn-primary" onclick="openTelegram()">Connect Telegram</button>
+            <button class="btn btn-secondary" onclick="testNotify()">Send test alert</button>
+            <button class="btn btn-secondary" onclick="sendFindings()" title="Sends a detailed SOC brief plus a full professional PDF report to Telegram">Send report + PDF</button>
             <span id="notify-result" style="font-size:12px;color:var(--text-sub)"></span>
           </div>
           <div style="padding:0 16px 14px;font-size:12px;color:var(--text-sub)">
@@ -1352,7 +1353,7 @@ tbody tr:hover td{background:var(--surface2)}
           </div>
           <div class="sec-actions">
             <button class="btn btn-secondary btn-sm" onclick="refreshFeeds(true)">↻ Refresh status</button>
-            <button class="btn btn-primary btn-sm" id="feeds-refresh" onclick="refreshFeeds()">⬇ Update from source</button>
+            <button class="btn btn-primary btn-sm" id="feeds-refresh" onclick="refreshFeeds()">Update from source</button>
           </div>
         </div>
         <div id="ti-matches" style="margin-bottom:18px"></div>
@@ -1370,7 +1371,7 @@ tbody tr:hover td{background:var(--surface2)}
             <div class="sec-sub">Maps each host's observed software → CPE → NIST NVD CVEs (version-aware) → CVSS → CISA KEV (actively exploited), and correlates observed exploit attempts against the target's real software. All data from NVD + CISA; encrypted traffic exposes no banners.</div>
           </div>
           <div class="sec-actions">
-            <button class="btn btn-primary btn-sm" id="cve-scan" onclick="loadCVEs(true)">🛡 Assess vulnerabilities</button>
+            <button class="btn btn-primary btn-sm" id="cve-scan" onclick="loadCVEs(true)">Assess vulnerabilities</button>
           </div>
         </div>
         <div class="metrics-grid" id="vuln-stats"></div>
@@ -1387,7 +1388,7 @@ tbody tr:hover td{background:var(--surface2)}
           </div>
           <div class="sec-actions">
             <button class="btn btn-secondary btn-sm" onclick="loadHistory()">↻ Refresh</button>
-            <button class="btn btn-secondary btn-sm" onclick="clearHistory()">🗑 Clear history</button>
+            <button class="btn btn-secondary btn-sm" onclick="clearHistory()">Clear history</button>
           </div>
         </div>
         <div class="tbl-wrap">
@@ -1409,23 +1410,23 @@ tbody tr:hover td{background:var(--surface2)}
         <div class="card" style="margin-bottom:16px">
           <div style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
             <select class="filter-input" id="live-iface" style="min-width:260px"></select>
-            <button class="btn btn-secondary" id="live-refresh" onclick="loadInterfaces()" title="Rescan interfaces (auto-refreshes too)" style="padding:8px 12px">🔄</button>
+            <button class="btn btn-secondary" id="live-refresh" onclick="loadInterfaces()" title="Rescan interfaces (auto-refreshes too)" style="padding:8px 12px;display:inline-flex;align-items:center"><svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg></button>
             <select class="filter-input" id="live-threshold" style="width:150px">
               <option value="LOW">Severity ≥ LOW</option>
               <option value="MEDIUM">Severity ≥ MEDIUM</option>
               <option value="HIGH" selected>Severity ≥ HIGH</option>
               <option value="CRITICAL">Severity ≥ CRITICAL</option>
             </select>
-            <button class="btn btn-primary" id="live-start" onclick="startLive()">▶ Start monitoring</button>
-            <button class="btn btn-primary" id="live-analyze" onclick="stopAndAnalyze()" style="display:none">⏹ Stop &amp; Analyze (full report)</button>
-            <button class="btn btn-secondary" id="live-stop" onclick="stopLive()" style="display:none">■ Stop</button>
-            <button class="btn btn-secondary" id="live-dl" onclick="downloadLivePcap()" style="display:none">⬇ Download PCAP</button>
+            <button class="btn btn-primary" id="live-start" onclick="startLive()">Start monitoring</button>
+            <button class="btn btn-primary" id="live-analyze" onclick="stopAndAnalyze()" style="display:none">Stop &amp; Analyze (full report)</button>
+            <button class="btn btn-secondary" id="live-stop" onclick="stopLive()" style="display:none">Stop</button>
+            <button class="btn btn-secondary" id="live-dl" onclick="downloadLivePcap()" style="display:none">Download PCAP</button>
             <span id="live-status" style="font-size:12px;color:var(--text-sub)"></span>
           </div>
           <div id="live-iface-hint" style="padding:0 16px 8px;font-size:11.5px;color:var(--text-sub)"></div>
           <div id="live-priv" style="padding:0 16px 8px;font-size:12px;color:var(--high);display:none"></div>
           <div id="live-setup-wrap" style="padding:0 16px 14px;display:none">
-            <button class="btn btn-primary" id="live-setup" onclick="setupCapture()">🔓 Enable live capture (one-time)</button>
+            <button class="btn btn-primary" id="live-setup" onclick="setupCapture()">Enable live capture (one-time)</button>
             <span id="live-setup-status" style="font-size:12px;color:var(--text-sub);margin-left:8px"></span>
           </div>
         </div>
@@ -1467,7 +1468,7 @@ tbody tr:hover td{background:var(--surface2)}
         </div>
         <div class="filters" style="margin-bottom:8px">
           <input class="filter-input" id="pk-search" placeholder="Filter: http · tls · dns · icmp · 10.0.0.5 · 443 · http 1.2.3.4 …" title="Protocol keywords (http, https/tls, dns, tcp, udp, icmp, arp, ssh…) match exactly; anything else matches IPs/ports/text. Combine terms with spaces (AND)." style="width:360px" onkeydown="if(event.key==='Enter')searchPackets()">
-          <button class="btn btn-secondary btn-sm" onclick="searchPackets()">🔍 Search</button>
+          <button class="btn btn-secondary btn-sm" onclick="searchPackets()">Search</button>
           <button class="btn btn-ghost btn-sm" onclick="document.getElementById('pk-search').value='';searchPackets()">Clear</button>
           <span class="result-count" id="pk-count"></span>
         </div>
@@ -1498,7 +1499,7 @@ tbody tr:hover td{background:var(--surface2)}
     </div>
     <div id="pkt-summary" style="font-size:12px;color:var(--text-sub);margin-bottom:10px;word-break:break-word"></div>
     <div style="margin-bottom:12px">
-      <button class="btn btn-primary btn-sm" id="pkt-explain-btn" onclick="explainPacket()">🤖 Explain with AI</button>
+      <button class="btn btn-primary btn-sm" id="pkt-explain-btn" onclick="explainPacket()">Explain with AI</button>
     </div>
     <div id="pkt-ai" style="display:none;background:var(--card,#111827);border:1px solid var(--border,#1e293b);border-radius:10px;padding:14px;margin-bottom:14px;font-size:13px;line-height:1.6"></div>
     <div class="card-title" style="margin:6px 0">Layers</div>
@@ -1533,7 +1534,7 @@ tbody tr:hover td{background:var(--surface2)}
      style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;align-items:center;justify-content:center">
   <div style="background:var(--bg-1,#0d1117);border:1px solid var(--border);border-radius:12px;max-width:560px;width:94%;max-height:90vh;overflow:auto;padding:20px 22px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-      <h3 style="margin:0;font-size:16px">✈️ Connect Telegram Alerts</h3>
+      <h3 style="margin:0;font-size:16px">Connect Telegram Alerts</h3>
       <button onclick="closeTelegram()" title="Close" style="background:none;border:none;color:var(--text-sub);font-size:22px;line-height:1;cursor:pointer">×</button>
     </div>
     <p style="color:var(--text-sub);font-size:12px;margin:0 0 12px">Get HIGH/CRITICAL findings pushed to your phone. Setup takes ~1 minute — no file editing.</p>
@@ -1554,7 +1555,7 @@ tbody tr:hover td{background:var(--surface2)}
     <div style="display:flex;gap:8px;margin-bottom:6px">
       <input id="tg-chat" type="text" spellcheck="false" autocomplete="off" placeholder="e.g. 123456789 — or click Detect →"
              style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2,#161b22);color:var(--text);font-family:monospace;font-size:12px">
-      <button class="btn btn-secondary btn-sm" onclick="detectChat()" id="tg-detect-btn" style="white-space:nowrap">🔍 Detect chat</button>
+      <button class="btn btn-secondary btn-sm" onclick="detectChat()" id="tg-detect-btn" style="white-space:nowrap">Detect chat</button>
     </div>
     <div id="tg-chats" style="font-size:12px;margin:0 0 10px"></div>
 
@@ -1563,8 +1564,8 @@ tbody tr:hover td{background:var(--surface2)}
     </label>
 
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <button class="btn btn-primary" onclick="saveTelegram()" id="tg-save-btn">💾 Save &amp; test</button>
-      <button class="btn btn-secondary btn-sm" onclick="removeTelegram()" id="tg-remove-btn" style="display:none">🗑 Remove</button>
+      <button class="btn btn-primary" onclick="saveTelegram()" id="tg-save-btn">Save &amp; test</button>
+      <button class="btn btn-secondary btn-sm" onclick="removeTelegram()" id="tg-remove-btn" style="display:none">Remove</button>
       <span id="tg-msg" style="font-size:12px;min-height:16px"></span>
     </div>
   </div>
@@ -1604,20 +1605,20 @@ tbody tr:hover td{background:var(--surface2)}
     </select>
     <span id="ai-provider-active" style="color:var(--text-sub);flex:1"></span>
     <button onclick="openAiSettings()" title="Enter API keys / configure AI providers"
-      style="background:var(--bg-2,#11161c);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 9px;font-size:12px;cursor:pointer;white-space:nowrap">⚙ Keys</button>
+      style="background:var(--bg-2,#11161c);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 9px;font-size:12px;cursor:pointer;white-space:nowrap">Keys</button>
   </div>
 
   <div class="chat-quick">
-    <button class="quick-btn" onclick="quickAsk('Give me an executive summary of the threats found in this capture.')">📋 Summary</button>
-    <button class="quick-btn" onclick="quickAsk('List all IOCs (IPs, domains, ports) found in this capture in a structured format.')">🔍 IOCs</button>
-    <button class="quick-btn" onclick="quickAsk('Walk me through the attack timeline — what happened, in what order, and what are the kill chain phases?')">⏱ Timeline</button>
-    <button class="quick-btn" onclick="quickAsk('Map all detected threats to MITRE ATT&CK techniques with IDs and tactics.')">🗺 MITRE</button>
-    <button class="quick-btn" onclick="quickAsk('What immediate actions should the SOC team take to respond to these findings? Prioritise by risk.')">⚡ Actions</button>
+    <button class="quick-btn" onclick="quickAsk('Give me an executive summary of the threats found in this capture.')">Summary</button>
+    <button class="quick-btn" onclick="quickAsk('List all IOCs (IPs, domains, ports) found in this capture in a structured format.')">IOCs</button>
+    <button class="quick-btn" onclick="quickAsk('Walk me through the attack timeline — what happened, in what order, and what are the kill chain phases?')">Timeline</button>
+    <button class="quick-btn" onclick="quickAsk('Map all detected threats to MITRE ATT&CK techniques with IDs and tactics.')">MITRE</button>
+    <button class="quick-btn" onclick="quickAsk('What immediate actions should the SOC team take to respond to these findings? Prioritise by risk.')">Actions</button>
   </div>
 
   <div id="chat-no-key" class="chat-no-key" style="display:none">
     ⚠ <strong>The AI copilot isn't configured yet.</strong> It's optional — the full analysis already ran offline.<br><br>
-    <button onclick="openAiSettings()" class="btn btn-primary btn-sm">🔑 Add an API key</button>
+    <button onclick="openAiSettings()" class="btn btn-primary btn-sm">Add an API key</button>
     &nbsp;— paste a <strong>free</strong> Gemini or Groq key right in the app (applies instantly, no restart).<br><br>
     Or stay fully offline with a <strong>local model</strong>: install <strong>Ollama</strong>, then
     <code>ollama pull qwen2.5:7b-instruct</code>. Your captures never leave your machine.<br>
@@ -1955,7 +1956,7 @@ function renderPredictions(d){
         <span style="font-size:12.5px">${esc(p.attack)}</span>
         <span style="font-size:11px;color:${likColor(p.likelihood)};margin-left:auto">${esc(p.likelihood)}</span></div>`).join('');
       tf.innerHTML = `<div class="card" style="padding:16px">
-        <div class="card-header" style="margin-bottom:8px"><div class="card-title">🔮 Possible Attacks — ${preds.length} predicted</div>
+        <div class="card-header" style="margin-bottom:8px"><div class="card-title">Possible Attacks — ${preds.length} predicted</div>
         <a class="btn btn-secondary btn-sm" href="#" onclick="gotoPanel('predictions');return false">View all &amp; reasons →</a></div>
         ${lines}</div>`;
     }
@@ -2004,20 +2005,29 @@ function renderDashboard(d){
     </div>`;
 
   // Metric cards
+  const svgI = p => `<svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24">${p}</svg>`;
+  const ICON = {
+    packets: svgI('<path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/>'),
+    duration: svgI('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>'),
+    flows: svgI('<polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/>'),
+    dns: svgI('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/>'),
+    http: svgI('<path d="M4.93 19.07a10 10 0 010-14.14M7.76 16.24a6 6 0 010-8.49M16.24 7.76a6 6 0 010 8.49M19.07 4.93a10 10 0 010 14.14"/><circle cx="12" cy="12" r="2"/>'),
+    sigma: svgI('<path d="M9 2h6a1 1 0 011 1v1H8V3a1 1 0 011-1z"/><path d="M8 4H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-2"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="12" y2="18"/>'),
+  };
   const cards = [
-    {label:'Total Packets',  val: m.total_packets.toLocaleString(), sub: m.bytes_fmt, color:'blue', icon:'📦'},
-    {label:'Duration',       val: m.duration||'–', sub: m.capture_start.slice(0,16), color:'blue', icon:'⏱'},
-    {label:'Unique Flows',   val: (m.unique_flows||0).toLocaleString(), sub:`${m.unique_src} src · ${m.unique_dst} dst IPs`, color:'green', icon:'🔄'},
-    {label:'DNS Queries',    val: (m.dns_queries||0).toLocaleString(), sub:'', color:'blue', icon:'🌐'},
-    {label:'HTTP Requests',  val: (m.http_requests||0).toLocaleString(), sub:'', color:'blue', icon:'📡'},
-    {label:'SIGMA Rules',    val: d.sigma_rules.length, sub:'detection rules generated', color:'green', icon:'📋'},
+    {label:'Total Packets',  val: m.total_packets.toLocaleString(), sub: m.bytes_fmt, color:'blue', icon: ICON.packets},
+    {label:'Duration',       val: m.duration||'–', sub: m.capture_start.slice(0,16), color:'blue', icon: ICON.duration},
+    {label:'Unique Flows',   val: (m.unique_flows||0).toLocaleString(), sub:`${m.unique_src} src · ${m.unique_dst} dst IPs`, color:'green', icon: ICON.flows},
+    {label:'DNS Queries',    val: (m.dns_queries||0).toLocaleString(), sub:'', color:'blue', icon: ICON.dns},
+    {label:'HTTP Requests',  val: (m.http_requests||0).toLocaleString(), sub:'', color:'blue', icon: ICON.http},
+    {label:'SIGMA Rules',    val: d.sigma_rules.length, sub:'detection rules generated', color:'green', icon: ICON.sigma},
   ];
   document.getElementById('metrics-grid').innerHTML = cards.map(c=>`
     <div class="metric-card ${c.color}">
       <div class="metric-label">${c.label}</div>
       <div class="metric-value">${c.val}</div>
       <div class="metric-sub">${c.sub}</div>
-      <div class="metric-icon" style="font-size:22px">${c.icon}</div>
+      <div class="metric-icon">${c.icon}</div>
     </div>`).join('');
 
   // Kill chain phases
@@ -2101,7 +2111,7 @@ function filterEvents(){
       <td class="mono">${e.event_type}</td>
       <td class="ip-text">${e.src_ip||'–'}</td>
       <td class="ip-text">${e.dst_ip||'–'}${e.dst_port?'<span style="color:var(--text-dim)">:'+e.dst_port+'</span>':''}
-        ${(e.dst_ip||e.src_ip)?`<a href="#" title="Download evidence PCAP for this finding" onclick="evFor(event,'${e.dst_ip||e.src_ip}',${e.dst_port||0});return false;" style="margin-left:6px;color:var(--accent2);text-decoration:none">⬇</a>`:''}</td>
+        ${(e.dst_ip||e.src_ip)?`<a href="#" title="Download evidence PCAP for this finding" onclick="evFor(event,'${e.dst_ip||e.src_ip}',${e.dst_port||0});return false;" style="margin-left:6px;color:var(--accent2);text-decoration:none;display:inline-flex;vertical-align:middle"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>`:''}</td>
       <td class="mono" style="color:var(--text-sub)">${e.protocol||'–'}</td>
       <td>
         <div class="conf-bar">
@@ -2195,9 +2205,9 @@ function renderChains(d){
         <span class="badge badge-${c.severity}" style="flex-shrink:0">${c.severity}</span>
       </div>
       <div class="chain-meta">
-        <span>📊 ${c.event_count} events</span>
-        <span>🎯 ${c.confidence}% confidence</span>
-        <span>🕐 ${c.first_seen} → ${c.last_seen}</span>
+        <span>${c.event_count} events</span>
+        <span>${c.confidence}% confidence</span>
+        <span>${c.first_seen} → ${c.last_seen}</span>
       </div>
       ${killChainPipeline(c)}
       ${c.attacker_ips.length?`<div style="font-size:11px;color:var(--text-sub);margin-bottom:4px">Attacker IPs</div><div class="ip-chips">${c.attacker_ips.map(i=>`<span class="ip-chip">${i}</span>`).join('')}</div>`:''}
@@ -2210,20 +2220,19 @@ function renderChains(d){
 
 /* Visual kill-chain pipeline: highlights the phases this chain actually reached. */
 const KILL_CHAIN = ["Reconnaissance","Weaponization","Delivery","Exploitation","Installation","Command & Control","Actions on Objectives"];
-const KILL_CHAIN_ICON = {"Reconnaissance":"🔭","Weaponization":"🧪","Delivery":"📦","Exploitation":"💥","Installation":"🧬","Command & Control":"📡","Actions on Objectives":"🎯"};
 function killChainPipeline(c){
   const present = new Set(c.phases||[]);
   // map each phase to the MITRE techniques in this chain that belong to it
   const techByPhase = {};
   (c.mitre||[]).forEach(m=>{ (techByPhase[m.tactic||m.phase||'']=techByPhase[m.tactic||m.phase||'']||[]).push(m.id); });
   const arrow = '<div style="align-self:center;color:var(--text-dim);font-weight:700">›</div>';
-  const nodes = KILL_CHAIN.map(p=>{
+  const nodes = KILL_CHAIN.map((p,idx)=>{
     const on = present.has(p);
     const col = on ? 'var(--critical)' : 'var(--border)';
     const bg  = on ? 'var(--crit-bg)' : 'transparent';
     const txt = on ? 'var(--text)' : 'var(--text-dim)';
     return `<div title="${esc(p)}${on?' — reached':' — not observed'}" style="flex:1;min-width:84px;text-align:center;border:1px solid ${col};background:${bg};border-radius:7px;padding:7px 4px;opacity:${on?1:.5}">
-      <div style="font-size:15px;line-height:1">${KILL_CHAIN_ICON[p]||'•'}</div>
+      <div style="font-size:12px;font-weight:700;line-height:1;color:${on?'var(--critical)':'var(--text-dim)'}">${idx+1}</div>
       <div style="font-size:10px;font-weight:600;color:${txt};margin-top:3px;line-height:1.1">${esc(p)}</div>
       ${on?'<div style="width:6px;height:6px;border-radius:50%;background:var(--critical);margin:4px auto 0"></div>':'<div style="height:6px;margin-top:4px"></div>'}
     </div>`;
@@ -2410,11 +2419,23 @@ function renderAssets(d){
     </tr>`;
   }).join('') || '<tr><td colspan="6"><div class="no-data" style="padding:24px"><p>No devices observed</p></div></td></tr>';
 
+  // Same-chassis inference: two NICs on one OUI (one a switch) are likely one
+  // physical device. Shown as an explicit, honest inference — never a merge.
+  const chassis = d.chassis_groups||[];
+  const cn = document.getElementById('chassis-notes');
+  if(cn){
+    cn.innerHTML = chassis.length ? chassis.map(g=>`
+      <div style="border:1px solid var(--border);border-left:3px solid var(--accent2);border-radius:8px;padding:12px 14px;background:var(--surface)">
+        <div style="font-size:12.5px;font-weight:600;color:var(--accent2)">Likely one physical device (same-chassis inference)</div>
+        <div style="font-size:12.5px;color:var(--text-sub);margin-top:4px">${esc(g.note||'')}</div>
+      </div>`).join('') : '';
+  }
+
   const fps = d.fingerprints||[];
   document.getElementById('fp-tbody').innerHTML = fps.map(f=>`
     <tr>
       <td class="ip-text">${esc(f.src_ip)}</td>
-      <td><span style="margin-right:6px">${f.os_icon||''}</span>${esc(f.os_guess)}</td>
+      <td>${esc(f.os_guess)}</td>
       <td class="mono" style="color:var(--text-sub)">${f.observed_ttl}</td>
       <td class="mono" style="color:var(--text-sub)">${f.initial_ttl}</td>
       <td class="mono" style="color:var(--text-sub)">${f.hops}</td>
@@ -2546,17 +2567,17 @@ function cvePipeline(d){
   d = d || {};
   const v = x => (x==null ? '—' : (typeof x==='number' ? x.toLocaleString() : x));
   const stages = [
-    {ic:'🔎', t:'Observe software', s:v(d.banners)+' banners', c:'var(--accent)'},
-    {ic:'🧩', t:'Resolve CPE', s:v(d.products)+' products', c:'var(--accent)'},
-    {ic:'🌐', t:'NIST NVD CVEs', s:v(d.cves)+' CVEs', c:'var(--high)'},
-    {ic:'📊', t:'CVSS severity', s:(d.maxcvss!=null? 'peak '+d.maxcvss : '—'), c:'var(--high)'},
-    {ic:'🔥', t:'CISA KEV', s:v(d.kev)+' exploited', c:(d.kev? 'var(--critical)':'var(--success)')},
+    {t:'Observe software', s:v(d.banners)+' banners', c:'var(--accent)'},
+    {t:'Resolve CPE', s:v(d.products)+' products', c:'var(--accent)'},
+    {t:'NIST NVD CVEs', s:v(d.cves)+' CVEs', c:'var(--high)'},
+    {t:'CVSS severity', s:(d.maxcvss!=null? 'peak '+d.maxcvss : '—'), c:'var(--high)'},
+    {t:'CISA KEV', s:v(d.kev)+' exploited', c:(d.kev? 'var(--critical)':'var(--success)')},
   ];
   const arrow = '<div style="align-self:center;color:var(--text-dim);font-size:18px;font-weight:700">→</div>';
-  const nodes = stages.map(s=>`
+  const nodes = stages.map((s,i)=>`
     <div style="flex:1;min-width:108px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;position:relative;overflow:hidden">
       <div style="position:absolute;top:0;left:0;right:0;height:2px;background:${s.c}"></div>
-      <div style="font-size:16px;line-height:1">${s.ic}</div>
+      <div style="font-size:12px;font-weight:700;line-height:1;color:${s.c}">Step ${i+1}</div>
       <div style="font-size:12px;font-weight:600;margin-top:4px">${s.t}</div>
       <div style="font-size:11px;color:var(--text-sub);margin-top:2px">${esc(String(s.s))}</div>
     </div>`).join(arrow);
@@ -2621,7 +2642,7 @@ function renderCVEs(j){
     <div class="metric-card red"><div class="metric-label">Actively Exploited</div><div class="metric-value">${tot.kev}</div><div class="metric-sub">CISA KEV (of ${(tot.kev_catalog||0).toLocaleString()})</div></div>
     <div class="metric-card orange"><div class="metric-label">Peak CVSS</div><div class="metric-value">${maxcvss==null?'—':maxcvss}</div><div class="metric-sub">highest severity</div></div>`;
   msg.style.color = tot.kev ? 'var(--critical)' : tot.cves ? 'var(--high)' : 'var(--success)';
-  msg.innerHTML = (tot.kev? '🔥 ' : tot.cves? '⚠ ' : '✓ ') + esc(j.note||'')
+  msg.innerHTML = (tot.kev? '⚠ ' : tot.cves? '⚠ ' : '✓ ') + esc(j.note||'')
     + (j.available ? '' : ' <span style="opacity:.7">· add NVD_API_KEY to .env for a higher rate limit</span>');
 
   let html = pipe;
@@ -2630,7 +2651,7 @@ function renderCVEs(j){
   // exploit-attempt ↔ CVE correlations (attack seen + target software)
   (j.correlations||[]).forEach(c=>{
     html += `<div class="card" style="margin-bottom:12px;border-left:3px solid var(--critical);padding:12px 14px">
-      <div style="font-weight:600;color:var(--critical)">⚡ Exploit attempt observed — ${esc(c.name)}</div>
+      <div style="font-weight:600;color:var(--critical)">Exploit attempt observed — ${esc(c.name)}</div>
       <div style="font-size:12px;color:var(--text-sub);margin-top:4px">Target <b>${esc(c.target)}</b> · CVE ${c.cves.map(x=>`<a href="https://nvd.nist.gov/vuln/detail/${esc(x)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(x)}</a>`).join(', ')} ${c.kev?'<span class="badge" style="background:var(--crit-bg);color:var(--critical);border:1px solid var(--critical)44">CISA KEV</span>':''}
       ${c.target_software&&c.target_software.length?'· target runs <code>'+esc(c.target_software.join(', '))+'</code>':''}</div></div>`;
   });
@@ -2648,7 +2669,7 @@ function renderCVEs(j){
       p.cves.forEach(c=>{
         const col=cveSevColor(c.severity);
         const tags=(c.kev?'<span class="badge" style="background:var(--crit-bg);color:var(--critical);border:1px solid var(--critical)44">KEV</span> ':'')
-                 +(c.ransomware?'<span class="badge" style="background:var(--crit-bg);color:var(--critical)">☣ ransomware</span>':'');
+                 +(c.ransomware?'<span class="badge" style="background:var(--crit-bg);color:var(--critical)">ransomware</span>':'');
         html += `<tr>
           <td><a href="${esc(c.url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(c.id)}</a></td>
           <td style="color:${col};font-weight:600">${c.cvss==null?'—':esc(c.cvss)}</td>
@@ -3068,7 +3089,7 @@ async function refreshFeeds(statusOnly){
     const fr = await (await fetch('/api/feeds')).json();
     renderFeeds(fr, statusOnly);
   }catch(e){ msg.style.color='var(--critical)'; msg.textContent='✗ '+e.message; }
-  finally{ btn.disabled=false; btn.textContent='⬇ Update from source'; }
+  finally{ btn.disabled=false; btn.textContent='Update from source'; }
 }
 
 const FEED_SEV_CLASS = {CRITICAL:'red', HIGH:'orange', MEDIUM:'yellow', LOW:'blue'};
@@ -3170,7 +3191,7 @@ function openLive(){
    plug in appears without reloading the page. The <select> is only rebuilt when
    the set actually changes, and the user's current choice is always preserved. */
 let ifaceRefresh = null, lastIfaceSig = '';
-const IFACE_ICON = {wifi:'📶', ethernet:'🔌', bridge:'🌉', vpn:'🔒', loopback:'↩', system:'⚙', virtual:'🖧', wwan:'📡', other:'•'};
+const IFACE_ICON = {wifi:'Wi-Fi', ethernet:'Ethernet', bridge:'Bridge', vpn:'VPN', loopback:'Loopback', system:'System', virtual:'Virtual', wwan:'WWAN', other:'NIC'};
 
 function startIfaceAutoRefresh(){
   if(ifaceRefresh) return;
@@ -3184,13 +3205,13 @@ function startIfaceAutoRefresh(){
 function stopIfaceAutoRefresh(){ if(ifaceRefresh){ clearInterval(ifaceRefresh); ifaceRefresh=null; } }
 
 function ifaceOptionLabel(d){
-  const icon = IFACE_ICON[d.kind] || '•';
+  const kind = IFACE_ICON[d.kind] || 'NIC';
   const dot  = d.up===true ? '● up' : (d.up===false ? '○ down' : '· ?');
-  let txt = icon+' '+d.name;
+  let txt = '['+kind+'] '+d.name;
   if(d.label && d.label!==d.name) txt += ' — '+d.label;
   if(d.ip) txt += ' · '+d.ip;
   txt += '   '+dot;
-  if(d.recommended) txt += '  ★';
+  if(d.recommended) txt += '  (recommended)';
   return txt;
 }
 
@@ -3220,8 +3241,8 @@ async function loadInterfaces(quiet){
     // Live status line (Wireshark-esque: count + link summary + auto-refresh note).
     if(hint){
       const upN = details.filter(d=>d.up===true).length;
-      hint.innerHTML = '🔄 Live interface scan — '+details.length+' found, '+upN+' with an active link. '
-                     + 'Plug in an adapter and it appears here automatically. ● = link up, ○ = no cable/link, ★ = recommended.';
+      hint.innerHTML = 'Live interface scan — '+details.length+' found, '+upN+' with an active link. '
+                     + 'Plug in an adapter and it appears here automatically. ● = link up, ○ = no cable/link, (recommended) = suggested interface.';
     }
     const plat = j.platform || 'other';
     const setupWrap = document.getElementById('live-setup-wrap');
@@ -3240,7 +3261,7 @@ async function loadInterfaces(quiet){
       document.getElementById('live-setup-status').textContent='';
     } else {
       priv.style.display='block'; priv.style.color='var(--text-sub)';
-      priv.innerHTML = 'ℹ Capturing your host\'s traffic on the selected interface. Tip: <b>lo0</b> only shows localhost (incl. PacketIQ itself) — pick the <b>★ recommended</b> interface for real network traffic.';
+      priv.innerHTML = 'ℹ Capturing your host\'s traffic on the selected interface. Tip: <b>lo0</b> only shows localhost (incl. PacketIQ itself) — pick the <b>recommended</b> interface for real network traffic.';
       setupWrap.style.display='none';
     }
   }catch(e){ if(!quiet) sel.innerHTML='<option value="">error loading interfaces</option>'; }
@@ -3443,7 +3464,7 @@ function applyAIStatus(j){
         const missing = (p.name==='ollama') ? ' (not running)' : ' (no key)';
         opt.textContent = (AI_OPT[p.name]||p.name) + (p.configured?'':missing); }
     });
-    if(!j.available){ act.textContent='— no AI configured (click ⚙ Keys)'; act.style.color='var(--high)'; }
+    if(!j.available){ act.textContent='— no AI configured (click Keys)'; act.style.color='var(--high)'; }
     else{
       let txt = (j.mode==='auto')
         ? ('using '+(j.active? (AI_SHORT[j.active]||j.active) : '—'))

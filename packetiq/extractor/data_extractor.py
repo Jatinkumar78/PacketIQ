@@ -123,8 +123,14 @@ class ExtractionResult:
     transmitted_ips: set = field(default_factory=set)   # IPs seen as a frame source
     ip_to_mac: dict = field(default_factory=dict)        # IP → dominant source MAC
     mac_to_ips: dict = field(default_factory=dict)       # MAC → {IPs it sourced}
-    devices: list = field(default_factory=list)          # [{id, mac, ips, packets, kind}]
+    devices: list = field(default_factory=list)          # [{id, mac, ips, packets, kind, chassis}]
     ip_to_device: dict = field(default_factory=dict)     # IP → canonical device id (node id)
+    # Same-chassis inference: IP-less L2 NICs that share an OUI where at least one
+    # is switch infrastructure are LIKELY one physical device presenting two MACs
+    # (e.g. a switch's STP control-plane MAC + its DHCP management interface). We
+    # surface this as an explicit inference; we never merge the NICs, because the
+    # packets prove two distinct MACs. [{oui, macs:[...]}]
+    chassis_groups: list = field(default_factory=list)
 
     # ── Passive fingerprinting ───────────────────────────────────
     src_ip_ttl: dict = field(default_factory=dict)   # ip → first observed TTL
@@ -410,6 +416,7 @@ class DataExtractor:
                 "id": dev_id, "mac": mac, "ips": sorted(ips),
                 "packets": pkts, "kind": kind,
                 "protocols": sorted(protos),
+                "chassis": None,   # set below if this NIC belongs to a chassis group
             })
             # A gateway fronts many hosts: keep those IPs as their own nodes.
             # A real endpoint: fold every one of its addresses onto the one node.
@@ -418,6 +425,38 @@ class DataExtractor:
                     ip_to_device[ip] = dev_id
         r.devices = devices
         r.ip_to_device = ip_to_device
+        r.chassis_groups = self._infer_chassis_groups(devices)
+
+    @staticmethod
+    def _infer_chassis_groups(devices: list) -> list:
+        """Flag NICs that are LIKELY the same physical device presenting two MACs.
+
+        A managed switch commonly emits from two MACs on the same OUI — a
+        control-plane MAC (STP/CDP/DTP) and a management interface (DHCP). The
+        packets prove two distinct MACs, so these stay two separate NIC nodes;
+        this is only an *inference* that they share a chassis, drawn from a
+        conservative, evidence-backed signal:
+
+          • same 24-bit OUI (same vendor block),
+          • every member is an IP-less L2 device (kind 'infrastructure' or 'host'),
+            so a routable endpoint PC of the same vendor is never swept in, and
+          • at least one member is switch 'infrastructure'.
+
+        Returns [{oui, macs:[...]}]; also stamps each grouped device['chassis'].
+        """
+        by_oui: dict = {}
+        for d in devices:
+            mac = d.get("mac") or ""
+            if d.get("kind") in ("infrastructure", "host") and mac.count(":") >= 2:
+                oui = ":".join(mac.split(":")[:3]).lower()
+                by_oui.setdefault(oui, []).append(d)
+        groups: list = []
+        for oui, members in sorted(by_oui.items()):
+            if len(members) >= 2 and any(m["kind"] == "infrastructure" for m in members):
+                for m in members:
+                    m["chassis"] = oui
+                groups.append({"oui": oui, "macs": sorted(m["mac"] for m in members)})
+        return groups
 
     def finalize(self) -> ExtractionResult:
         """Commit aggregated data into ExtractionResult and return it."""

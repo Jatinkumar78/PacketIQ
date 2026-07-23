@@ -5,6 +5,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Local copilot accuracy, same-chassis inference, and a professional UI
+
+**Fixed**
+- **The AI copilot context no longer starves the model on busy captures.** An
+  evidence-rich capture (e.g. `donbot.pcap`) enumerated *every* external IP —
+  1,555 of them, listed twice — ballooning the context to ~82,000 chars, which
+  overflowed the local model's window so Ollama truncated the detections, attack
+  chains and MITRE mappings and left only a wall of IPs. On the real capture the
+  local model went from **0 grounded claims** ("you gave me a list of IP
+  addresses") to **65+ grounded claims with 0 hallucinations (100% faithful)**.
+  Long IP enumerations are now capped to the top 30 by volume with an "… and N
+  more" line (`context_builder.py`); the local context-window cap rose to 16,384
+  tokens so evidence-rich captures fit without truncation. Verified on real
+  captures with `tools/eval_copilot.py` — see `reports/ollama_tuning.md`.
+
+**Added**
+- **Same-chassis inference in the device inventory.** Two NICs on one OUI where
+  one is switch infrastructure (a managed switch's STP control-plane MAC + its
+  DHCP management interface, e.g. Cisco `c7:4b:89` + `c7:4b:c0`) are flagged as
+  *likely one physical device* — shown in the Assets panel, the HTML report and
+  the CLI. They are **never merged**: the packets prove two distinct MACs, so it
+  is stated as an explicit inference. New `chassis_groups` on the extractor
+  result + 2 regression tests.
+
+**Changed**
+- **Professional UI — decorative emoji removed** across the dashboard, Possible
+  Attacks, Attack Chains, Live Monitor, Export, Threat-Intel, CVE, Alerts and AI
+  Copilot surfaces. Metric-card and interface icons are now clean inline SVG /
+  text; kill-chain and CVE-pipeline steps are numbered. Conventional status marks
+  (✓ ✗ ⚠ ℹ) are kept.
+
+**Investigated and rejected (documented in `reports/ollama_tuning.md`)**
+- A few-shot Ollama Modelfile (`packetiq-soc`) trained on real capture data was
+  built and measured, but it **memorised the examples' indicators** and emitted
+  them into unrelated captures (named Donbot's IPs while analysing a benign DNS
+  capture — 0% faithful). It was **not shipped**; the accuracy win came from the
+  context fix above, which helps every provider (cloud and local).
+
 ### Network graph shows only real devices (no phantom hosts)
 
 **Fixed**
@@ -35,8 +73,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `analyze` output: one row per transmitting NIC with **vendor (from the MAC OUI)**,
   MAC, IP address(es), role and packet count. New `oui_vendor()` helper (a curated,
   partial OUI map — returns "" when unknown rather than guessing).
-- 6 regression tests (`tests/test_device_graph.py`) proving no phantom nodes,
-  IPv4+IPv6 merge, fan-out-as-count, and switch/infra + L2-segment rendering.
+- Regression tests (`tests/test_device_graph.py`) proving no phantom nodes,
+  IPv4+IPv6 merge, fan-out-as-count, switch/infra + L2-segment rendering, and the
+  same-chassis inference (grouped switch MACs; no false grouping of real hosts).
 
 ### Accurate composition, coordinated-recon detection, real network graph & a Possible-Attacks panel
 

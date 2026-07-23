@@ -159,7 +159,7 @@ of `_stream_ai_raw()`:
 | Lever | What it does | Why it matters |
 |---|---|---|
 | `keep_alive: 30m` | model stays resident between requests | Ollama's 5-minute default unloads the model, so an occasional query pays a multi-second cold reload |
-| `num_ctx` sized to the prompt | context window fits the evidence | the small default silently **truncates** a large PCAP context — an *accuracy* bug, not just a speed one |
+| `num_ctx` sized to the prompt (cap 16384) | context window fits the evidence | the small default silently **truncates** a large PCAP context — an *accuracy* bug, not just a speed one. The context builder also caps long IP lists so evidence-rich captures stay signal-dense; see `reports/ollama_tuning.md` |
 | `num_predict` per task | caps the reply length | a one-packet explanation asks for 900 tokens, not 2048 |
 | background warm-up | preloads the model once | the *first* query no longer waits on a cold load |
 | `seed` pinned (default 42) | fixes the sampler | Ollama seeds randomly, so the same capture was reworded on every run — a report an analyst cannot regenerate verbatim is hard to defend in evidence |

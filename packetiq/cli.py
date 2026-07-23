@@ -231,6 +231,19 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
             rows=dev_rows,
             max_rows=9999 if full else 20,
         )
+        # Same-chassis inference (e.g. a switch's STP MAC + its DHCP management
+        # MAC on one OUI). Stated as an inference; the NICs are never merged.
+        for g in (getattr(result, "chassis_groups", []) or []):
+            macs = g.get("macs", [])
+            vendor = ""
+            for m in macs:
+                vendor = oui_vendor(m) or vendor
+            note = ((f"{vendor} " if vendor else "")
+                    + "NICs " + " and ".join(macs) + " share OUI " + g.get("oui", "")
+                    + " — likely the same physical switch (control-plane + management "
+                    "interface), shown separately because the packets prove two "
+                    "distinct MACs.")
+            ui.print_status(note, "info")
 
     # ── Top destinations ───────────────────────────────────────────────
     ui.print_section("TOP DESTINATIONS", "destination IPs by packet volume")

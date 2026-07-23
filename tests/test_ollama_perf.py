@@ -22,8 +22,11 @@ def test_num_ctx_grows_with_prompt_but_is_capped(monkeypatch):
     assert webapp._ollama_num_ctx(200, 512) == 2048
     # big grounded context → larger window (not the truncating default)
     assert webapp._ollama_num_ctx(20000, 900) > 2048
-    # never blows past the memory cap
-    assert webapp._ollama_num_ctx(10_000_000, 2048) == 8192
+    # an evidence-rich capture (e.g. donbot: ~34k chars ≈ 9.5k tokens) fits the
+    # window fully rather than being truncated
+    assert webapp._ollama_num_ctx(34000, 900) == 16384
+    # never blows past the memory cap (16384 default; keeps a 7B model laptop-sized)
+    assert webapp._ollama_num_ctx(10_000_000, 2048) == 16384
 
 
 def test_num_ctx_cap_is_configurable(monkeypatch):
