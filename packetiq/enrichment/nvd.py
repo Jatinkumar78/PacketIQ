@@ -121,7 +121,10 @@ class NVDClient:
         """Return real CVEs whose NVD record matches `keyword`. Raises on HTTP error."""
         if not keyword.strip():
             return []
-        params = {"keywordSearch": keyword, "resultsPerPage": max(1, min(limit, 20))}
+        params: dict[str, str | int] = {
+            "keywordSearch": keyword,
+            "resultsPerPage": max(1, min(limit, 20)),
+        }
         headers = {"apiKey": self.api_key} if self.api_key else {}
         resp = requests.get(NVD_URL, params=params, headers=headers, timeout=self.timeout)
         if resp.status_code == 404:
@@ -236,14 +239,15 @@ def resolve_cpe(product: str, version: str, api_key: str | None = None, timeout:
     key = api_key or get_api_key()
     headers = {"apiKey": key} if key else {}
     try:
-        resp = requests.get(CPE_URL, params={"keywordSearch": kw, "resultsPerPage": 30},
-                            headers=headers, timeout=timeout)
+        cpe_params: dict[str, str | int] = {"keywordSearch": kw, "resultsPerPage": 30}
+        resp = requests.get(CPE_URL, params=cpe_params, headers=headers, timeout=timeout)
         if resp.status_code != 200:
             return None
         prods = resp.json().get("products", [])
     except Exception:
         return None
-    versioned, fallback = [], []
+    versioned: list[str] = []
+    fallback: list[str] = []
     for p in prods:
         c = p.get("cpe", {})
         name = c.get("cpeName", "")
@@ -259,7 +263,7 @@ def resolve_cpe(product: str, version: str, api_key: str | None = None, timeout:
 def _cves_by_cpe(client: NVDClient, cpe_name: str, fetch: int = 200) -> list:
     """Fetch CVEs whose NVD configuration matches this exact CPE (version-aware).
     Fetches a full page so high-severity CVEs aren't lost to NVD's default order."""
-    params = {"cpeName": cpe_name, "resultsPerPage": max(1, min(fetch, 2000))}
+    params: dict[str, str | int] = {"cpeName": cpe_name, "resultsPerPage": max(1, min(fetch, 2000))}
     headers = {"apiKey": client.api_key} if client.api_key else {}
     resp = requests.get(NVD_URL, params=params, headers=headers, timeout=client.timeout)
     if resp.status_code != 200:

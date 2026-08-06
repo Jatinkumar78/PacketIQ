@@ -78,7 +78,7 @@ _GRAPH_ATTACK_EVENTS = {"PORT_SCAN", "HOST_SCAN", "ARP_SCAN", "ARP_SPOOFING",
 
 def _graphable(ip: str) -> bool:
     """Real endpoints only — drop broadcast/multicast/unspecified pseudo-hosts."""
-    if not ip or ip in ("0.0.0.0", "255.255.255.255", "::", "::1"):  # nosec B104 - string comparison against pseudo-hosts, not a socket bind
+    if not ip or ip in ("0.0.0.0", "255.255.255.255", "::", "::1"):  # nosec B104 # string comparison against pseudo-hosts, not a socket bind
         return False
     if ":" in ip:
         return not ip.lower().startswith("ff")

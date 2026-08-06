@@ -28,7 +28,7 @@ from packetiq.utils.helpers import (
 # Addresses that are protocol sentinels rather than hosts: a booting client
 # sends DHCP from 0.0.0.0 before it owns an address. Treating these as hosts
 # invents devices that never existed.
-_NON_HOST_IPS = {"0.0.0.0", "::"}  # nosec B104 - sentinel values, not a socket bind
+_NON_HOST_IPS = {"0.0.0.0", "::"}  # nosec B104 # sentinel values, not a socket bind
 
 
 @dataclass
@@ -251,7 +251,7 @@ class DataExtractor:
             self._mac_pkts[mac] += 1
             self._mac_protos[mac].add(record.display_protocol or proto)
             src_ip = record.src_ip or (record.arp_src_ip if record.is_arp else None)
-            if src_ip and src_ip != "0.0.0.0":  # nosec B104 - DHCP-unspecified sentinel, not a socket bind
+            if src_ip and src_ip != "0.0.0.0":  # nosec B104 # DHCP-unspecified sentinel, not a socket bind
                 self._mac_ips[mac].add(src_ip)
                 self._ip_mac_counts[src_ip][mac] += 1
 
@@ -397,7 +397,7 @@ class DataExtractor:
 
         # Every ARP frame (request or reply) announces the sender's own IP→MAC
         # binding; collecting these lets us spot one IP claimed by several MACs.
-        if sip and sip != "0.0.0.0" and smac and smac not in self._NULL_MACS:  # nosec B104 - ARP sender-IP sentinel check, not a socket bind
+        if sip and sip != "0.0.0.0" and smac and smac not in self._NULL_MACS:  # nosec B104 # ARP sender-IP sentinel check, not a socket bind
             self._arp_ip_macs[sip].add(smac)
 
         if record.arp_op == 2:
@@ -406,7 +406,7 @@ class DataExtractor:
 
         # Requests (op == 1, and tolerate unknown ops) drive host-discovery scan
         # detection: one sender asking "who has X?" for many distinct targets.
-        if sip and sip != "0.0.0.0" and tip and tip != sip:  # nosec B104 - ARP sender-IP sentinel check, not a socket bind
+        if sip and sip != "0.0.0.0" and tip and tip != sip:  # nosec B104 # ARP sender-IP sentinel check, not a socket bind
             self._arp_targets[sip].add(tip)
             self._arp_req_count[sip] += 1
             if smac and smac not in self._NULL_MACS:
@@ -430,7 +430,7 @@ class DataExtractor:
         a global IPv6, falling back to link-local only if nothing else exists."""
         def _rank(ip: str) -> tuple:
             is_v6 = ":" in ip
-            v4_ll = (not is_v6) and (ip.startswith("169.254.") or ip == "0.0.0.0")  # nosec B104 - link-local/unspecified rank, not a socket bind
+            v4_ll = (not is_v6) and (ip.startswith("169.254.") or ip == "0.0.0.0")  # nosec B104 # link-local/unspecified rank, not a socket bind
             v6_ll = is_v6 and ip.lower().startswith("fe80")
             frames = ip_mac_counts.get(ip, {}).get(mac, 0)
             # lower tuple sorts first: prefer non-link-local, prefer IPv4, prefer busier
@@ -448,13 +448,13 @@ class DataExtractor:
         # IPs with evidence of existence: anything seen as a frame/ARP source.
         r.transmitted_ips = {
             ip for ip in (set(self._ip_src_counts) | set(self._arp_ip_macs))
-            if ip and ip != "0.0.0.0"  # nosec B104 - DHCP-unspecified sentinel, not a socket bind
+            if ip and ip != "0.0.0.0"  # nosec B104 # DHCP-unspecified sentinel, not a socket bind
         }
 
         # IP → dominant source MAC (the NIC that sent the most frames for it).
         ip_to_mac: dict = {}
         for ip, macs in self._ip_mac_counts.items():
-            if ip and ip != "0.0.0.0" and macs:  # nosec B104 - DHCP-unspecified sentinel, not a socket bind
+            if ip and ip != "0.0.0.0" and macs:  # nosec B104 # DHCP-unspecified sentinel, not a socket bind
                 ip_to_mac[ip] = max(macs.items(), key=lambda kv: kv[1])[0]
         r.ip_to_mac  = ip_to_mac
         r.mac_to_ips = {m: set(ips) for m, ips in self._mac_ips.items()}

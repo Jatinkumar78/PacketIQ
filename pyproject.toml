@@ -127,8 +127,15 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.9"
+# mypy 2.x refuses to target anything below 3.10, so this cannot mirror
+# requires-python (">=3.9"). The 3.9 floor the CI matrix actually tests is
+# enforced by tests/test_python39_compat.py instead; leaving "3.9" here only
+# produced an "unsupported" warning while silently checking 3.10 semantics.
+python_version = "3.10"
 ignore_missing_imports = true
 warn_unused_ignores = false
 check_untyped_defs = false
+# Advisory notes about un-analysed bodies in untyped functions; they are not
+# findings and drown the real errors this gate exists to surface.
+disable_error_code = ["annotation-unchecked"]
 exclude = "(^|/)(\\.venv|venv|build|dist|samples)/"

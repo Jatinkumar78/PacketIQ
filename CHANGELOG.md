@@ -5,6 +5,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### CI type gate, and the crash it had been reporting
+
+**Fixed**
+- **`packetiq fuse` crashed with `AttributeError` on any capture that matched a
+  threat actor.** The `icon` field was removed from `AttributionMatch` during the
+  emoji cleanup while `cli.py` still read it. mypy had been reporting this the
+  whole time — the CI step ran as `mypy packetiq || true`, so nobody saw it.
+- **The mypy step is now blocking**, and the 35 pre-existing errors it had
+  accumulated across 8 modules are all resolved (`Success: no issues found in 83
+  source files`). Two were latent defects rather than annotation noise:
+  `Copilot single_message()` indexed `response.content[0]` without checking for an
+  empty or non-text first block, and `attack_navigator._sev_value()` returned
+  `None` for a severity whose `.value` was itself `None`.
+- **The Python 3.9 floor was going unverified.** mypy 2.x refuses to target
+  anything below 3.10, so `python_version = "3.9"` was silently ignored while it
+  checked 3.10 semantics. `tests/test_python39_compat.py` now enforces the floor
+  directly: every module must parse under the 3.9 grammar, and no annotation that
+  Python evaluates at import time may use a PEP 604 `X | Y` union.
+- **`# nosec` comments used ` - ` before their explanation**, which bandit parses
+  as a list of test IDs — every scan emitted a warning per prose word. Switched to
+  the ` # ` separator, keeping the explanations. Bandit reports 0 issues at every
+  severity, unchanged.
+
+**Changed**
+- CI workflow hardened: `timeout-minutes` on both jobs, a `concurrency` group so a
+  newer push supersedes an in-flight run, least-privilege `permissions: contents:
+  read`, and `workflow_dispatch` so a run lost to a runner/infrastructure fault can
+  be restarted without an empty commit.
+- Bandit now runs as a blocking CI gate alongside pip-audit. First-party code
+  scans clean, so any new finding is a regression rather than pre-existing debt.
+- `InteractiveChat` takes a `CopilotLike` protocol instead of naming
+  `CopilotClient` concretely; the CLI passes `MultiProviderClient` there, which
+  the old annotation had been misdeclaring.
+- The `fuse` TTP-overlap row moved into `_attribution_line()` so it is reachable
+  from a test. Covered by `tests/test_attribution_render.py`, which renders real
+  `AttributionEngine` output.
+
 ### Evidence-proven threat forecast and a real network boundary
 
 **Fixed**

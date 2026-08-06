@@ -78,7 +78,7 @@ def slice_pcap(
                         written += 1
                         if max_packets and written >= max_packets:
                             break
-                except Exception:  # nosec B112 - skip an unreadable packet/source, keep slicing the rest
+                except Exception:  # nosec B112 # skip an unreadable packet/source, keep slicing the rest
                     continue
     finally:
         writer.close()

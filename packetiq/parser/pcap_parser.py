@@ -181,7 +181,7 @@ class PCAPParser:
 
             else:
                 # 802.3/LLC (STP, CDP, DTP), 802.11, etc. — keep at link level
-                record.protocol = pkt.name if hasattr(pkt, "name") else "OTHER"
+                record.protocol = str(getattr(pkt, "name", None) or "OTHER")
 
             # ── Transport layer ────────────────────────────────────────
             if pkt.haslayer(TCP):
@@ -280,8 +280,8 @@ class PCAPParser:
             if record.has_http:
                 return "HTTP"
             if record.protocol == "UDP":
-                port = record.dst_port if (record.dst_port or 0) < 49152 else record.src_port
-                return self._UDP_APP.get(port or 0, "UDP")
+                port = (record.dst_port if (record.dst_port or 0) < 49152 else record.src_port) or 0
+                return self._UDP_APP.get(port, "UDP")
             if record.protocol == "TCP":
                 for p in (record.dst_port, record.src_port):
                     if p in self._TCP_APP:

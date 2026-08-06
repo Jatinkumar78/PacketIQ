@@ -56,7 +56,7 @@ def _norm_drop(text: str) -> list[str]:
             o = json.loads(line)
             if o.get("cidr"):
                 out.append(o["cidr"])
-        except Exception:  # nosec B112 - skip a malformed feed line, keep parsing the rest
+        except Exception:  # nosec B112 # skip a malformed feed line, keep parsing the rest
             continue
     return out
 

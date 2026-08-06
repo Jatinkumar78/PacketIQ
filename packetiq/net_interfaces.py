@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import shutil
-import subprocess  # nosec B404 - only fixed, argument-list OS queries below (no shell)
+import subprocess  # nosec B404 # only fixed, argument-list OS queries below (no shell)
 import sys
 import threading
 
@@ -54,7 +54,7 @@ def _run(cmd: list, timeout: float = 4.0) -> str:
     if not exe:
         return ""
     try:
-        out = subprocess.run(  # nosec B603 - resolved absolute path, constant args, no shell, no user input
+        out = subprocess.run(  # nosec B603 # resolved absolute path, constant args, no shell, no user input
             [exe, *cmd[1:]], capture_output=True, text=True, timeout=timeout
         )
         return out.stdout or ""
@@ -175,7 +175,7 @@ def _scapy_metadata() -> tuple:
 
     default = str(conf.iface) if getattr(conf, "iface", None) else None
     data = getattr(getattr(conf, "ifaces", None), "data", None) or {}
-    unspecified = "0.0.0.0"  # nosec B104 - the no-IP value we FILTER OUT, never a bind target
+    unspecified = "0.0.0.0"  # nosec B104 # the no-IP value we FILTER OUT, never a bind target
     for key, iface in list(data.items()):
         with contextlib.suppress(Exception):  # a quirk in one record must not blank the list
             nm = getattr(iface, "name", None) or key

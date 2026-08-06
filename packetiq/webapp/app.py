@@ -23,7 +23,7 @@ import uuid
 import zipfile
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
@@ -54,7 +54,7 @@ def _allowed_hosts() -> set:
     return hosts
 
 
-async def _stream_upload_to(file, dest, max_mb: int = None) -> int:
+async def _stream_upload_to(file, dest, max_mb: Optional[int] = None) -> int:
     """Stream an UploadFile to `dest` in chunks, aborting if it exceeds the cap.
     Returns the number of bytes written. Raises HTTPException(413) when over."""
     cap = (max_mb if max_mb is not None else MAX_UPLOAD_MB) * 1024 * 1024
@@ -322,7 +322,7 @@ def _is_graphable_host(ip: str) -> bool:
     pseudo-addresses (0.0.0.0, 255.255.255.255, x.x.x.255, 224–239.x.x.x,
     ff00::/8) are traffic sinks, not hosts — graphing them clutters the view
     and makes DHCP/mDNS noise dwarf the real talkers."""
-    if not ip or ip in ("0.0.0.0", "255.255.255.255", "::", "::1"):  # nosec B104 - string comparison against pseudo-hosts, not a socket bind
+    if not ip or ip in ("0.0.0.0", "255.255.255.255", "::", "::1"):  # nosec B104 # string comparison against pseudo-hosts, not a socket bind
         return False
     if ":" in ip:                              # IPv6
         return not ip.lower().startswith("ff")  # drop multicast, keep unicast/link-local
@@ -356,7 +356,7 @@ def _build_graph(result, events) -> dict:
     from packetiq.utils.helpers import get_service_name, is_private_ip, monitored_network
 
     ip_to_device: dict = getattr(result, "ip_to_device", {}) or {}
-    transmitted: set = getattr(result, "transmitted_ips", None)
+    transmitted: Optional[set] = getattr(result, "transmitted_ips", None)
 
     def node_of(ip: str) -> str:
         """Collapse an address to its physical-device node id."""
@@ -431,13 +431,13 @@ def _build_graph(result, events) -> dict:
     # arbitrary 60 — potentially the attacker itself.)
     _MAX_NODES = 60
     ranked = [n for n, _ in sorted(counts.items(), key=lambda x: (-x[1], str(x[0])))]
-    top = []
+    ordered: list = []
     for node in sorted(flagged, key=str) + ranked:
-        if node and node not in top:
-            top.append(node)
-        if len(top) >= _MAX_NODES:
+        if node and node not in ordered:
+            ordered.append(node)
+        if len(ordered) >= _MAX_NODES:
             break
-    top = set(top)
+    top = set(ordered)
 
     # "Internal" means "on the network this capture is monitoring". RFC1918 is
     # only a proxy for that and gets it wrong on publicly addressed LANs, so use
@@ -594,7 +594,7 @@ class _LiveSession:
         self.pcap_path = str(UPLOAD_DIR / f"live_{uuid.uuid4().hex[:8]}.pcap")
         self._writer = None
         # rolling buffer of recent per-packet summaries for the live "all packets" view
-        self.pkt_summaries = deque(maxlen=4000)
+        self.pkt_summaries: deque = deque(maxlen=4000)
 
     def _on_alert(self, e):
         self.alerts.append(_ser_event(e))
@@ -1023,7 +1023,7 @@ def _iter_packets(paths: list, max_scan: int = 200_000):
                     idx += 1
                     if idx >= max_scan:
                         return
-        except Exception:  # nosec B112 - skip an unreadable/corrupt capture and continue with the rest
+        except Exception:  # nosec B112 # skip an unreadable/corrupt capture and continue with the rest
             continue
 
 
@@ -1855,9 +1855,11 @@ async def _stream_ai_raw(provider: str, key: str, model: str,
             warnings.simplefilter("ignore")
             from google import genai as _genai
             from google.genai import types as _gtypes
-        client = _genai.Client(api_key=key)
+        # One `client` name is rebound to a different SDK type in each provider
+        # branch below, so it cannot carry a single concrete annotation.
+        client: Any = _genai.Client(api_key=key)
         system_full = system + "\n\n<pcap_analysis>\n" + context + "\n</pcap_analysis>"
-        gemini_msgs = [
+        gemini_msgs: list = [
             _gtypes.Content(
                 role="user" if m["role"] == "user" else "model",
                 parts=[_gtypes.Part(text=m["content"])]

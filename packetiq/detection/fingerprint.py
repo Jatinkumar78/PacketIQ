@@ -27,7 +27,7 @@ _TTL_MAP: list[tuple[int, int, str]] = [
 
 # 0.0.0.0 is the DHCP "unspecified" sentinel a host uses before it has an
 # address — it is not a host and must never be fingerprinted as one.
-_NON_HOSTS = {"0.0.0.0", "::"}  # nosec B104 - sentinel values, not a socket bind
+_NON_HOSTS = {"0.0.0.0", "::"}  # nosec B104 # sentinel values, not a socket bind
 
 
 @dataclass

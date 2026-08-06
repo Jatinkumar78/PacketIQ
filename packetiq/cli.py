@@ -817,6 +817,22 @@ def dashboard(pcap_file: str, port: int, no_browser: bool):
     launch_dashboard(str(pcap_path), port=port, open_browser=not no_browser)
 
 
+def _attribution_line(a) -> str:
+    """Render one TTP-overlap row for the fuse report.
+
+    Kept out of the command body so a test can render a real AttributionMatch:
+    a field removed from the dataclass has silently broken this row before.
+    """
+    filled = int(a.confidence * 20)
+    bar = "█" * filled + "░" * (20 - filled)
+    return (
+        f"  [{a.color}]{a.actor_name:<22}[/{a.color}]  "
+        f"[green]{bar}[/green]  "
+        f"[bold white]{int(a.confidence * 100):3d}%[/bold white] overlap  "
+        f"[dim]{a.origin}[/dim]"
+    )
+
+
 @main.command("fuse")
 @click.argument("pcap_files", nargs=-1, required=True,
                 type=click.Path(exists=True, readable=True))
@@ -912,13 +928,7 @@ def fuse(pcap_files, top: int, full: bool):
     if attrs:
         ui.print_section("THREAT-ACTOR TTP OVERLAP", "behavioural similarity — NOT confirmed attribution")
         for a in attrs[:3]:
-            bar = "█" * int(a.confidence * 20) + "░" * (20 - int(a.confidence * 20))
-            ui.print_raw(
-                f"  {a.icon} [{a.color}]{a.actor_name:<22}[/{a.color}]  "
-                f"[green]{bar}[/green]  "
-                f"[bold white]{int(a.confidence*100):3d}%[/bold white] overlap  "
-                f"[dim]{a.origin}[/dim]"
-            )
+            ui.print_raw(_attribution_line(a))
         ui.print_status(
             "TTP overlap is an investigative lead only — confirm with infrastructure/IOC correlation.",
             status="warn",
@@ -1776,7 +1786,7 @@ def webapp(port: int, host: str, no_browser: bool):
 
     from packetiq.webapp import create_app
 
-    url = f"http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}/"  # nosec B104 - string compare, not a bind
+    url = f"http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}/"  # nosec B104 # string compare, not a bind
     ui.print_status(f"PacketIQ Web App → {url}", status="info")
     ui.print_status("Upload a PCAP file in your browser to begin analysis.", status="info")
     ui.print_status("Press Ctrl+C to stop.", status="info")
@@ -1784,7 +1794,7 @@ def webapp(port: int, host: str, no_browser: bool):
         # Widen the DNS-rebinding/CSRF Host allow-list for the operator's chosen
         # bind address (or disable the Host check for a wildcard 0.0.0.0 bind).
         import os as _os
-        _os.environ["PACKETIQ_ALLOWED_HOSTS"] = "*" if host == "0.0.0.0" else host  # nosec B104 - operator opt-in
+        _os.environ["PACKETIQ_ALLOWED_HOSTS"] = "*" if host == "0.0.0.0" else host  # nosec B104 # operator opt-in
         ui.print_status(
             "SECURITY: the web API has no authentication. Binding to "
             f"'{host}' exposes upload/analysis (and AI usage) to your network. "

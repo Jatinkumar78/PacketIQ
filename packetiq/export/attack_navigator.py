@@ -39,7 +39,8 @@ def _sev_value(ev) -> str:
     if isinstance(ev, dict):
         return str(ev.get("severity", "LOW"))
     s = getattr(ev, "severity", None)
-    return s.value if hasattr(s, "value") else str(s or "LOW")
+    value = getattr(s, "value", None)
+    return str(value) if value is not None else str(s or "LOW")
 
 
 def _techs(ev):

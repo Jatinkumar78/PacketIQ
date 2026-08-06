@@ -401,7 +401,7 @@ def full_kill_chain(events: list[DetectionEvent]) -> list[AttackChain]:
         if len(ordered_phases) < 3:
             continue
 
-        sev_counts = defaultdict(int)
+        sev_counts: defaultdict = defaultdict(int)
         for e in src_events:
             sev_counts[e.severity.value] += 1
 

@@ -12,7 +12,7 @@ Supports:
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, Protocol
 
 from rich import box
 from rich.console import Console
@@ -20,12 +20,24 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
-from packetiq.copilot.client import CopilotClient
 from packetiq.copilot.prompts import HELP_TEXT, SLASH_PROMPTS
 from packetiq.display.terminal import TerminalUI
 
 console = Console(highlight=False)
 ui      = TerminalUI()
+
+
+class CopilotLike(Protocol):
+    """The client surface the REPL needs.
+
+    Both ``CopilotClient`` (Anthropic only) and ``MultiProviderClient`` (every
+    provider, with fallback) satisfy this, and the CLI passes whichever one the
+    user's configuration selects — so the REPL must not name either concretely.
+    """
+
+    def stream_message(self, messages: list, on_chunk: Callable[[str], None]) -> str: ...
+
+    def single_message(self, prompt: str) -> str: ...
 
 # Slash commands that trigger pre-written prompts
 SLASH_COMMANDS = set(SLASH_PROMPTS.keys()) | {"clear", "help", "exit", "quit", "q"}
@@ -39,7 +51,7 @@ class InteractiveChat:
 
     def __init__(
         self,
-        client:     CopilotClient,
+        client:     CopilotLike,
         pcap_name:  str = "capture.pcap",
         report_dir: Optional[str] = None,
     ):

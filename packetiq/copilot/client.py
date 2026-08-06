@@ -9,7 +9,7 @@ Features:
 """
 
 import os
-from typing import Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 import anthropic
 
@@ -36,7 +36,8 @@ class CopilotClient:
             )
         self._client = anthropic.Anthropic(api_key=key)
         self._pcap_context: Optional[str] = None
-        self._system: Optional[list[dict]] = None
+        # Anthropic system blocks: plain dicts at runtime, TypedDicts to the SDK.
+        self._system: Optional[list[Any]] = None
 
     def load_context(self, pcap_context: str):
         """
@@ -86,7 +87,7 @@ class CopilotClient:
             max_tokens  = MAX_TOKENS,
             temperature = TEMPERATURE,
             system      = self._system,
-            messages    = messages,
+            messages    = cast(Any, messages),
         ) as stream:
             for chunk in stream.text_stream:
                 on_chunk(chunk)
@@ -109,7 +110,10 @@ class CopilotClient:
             system      = self._system,
             messages    = [{"role": "user", "content": prompt}],
         )
-        return response.content[0].text
+        # Our prompts always lead with a text block, but the content union also
+        # covers thinking/tool-use blocks — don't assume, and don't index empty.
+        block = response.content[0] if response.content else None
+        return str(getattr(block, "text", "") or "")
 
 
 def load_api_key() -> Optional[str]:
