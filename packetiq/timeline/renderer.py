@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from packetiq.timeline.models import CATEGORY_EMOJI, PHASE_BADGE, Category, Timeline, TimelineEvent
+from packetiq.timeline.models import CATEGORY_MARK, PHASE_BADGE, Category, Timeline, TimelineEvent
 from packetiq.utils.helpers import format_duration, ts_to_str
 
 console = Console(highlight=False)
@@ -190,7 +190,7 @@ class TimelineRenderer:
             color = PHASE_COLOR.get(ev.phase, "white")
             console.print(
                 f"\n  [dim green]{ts_str}[/dim green]  "
-                f"[bold {color}]🔀 {ev.description}[/bold {color}]"
+                f"[bold {color}]>> {ev.description}[/bold {color}]"
             )
             return
 
@@ -210,7 +210,7 @@ class TimelineRenderer:
                     dst += f":{ev.dst_port}"
                 src_dst += f"[dim] → [/dim][dim cyan]{dst}[/dim cyan]"
 
-        emoji = CATEGORY_EMOJI.get(ev.category, "•")
+        mark = CATEGORY_MARK.get(ev.category, "•")
 
         # MITRE badge
         mitre_tag = f" [dim magenta][{ev.mitre_id}][/dim magenta]" if ev.mitre_id else ""
@@ -219,7 +219,7 @@ class TimelineRenderer:
         chain_tag = ""
         if ev.chain_name:
             short = ev.chain_name[:30] + ("…" if len(ev.chain_name) > 30 else "")
-            chain_tag = f" [dim yellow](⛓ {short})[/dim yellow]"
+            chain_tag = f" [dim yellow](chain: {short})[/dim yellow]"
 
         # Truncate description
         desc = ev.description
@@ -228,7 +228,7 @@ class TimelineRenderer:
 
         console.print(
             f"  [dim green]{ts_str}[/dim green]  "
-            f"{emoji} {sev_tag}[white]{desc}[/white]{mitre_tag}"
+            f"{mark} {sev_tag}[white]{desc}[/white]{mitre_tag}"
         )
         if src_dst:
             console.print(f"  {'':>13}  [dim]└── {src_dst}[/dim]{chain_tag}")
@@ -251,5 +251,5 @@ class TimelineRenderer:
             color  = PHASE_COLOR.get(pv.phase, "white")
             console.print(
                 f"  [dim green]{ts_str}[/dim green]  "
-                f"[bold {color}]🔀  {pv.description}[/bold {color}]"
+                f"[bold {color}]>>  {pv.description}[/bold {color}]"
             )

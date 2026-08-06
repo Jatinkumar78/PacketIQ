@@ -29,7 +29,6 @@ THREAT_ACTORS: list[dict] = [
             EventType.SUSPICIOUS_FLAGS:    0.5,
         },
         "phases": {"Reconnaissance", "Exploitation", "Command & Control"},
-        "icon": "🐻",
         "color": "#cc2200",
     },
     {
@@ -51,7 +50,6 @@ THREAT_ACTORS: list[dict] = [
             EventType.CREDENTIAL_EXPOSURE: 0.5,
         },
         "phases": {"Command & Control", "Actions on Objectives"},
-        "icon": "🐻‍❄️",
         "color": "#0055cc",
     },
     {
@@ -74,7 +72,6 @@ THREAT_ACTORS: list[dict] = [
             EventType.JA3_ANOMALY:         0.6,
         },
         "phases": {"Reconnaissance", "Exploitation", "Delivery"},
-        "icon": "🚀",
         "color": "#cc4400",
     },
     {
@@ -97,7 +94,6 @@ THREAT_ACTORS: list[dict] = [
             EventType.C2_BEACON:           0.65,
         },
         "phases": {"Reconnaissance", "Exploitation", "Installation"},
-        "icon": "🐉",
         "color": "#aa0000",
     },
     {
@@ -119,7 +115,6 @@ THREAT_ACTORS: list[dict] = [
             EventType.C2_BEACON:           0.6,
         },
         "phases": {"Delivery", "Exploitation", "Actions on Objectives"},
-        "icon": "🐛",
         "color": "#884400",
     },
     {
@@ -141,7 +136,6 @@ THREAT_ACTORS: list[dict] = [
             EventType.DNS_ANOMALY:         0.5,
         },
         "phases": {"Exploitation", "Command & Control", "Actions on Objectives"},
-        "icon": "💰",
         "color": "#006600",
     },
     {
@@ -163,7 +157,6 @@ THREAT_ACTORS: list[dict] = [
             EventType.C2_BEACON:           0.7,
         },
         "phases": {"Reconnaissance", "Exploitation"},
-        "icon": "🐼",
         "color": "#cc6600",
     },
     {
@@ -185,7 +178,6 @@ THREAT_ACTORS: list[dict] = [
             EventType.DNS_ANOMALY:         0.55,
         },
         "phases": {"Exploitation", "Command & Control"},
-        "icon": "🕷️",
         "color": "#440088",
     },
 ]

@@ -14,7 +14,13 @@ from datetime import datetime
 from packetiq.correlation.models import AttackChain
 from packetiq.detection.models import DetectionEvent
 from packetiq.extractor.data_extractor import ExtractionResult
-from packetiq.utils.helpers import format_bytes, format_duration, is_private_ip, ts_to_str
+from packetiq.utils.helpers import (
+    format_bytes,
+    format_duration,
+    is_private_ip,
+    monitored_network,
+    ts_to_str,
+)
 
 # An evidence-rich capture can touch thousands of external IPs. Enumerating all of
 # them buries the actual findings (detections, attack chains, MITRE) and overflows
@@ -94,17 +100,24 @@ def _protocol_distribution(result: ExtractionResult) -> str:
 
 def _network_topology(result: ExtractionResult) -> str:
     total = max(result.total_packets, 1)
+    # Label hosts by the capture's own evidence of where the network boundary
+    # is, not by RFC1918 — otherwise a publicly addressed LAN is handed to the
+    # model as a page of "EXTERNAL" hosts and it reasons from a false premise.
+    local = monitored_network(result)
+
+    def _scope(ip: str) -> str:
+        inside = ip in local if local else is_private_ip(ip)
+        return "INTERNAL" if inside else "EXTERNAL"
+
     lines = ["=== TOP SOURCE IPs (by packet count) ==="]
     top_src = sorted(result.ip_src_counts.items(), key=lambda x: x[1], reverse=True)[:15]
     for ip, cnt in top_src:
-        scope = "INTERNAL" if is_private_ip(ip) else "EXTERNAL"
-        lines.append(f"  {ip:<20} {cnt:>7,} pkts  [{scope}]")
+        lines.append(f"  {ip:<20} {cnt:>7,} pkts  [{_scope(ip)}]")
 
     lines.append("\n=== TOP DESTINATION IPs (by packet count) ===")
     top_dst = sorted(result.ip_dst_counts.items(), key=lambda x: x[1], reverse=True)[:15]
     for ip, cnt in top_dst:
-        scope = "INTERNAL" if is_private_ip(ip) else "EXTERNAL"
-        lines.append(f"  {ip:<20} {cnt:>7,} pkts  [{scope}]")
+        lines.append(f"  {ip:<20} {cnt:>7,} pkts  [{_scope(ip)}]")
 
     ext = result.external_ips
     if ext:

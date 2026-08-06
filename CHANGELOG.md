@@ -5,6 +5,71 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Evidence-proven threat forecast and a real network boundary
+
+**Fixed**
+- **The threat forecast no longer invents attacks on a benign capture.** It
+  listed the same generic set every run, and predicted attacks against ports the
+  packets *prove* are shut. Two rules now govern it:
+  - **Proven-open only.** The extractor resolves every `host:port` to `open`
+    (a SYN-ACK came from it, or a UDP service answered), `closed` (it refused a
+    SYN with RST) or `filtered` (probed, never answered) — new
+    `ExtractionResult.service_exposure`. Only `open` is attack surface. Previously
+    a host answering `RST` on 1433/21/22 still produced "Database compromise",
+    "FTP brute force" and "SSH brute force" forecasts.
+  - **Your network only.** An internal client browsing an external web server no
+    longer makes that server your exposed HTTP surface — the *serving* host must
+    be inside the monitored network.
+
+  Measured on the real corpus: the benign `normal-dns-2013` / `normal-dns-2015`
+  captures now yield **0 predictions** (previously non-empty), and
+  `normal-20110817` drops from **9 to 3** — the three that remain are genuine
+  (RDP open and reached from off-net, two real inbound scans, NetBIOS-SSN open to
+  10 clients). Each prediction now quotes the concrete evidence from *that*
+  capture, so the panel is different for every file.
+- **"Internal vs external" is now derived from the packets, not from RFC1918.**
+  New `helpers.monitored_network()` finds the monitored segment from link-layer
+  evidence: hosts on the segment send frames from their own NIC, while everything
+  behind a router shares the router's MAC. RFC1918 is only a proxy and broke both
+  ways — a publicly addressed LAN (e.g. CTU's `147.32.0.0/16`) read as internet
+  peers, and a browsed web server read as ours. Used by the forecast, the beacon
+  detector, the connection graph, the HTML report and the copilot's evidence.
+- **A phantom "C2 beacon" on inbound RDP.** External hosts repeatedly connecting
+  to a local host's open 3389 were reported as C2 beacons, because the
+  "destination is internal" guard used RFC1918 and the LAN was publicly
+  addressed. Beacons toward a host on the monitored network are now correctly
+  suppressed — that is an inbound session, not an implant phoning out. This
+  removed 3 mislabelled events across the corpus and dropped the benign
+  capture's risk score from 17 to 4. Binary precision is unchanged at **90.0%**
+  with **100% recall**; per-detector `C2_BEACON` recall is honestly restated
+  **6/8 → 5/8**, because two of the old "hits" were these inbound RDP sessions
+  rather than real C2 (rbot-44's actual IRC C2 was never caught — it is still
+  flagged malicious by other detectors).
+- **The connection graph could silently drop the attacker.** The 60-node budget
+  truncated an unordered set, so which hosts survived was arbitrary; nodes are
+  now filled by priority (flagged hosts first, then by volume). An IPv6-only host
+  was also mis-drawn as an address-less NIC — the device's own address list is
+  now used instead of guessing from the id's punctuation. Same fix in the report's
+  SVG graph.
+- `0.0.0.0` (the DHCP "unspecified" sentinel a host sends from before it has an
+  address) is no longer listed as a top talker or given an OS fingerprint.
+- Four pre-existing type errors in `helpers.format_bytes` and the HTML report
+  (mypy clean on all touched modules now).
+
+**Changed**
+- **All remaining decorative emoji removed from product output** — Telegram
+  alerts, the CLI (OS fingerprints, exploit notices, interface list), the
+  timeline renderer, threat-actor profiles, the legacy `packetiq dashboard`, and
+  the web app. Severity now reads as a text tag (`[HIGH]`). The `os_icon` and
+  actor `icon` fields, which existed only to carry an emoji, were removed.
+- The Possible Attacks card no longer prints the same evidence twice; it
+  separates "Evidence in this capture" from "Why this leads to the attack above".
+
+**Verification** — 352 tests pass (13 new: threat-forecast exposure rules and the
+network-boundary logic, all built from real packets via scapy rather than hand-made
+fixtures), ruff clean, mypy clean on every touched module, bandit 0 issues, and
+throughput unchanged (4,301 vs 4,314 pkts/s on `neris-43.pcap`).
+
 ### Local copilot accuracy, same-chassis inference, and a professional UI
 
 **Fixed**

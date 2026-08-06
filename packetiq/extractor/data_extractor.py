@@ -17,7 +17,18 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from packetiq.parser.pcap_parser import RawPacketRecord
-from packetiq.utils.helpers import format_bytes, format_duration, is_private_ip, ts_to_str
+from packetiq.utils.helpers import (
+    format_bytes,
+    format_duration,
+    get_service_name,
+    is_private_ip,
+    ts_to_str,
+)
+
+# Addresses that are protocol sentinels rather than hosts: a booting client
+# sends DHCP from 0.0.0.0 before it owns an address. Treating these as hosts
+# invents devices that never existed.
+_NON_HOST_IPS = {"0.0.0.0", "::"}  # nosec B104 - sentinel values, not a socket bind
 
 
 @dataclass
@@ -100,6 +111,17 @@ class ExtractionResult:
     open_connections: int = 0
     completed_connections: int = 0
 
+    # ── Proven service exposure ──────────────────────────────────────
+    # (ip, port, proto) → {"state": "open"|"closed"|"filtered", "service": str,
+    #                      "sent": int, "recv": int, "clients": {ip, ...}}
+    # A service is only "open" when the packets *prove* it answered: a SYN-ACK
+    # sourced from that ip:port (TCP), or a reply sourced from it after traffic
+    # was sent to it (UDP). "closed" means it answered a SYN with RST — positive
+    # proof there is nothing listening. "filtered" means it was probed and never
+    # answered at all. Consumers (threat forecast, reports) must never treat
+    # "closed"/"filtered" as attack surface.
+    service_exposure: dict = field(default_factory=dict)
+
     # ── ARP / layer-2 tracking (host discovery & cache poisoning) ─
     # sender IP → set of distinct target IPs it sent ARP requests for
     arp_request_targets: dict = field(default_factory=dict)
@@ -163,6 +185,15 @@ class DataExtractor:
         self._syn_map:  dict = defaultdict(list)
         self._synack_map: set = set()
         self._fin_map:  set = set()
+
+        # Proven service state: (ip, port, proto) → counters. See
+        # ExtractionResult.service_exposure for the semantics.
+        self._svc: dict = defaultdict(lambda: {
+            "syn_in": 0, "synack": 0, "rst": 0, "sent": 0, "recv": 0,
+            "clients": set(),
+        })
+        # Endpoints that were the destination of a flow's first packet.
+        self._svc_server: set = set()
 
         self._first_ts: Optional[float] = None
         self._last_ts:  Optional[float] = None
@@ -258,6 +289,12 @@ class DataExtractor:
             ).canonical()
 
             if fk not in self._flows:
+                # The destination of a flow's *first* packet is the side that was
+                # contacted — the only endpoint that can be a listening service.
+                # (TCP is confirmed independently by SYN-ACK; this is what makes
+                # UDP service detection possible without guessing by port range.)
+                if record.dst_port is not None:
+                    self._svc_server.add((record.dst_ip, record.dst_port, proto))
                 self._flows[fk] = FlowStats(
                     src_ip=record.src_ip,
                     dst_ip=record.dst_ip,
@@ -274,6 +311,31 @@ class DataExtractor:
             fs.last_seen = max(fs.last_seen, ts)
             if record.tcp_flags:
                 fs.tcp_flags_seen.add(record.tcp_flags)
+
+        # ── Proven service exposure ───────────────────────────
+        # Track each endpoint separately so we can tell a listening service
+        # apart from an ephemeral client port, and prove open vs closed.
+        if proto in ("TCP", "UDP") and record.src_ip and record.dst_ip:
+            flags = record.tcp_flags or ""
+            if record.dst_port is not None:
+                d = self._svc[(record.dst_ip, record.dst_port, proto)]
+                d["recv"] += 1
+                # Bounded: we only ever report a client count and a few examples,
+                # so a scan against one port cannot grow this without limit.
+                if len(d["clients"]) < self._MAX_SVC_CLIENTS:
+                    d["clients"].add(record.src_ip)
+                if proto == "TCP" and "SYN" in flags and "ACK" not in flags:
+                    d["syn_in"] += 1
+            if record.src_port is not None:
+                s = self._svc[(record.src_ip, record.src_port, proto)]
+                s["sent"] += 1
+                if proto == "TCP":
+                    # A SYN-ACK can only come from something actually listening.
+                    if "SYN" in flags and "ACK" in flags:
+                        s["synack"] += 1
+                    # A RST *from* the port is how a closed port refuses a SYN.
+                    elif "RST" in flags:
+                        s["rst"] += 1
 
         # ── TCP connection state ──────────────────────────────
         if proto == "TCP" and record.tcp_flags and record.src_ip:
@@ -359,6 +421,8 @@ class DataExtractor:
     # A single MAC fronting more than this many distinct IPs is a router/gateway
     # (or NAT), not one host — so its IPs must NOT be collapsed into one device.
     _GATEWAY_IP_FANOUT = 4
+    # Cap on distinct client IPs remembered per exposed service (memory bound).
+    _MAX_SVC_CLIENTS = 64
 
     @staticmethod
     def _canonical_ip(ips: set, ip_mac_counts: dict, mac: str) -> Optional[str]:
@@ -458,6 +522,40 @@ class DataExtractor:
                 groups.append({"oui": oui, "macs": sorted(m["mac"] for m in members)})
         return groups
 
+    def _resolve_service_exposure(self, r: ExtractionResult) -> None:
+        """Decide, per host:port, whether the packets prove a service is there.
+
+        Nothing here is inferred from the port number alone. A port is only
+        "open" when it demonstrably answered; "closed" when it demonstrably
+        refused; "filtered" when it was asked and stayed silent. Endpoints that
+        are merely a client's ephemeral port resolve to no state and are dropped.
+        """
+        exposure: dict = {}
+        for (ip, port, proto), c in self._svc.items():
+            state = None
+            if proto == "TCP":
+                if c["synack"]:
+                    state = "open"          # it completed a handshake: proven listening
+                elif c["syn_in"] and c["rst"]:
+                    state = "closed"        # it answered a SYN with RST: proven not listening
+                elif c["syn_in"]:
+                    state = "filtered"      # asked, never answered
+            elif proto == "UDP" and (ip, port, proto) in self._svc_server:
+                if c["recv"] and c["sent"]:
+                    state = "open"          # it replied to traffic sent to it
+                elif c["recv"]:
+                    state = "filtered"      # sent to, never replied (or one-way by design)
+            if state is None:
+                continue
+            exposure[(ip, port, proto)] = {
+                "state":   state,
+                "service": get_service_name(port),
+                "sent":    c["sent"],
+                "recv":    c["recv"],
+                "clients": set(c["clients"]),
+            }
+        r.service_exposure = exposure
+
     def finalize(self) -> ExtractionResult:
         """Commit aggregated data into ExtractionResult and return it."""
         r = self._r
@@ -493,6 +591,7 @@ class DataExtractor:
 
         # Device inventory — the true set of hosts that actually exist
         self._build_device_inventory(r)
+        self._resolve_service_exposure(r)
 
         # Sort DNS / HTTP chronologically
         r.dns_queries    = sorted(r.dns_queries,    key=lambda x: x["ts"])
@@ -514,9 +613,15 @@ class DataExtractor:
 
     @staticmethod
     def top_talkers(result: ExtractionResult, n: int = 10) -> list[dict]:
-        """Return top N source IPs by packet count."""
+        """Return top N source IPs by packet count.
+
+        Excludes the DHCP "unspecified" sentinel: a host booting without an
+        address sends from 0.0.0.0, which is not a talker and listing it as one
+        (with a scope and an OS guess) invents a host that does not exist.
+        """
         sorted_ips = sorted(result.ip_src_counts.items(), key=lambda x: x[1], reverse=True)
-        return [{"ip": ip, "packets": cnt} for ip, cnt in sorted_ips[:n]]
+        return [{"ip": ip, "packets": cnt} for ip, cnt in sorted_ips
+                if ip not in _NON_HOST_IPS][:n]
 
     @staticmethod
     def top_destinations(result: ExtractionResult, n: int = 10) -> list[dict]:

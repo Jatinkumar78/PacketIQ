@@ -239,7 +239,6 @@ def _ser_fp(f) -> dict:
     return {
         "src_ip":       f.src_ip,
         "os_guess":     f.os_guess,
-        "os_icon":      f.os_icon,
         "observed_ttl": f.observed_ttl,
         "initial_ttl":  f.initial_ttl,
         "hops":         f.hops,
@@ -311,7 +310,6 @@ def _ser_attr(a) -> dict:
         "confidence":     round(a.confidence * 100),   # TTP-overlap score, not attribution confidence
         "matched_ttps":   a.matched_ttps,
         "description":    a.description,
-        "icon":           a.icon,
         "color":          a.color,
         "mitre_group":    a.mitre_group,
         "target_sectors": a.target_sectors,
@@ -355,7 +353,7 @@ def _build_graph(result, events) -> dict:
     IPv4 + IPv6 addresses collapse to a single node via the MAC-based device map,
     so one machine is one dot. A scanner's fan-out is shown as a count on the
     attacker node, not as dozens of invented target dots."""
-    from packetiq.utils.helpers import get_service_name, is_private_ip
+    from packetiq.utils.helpers import get_service_name, is_private_ip, monitored_network
 
     ip_to_device: dict = getattr(result, "ip_to_device", {}) or {}
     transmitted: set = getattr(result, "transmitted_ips", None)
@@ -428,16 +426,33 @@ def _build_graph(result, events) -> dict:
                     st["alive"].add(node_of(t))
     flagged = attackers | targets
 
-    top = {n for n, _ in sorted(counts.items(), key=lambda x: -x[1])[:40]}
-    top |= {n for n in flagged if n}          # always include hosts in the story
-    top = set(list(top)[:60])
+    # Node budget, filled by priority so the cap can never silently drop a host
+    # that is part of the story. (Truncating a set instead would drop an
+    # arbitrary 60 — potentially the attacker itself.)
+    _MAX_NODES = 60
+    ranked = [n for n, _ in sorted(counts.items(), key=lambda x: (-x[1], str(x[0])))]
+    top = []
+    for node in sorted(flagged, key=str) + ranked:
+        if node and node not in top:
+            top.append(node)
+        if len(top) >= _MAX_NODES:
+            break
+    top = set(top)
+
+    # "Internal" means "on the network this capture is monitoring". RFC1918 is
+    # only a proxy for that and gets it wrong on publicly addressed LANs, so use
+    # the same packet-derived boundary the detectors and forecast use.
+    local_scope = monitored_network(result)
+
+    def _is_local(node: str) -> bool:
+        return node in local_scope if local_scope else is_private_ip(node)
 
     def _role(node: str) -> str:
         if node in attackers:
             return "attacker"
         if node in targets:
             return "target"
-        return "internal" if is_private_ip(node) else "external"
+        return "internal" if _is_local(node) else "external"
 
     from packetiq.utils.helpers import oui_vendor
     dev_by_id: dict = {d["id"]: d for d in getattr(result, "devices", []) or []}
@@ -461,7 +476,7 @@ def _build_graph(result, events) -> dict:
             "id": node,
             "label": node,
             "packets": counts.get(node, 0),
-            "internal": is_private_ip(node),
+            "internal": _is_local(node),
             "flagged": node in flagged,
             "role": _role(node),
             "kind": dev.get("kind", "endpoint"),
@@ -477,8 +492,11 @@ def _build_graph(result, events) -> dict:
     # topology is incomplete without them — draw them as distinct infra nodes.
     infra_ids: list = []
     for dev in getattr(result, "devices", []) or []:
-        if dev["id"] in top or ":" not in str(dev["id"]) or "." in str(dev["id"]):
-            continue  # already drawn as an IP node, or not a MAC-only device
+        # A device with any IP is already drawn as an IP node; only NICs that
+        # never carried an address need a MAC node. (Testing the id's shape
+        # instead would misread an IPv6-only host as a MAC.)
+        if dev["id"] in top or dev.get("ips"):
+            continue
         infra_ids.append(dev["id"])
         nodes.append({
             "id": dev["id"],
@@ -521,7 +539,7 @@ def _build_graph(result, events) -> dict:
             if k in seen:
                 continue
             seen.add(k)
-            label = fl.service or get_service_name(fl.dst_port) if fl.dst_port else (fl.protocol or "")
+            label = (fl.service or get_service_name(fl.dst_port)) if fl.dst_port else (fl.protocol or "")
             edges.append({"source": s, "target": d,
                           "bytes": fl.bytes_total, "kind": "flow", "label": str(label)})
             if len(edges) >= 90:
@@ -2709,7 +2727,7 @@ def create_app() -> FastAPI:
             results[chan] = bool(ok)
         tok, cid = load_credentials()
         if tok and cid:
-            ok, _ = TelegramSender(tok, cid).send(f"🔔 <b>{subject}</b>\n\n{text}")
+            ok, _ = TelegramSender(tok, cid).send(f"<b>{subject}</b>\n\n{text}")
             results["telegram"] = bool(ok)
         return results
 
@@ -2749,7 +2767,7 @@ def create_app() -> FastAPI:
                 pdf_path = os.path.join(tmpdir, f"PacketIQ_Report_{safe}.pdf")
                 if build_pdf(pdf_path, res):
                     risk = res.get("risk", {}) or {}
-                    caption = (f"📄 <b>PacketIQ SOC Report</b> — {esc(fname)}\n"
+                    caption = (f"<b>PacketIQ SOC Report</b> — {esc(fname)}\n"
                                f"Risk {esc(risk.get('score', 0))}/100 "
                                f"[{esc(risk.get('tier', ''))}] · "
                                f"{len(res.get('events', []))} findings")

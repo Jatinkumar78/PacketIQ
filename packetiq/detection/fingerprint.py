@@ -14,16 +14,20 @@ Returns a list of Fingerprint objects (informational, not DetectionEvents).
 from dataclasses import dataclass
 
 from packetiq.extractor.data_extractor import ExtractionResult
-from packetiq.utils.helpers import is_private_ip
+from packetiq.utils.helpers import is_private_ip, monitored_network
 
-# TTL milestone → (initial_ttl, os_label, icon)
-_TTL_MAP: list[tuple[int, int, str, str]] = [
-    # (max_observed, initial_ttl, os_label, icon)
-    (64,  64,  "Linux / Android / macOS",    "🐧"),
-    (128, 128, "Windows",                    "🪟"),
-    (200, 255, "BSD / Solaris",              "🔱"),
-    (255, 255, "Network Device (Cisco/HP)",  "📡"),
+# TTL milestone → (initial_ttl, os_label)
+_TTL_MAP: list[tuple[int, int, str]] = [
+    # (max_observed, initial_ttl, os_label)
+    (64,  64,  "Linux / Android / macOS"),
+    (128, 128, "Windows"),
+    (200, 255, "BSD / Solaris"),
+    (255, 255, "Network Device (Cisco/HP)"),
 ]
+
+# 0.0.0.0 is the DHCP "unspecified" sentinel a host uses before it has an
+# address — it is not a host and must never be fingerprinted as one.
+_NON_HOSTS = {"0.0.0.0", "::"}  # nosec B104 - sentinel values, not a socket bind
 
 
 @dataclass
@@ -32,7 +36,6 @@ class Fingerprint:
     observed_ttl: int
     initial_ttl:  int
     os_guess:     str
-    os_icon:      str
     hops:         int
     is_external:  bool
 
@@ -40,24 +43,26 @@ class Fingerprint:
 def detect(result: ExtractionResult) -> list[Fingerprint]:
     """Return a passive OS fingerprint for every observed source IP."""
     prints: list[Fingerprint] = []
+    local = monitored_network(result)
 
     for src_ip, ttl in result.src_ip_ttl.items():
-        initial, label, icon = _infer(ttl)
+        if not src_ip or src_ip in _NON_HOSTS:
+            continue
+        initial, label = _infer(ttl)
         prints.append(Fingerprint(
             src_ip       = src_ip,
             observed_ttl = ttl,
             initial_ttl  = initial,
             os_guess     = label,
-            os_icon      = icon,
             hops         = max(0, initial - ttl),
-            is_external  = not is_private_ip(src_ip),
+            is_external  = src_ip not in local if local else not is_private_ip(src_ip),
         ))
 
     return sorted(prints, key=lambda f: f.src_ip)
 
 
-def _infer(ttl: int) -> tuple[int, str, str]:
-    for max_obs, initial, label, icon in _TTL_MAP:
+def _infer(ttl: int) -> tuple[int, str]:
+    for max_obs, initial, label in _TTL_MAP:
         if ttl <= max_obs:
-            return initial, label, icon
-    return 255, "Network Device (Cisco/HP)", "📡"
+            return initial, label
+    return 255, "Network Device (Cisco/HP)"

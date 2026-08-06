@@ -97,10 +97,10 @@ class TelegramSender:
 
         # 2. Send a test message
         test_msg = (
-            "🟢 <b>PacketIQ — Connection Test</b>\n\n"
-            "✅ Telegram alerting is configured correctly.\n"
-            f"🤖 Bot: @{bot_name}\n"
-            "📡 Alerts will be sent here for HIGH and CRITICAL findings."
+            "<b>PacketIQ — Connection Test</b>\n\n"
+            "Telegram alerting is configured correctly.\n"
+            f"Bot: @{bot_name}\n"
+            "Alerts will be sent here for HIGH and CRITICAL findings."
         )
         ok, err = self.send(test_msg)
         if not ok:

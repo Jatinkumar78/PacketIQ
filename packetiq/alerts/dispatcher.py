@@ -134,8 +134,8 @@ class AlertDispatcher:
         # ── 4. Optional: attach report file ──────────────────────────
         if report_path:
             caption = (
-                f"📋 PacketIQ SOC Report\n"
-                f"📁 {file_name} | 🎯 Risk: {risk.score}/100 [{risk.tier}]"
+                f"PacketIQ SOC Report\n"
+                f"{file_name} | Risk: {risk.score}/100 [{risk.tier}]"
             )
             ok, err = self.sender.send_document(report_path, caption)
             if ok:

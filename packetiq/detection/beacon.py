@@ -19,7 +19,7 @@ from typing import Optional
 
 from packetiq.detection.models import DetectionEvent, EventType, Severity
 from packetiq.extractor.data_extractor import ExtractionResult
-from packetiq.utils.helpers import is_private_ip, same_org_network
+from packetiq.utils.helpers import is_private_ip, monitored_network, same_org_network
 
 MIN_CONNECTIONS    = 12      # need 12+ hits to distinguish beacon from coincidence
 MIN_INTERVAL       = 5.0     # seconds — ignore retransmit bursts and TLS keep-alives
@@ -33,10 +33,11 @@ class BeaconDetector:
 
     def detect(self, result: ExtractionResult) -> list[DetectionEvent]:
         events: list[DetectionEvent] = []
+        local = monitored_network(result)
 
         # ── TCP SYN-based beacons ─────────────────────────────────────────
         for (src, dst, dport), ts_list in result.tcp_syn_pairs.items():
-            ev = self._analyse(src, dst, dport, ts_list, "TCP")
+            ev = self._analyse(src, dst, dport, ts_list, "TCP", local)
             if ev:
                 events.append(ev)
 
@@ -50,7 +51,7 @@ class BeaconDetector:
                 http_groups[(src, host, 80)].append(ts)
 
         for (src, host, port), ts_list in http_groups.items():
-            ev = self._analyse(src, host, port, ts_list, "HTTP")
+            ev = self._analyse(src, host, port, ts_list, "HTTP", local)
             if ev:
                 events.append(ev)
 
@@ -65,10 +66,15 @@ class BeaconDetector:
         dport: int,
         timestamps: list[float],
         proto: str,
+        local: Optional[set] = None,
     ) -> Optional[DetectionEvent]:
-        # C2 beacons phone home to external IPs — internal regular connections
-        # are monitoring agents, health checks, sync clients, etc.
-        if is_private_ip(dst):
+        # C2 beacons phone home *out* to an external server. Regular connections
+        # arriving at one of our own hosts are the opposite direction: an inbound
+        # client session against a service we run (RDP/SSH keep-alives, agents,
+        # health checks). RFC1918 is only a proxy for "ours" — it misses publicly
+        # addressed LANs — so prefer the capture's proven device inventory and
+        # fall back to RFC1918 when there is no link-layer evidence.
+        if dst in (local or set()) or is_private_ip(dst):
             return None
         # Same-organisation traffic (both endpoints on one LAN, including a
         # public-IP campus /16) is intra-LAN periodicity — idle-RDP keepalives,

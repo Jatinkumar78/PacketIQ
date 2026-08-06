@@ -531,7 +531,7 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
     if fingerprints:
         ui.print_section("PASSIVE OS FINGERPRINTS", f"{len(fingerprints)} host(s) identified")
         fp_rows = [
-            [f.src_ip, f"{f.os_icon} {f.os_guess}", str(f.observed_ttl),
+            [f.src_ip, f.os_guess, str(f.observed_ttl),
              str(f.initial_ttl), str(f.hops), "EXTERNAL" if f.is_external else "internal"]
             for f in fingerprints[:top]
         ]
@@ -1153,11 +1153,11 @@ def vulns_cmd(pcap_file: str, as_json: bool):
             continue
         for c in p["cves"]:
             tag = " ⚠KEV" if c["kev"] else ""
-            tag += " ☣RANSOMWARE" if c.get("ransomware") else ""
+            tag += " RANSOMWARE" if c.get("ransomware") else ""
             ui.print_status(f"{c['id']}  [CVSS {c['cvss']} {c['severity']}]{tag}", status="error" if c["kev"] else "warn")
             ui.print_key_value("link", c["url"])
     for cor in data["correlations"]:
-        ui.print_status(f"⚡ Exploit attempt for {cor['name']} ({', '.join(cor['cves'])}) → {cor['target']}"
+        ui.print_status(f"Exploit attempt for {cor['name']} ({', '.join(cor['cves'])}) → {cor['target']}"
                         + (f"  [target runs {', '.join(cor['target_software'])}]" if cor["target_software"] else ""),
                         status="error")
     ui.print_status(f"{data['totals']['cves']} CVE(s), {data['totals']['kev']} actively exploited "
@@ -1676,7 +1676,7 @@ def alert_test(message: str):
         sys.exit(1)
 
     sender = TelegramSender(token, chat_id)
-    ok, err = sender.send(f"🔔 <b>PacketIQ Test Alert</b>\n\n{message}")
+    ok, err = sender.send(f"<b>PacketIQ Test Alert</b>\n\n{message}")
     if ok:
         ui.print_status("Test message sent successfully.", status="ok")
     else:

@@ -1910,23 +1910,21 @@ function updateHeader(d){
 const likColor = l => l==='High'?'var(--critical)':(l==='Medium'?'var(--high)':'var(--text-sub)');
 
 function predictionCard(p){
-  const ev = (p.evidence||[]).map(e=>`<li>${esc(e)}</li>`).join('');
+  const ev = (p.evidence||[]).map(e=>`<li style="margin-bottom:3px">${esc(e)}</li>`).join('');
   const mitre = (p.mitre||[]).map(m=>`<span class="badge badge-INFO" style="margin:2px 4px 0 0">${esc(m)}</span>`).join('');
-  // Explicit "why we predict this" — ties the observed evidence to the forecast.
-  const why = (p.evidence && p.evidence.length)
-    ? 'We predict this because ' + p.evidence.join('; ') + '.'
-    : p.rationale;
+  // Two distinct things, never the same text twice: what this capture actually
+  // showed (evidence), and why that pattern leads to this attack (rationale).
   return `<div style="border:1px solid var(--border);border-left:4px solid ${likColor(p.likelihood)};border-radius:8px;padding:14px 16px;margin-bottom:12px;background:var(--surface)">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span class="badge badge-${esc(p.severity)}">${esc(p.severity)} impact</span>
         <strong style="font-size:14px">${esc(p.attack)}</strong>
         <span style="font-size:11.5px;color:${likColor(p.likelihood)};font-weight:600;margin-left:auto">${esc(p.likelihood)} likelihood · ${esc(p.category)}</span>
       </div>
-      <div style="font-size:12.5px;color:var(--accent2);margin-top:8px;font-weight:600">Why we predict this</div>
-      <div style="font-size:12.5px;color:var(--text-sub);margin-top:2px">${esc(why)}</div>
-      <ul style="font-size:11.5px;color:var(--text-dim);margin:8px 0 0 16px;padding:0">${ev}</ul>
-      <div style="font-size:12.5px;color:var(--text-sub);margin-top:8px">${esc(p.rationale)}</div>
-      <div style="font-size:12px;margin-top:8px"><span style="color:var(--text-sub)">▸ Recommended:</span> ${esc(p.recommendation)}</div>
+      ${ev ? `<div style="font-size:12.5px;color:var(--accent2);margin-top:10px;font-weight:600">Evidence in this capture</div>
+      <ul style="font-size:11.5px;color:var(--text-dim);margin:4px 0 0 16px;padding:0">${ev}</ul>` : ''}
+      <div style="font-size:12.5px;color:var(--accent2);margin-top:10px;font-weight:600">Why this leads to the attack above</div>
+      <div style="font-size:12.5px;color:var(--text-sub);margin-top:2px">${esc(p.rationale)}</div>
+      <div style="font-size:12px;margin-top:10px"><span style="color:var(--text-sub)">Recommended:</span> ${esc(p.recommendation)}</div>
       <div style="margin-top:8px">${mitre}</div>
     </div>`;
 }
@@ -3079,7 +3077,7 @@ async function refreshFeeds(statusOnly){
   renderIntelMatches();
   try{
     if(!statusOnly){
-      btn.disabled=true; btn.textContent='⏳ Updating…';
+      btn.disabled=true; btn.textContent='Updating…';
       msg.style.color='var(--text-sub)'; msg.textContent='Pulling fresh indicators from source (abuse.ch, Spamhaus, Tor…) — this may take ~20s.';
       const r = await fetch('/api/feeds/update',{method:'POST'});
       const j = await r.json();

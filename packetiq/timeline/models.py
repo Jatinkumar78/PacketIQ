@@ -20,14 +20,16 @@ class Category:
     GAP         = "GAP"          # period of inactivity
 
 
-CATEGORY_EMOJI = {
-    Category.THREAT:      "⚡",
-    Category.CHAIN_START: "⛓",
-    Category.CHAIN_END:   "✓",
-    Category.DNS:         "🔮",
-    Category.HTTP:        "🌐",
-    Category.FLOW_SPIKE:  "📈",
-    Category.PIVOT:       "🔀",
+# Short text markers, not emoji: the timeline is read as a forensic record and
+# must stay legible in a plain terminal, a log file, and a pasted transcript.
+CATEGORY_MARK = {
+    Category.THREAT:      "!",
+    Category.CHAIN_START: "[",
+    Category.CHAIN_END:   "]",
+    Category.DNS:         "dns",
+    Category.HTTP:        "http",
+    Category.FLOW_SPIKE:  "^",
+    Category.PIVOT:       ">>",
     Category.GAP:         "─",
 }
 
@@ -64,8 +66,8 @@ class TimelineEvent:
         return ts_to_str(self.timestamp) if self.timestamp else "?"
 
     @property
-    def emoji(self) -> str:
-        return CATEGORY_EMOJI.get(self.category, "•")
+    def mark(self) -> str:
+        return CATEGORY_MARK.get(self.category, "•")
 
 
 @dataclass

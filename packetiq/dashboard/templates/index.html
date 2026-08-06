@@ -254,10 +254,10 @@
 
     <div class="card" style="display:flex;flex-direction:column;gap:16px">
       <div class="stats-grid" id="stats-grid">
-        <div class="stat-card"><div class="stat-icon">📦</div><div class="stat-val" id="st-packets">—</div><div class="stat-label">PACKETS</div></div>
-        <div class="stat-card"><div class="stat-icon">🔗</div><div class="stat-val" id="st-flows">—</div><div class="stat-label">FLOWS</div></div>
-        <div class="stat-card"><div class="stat-icon">⚡</div><div class="stat-val" id="st-threats">—</div><div class="stat-label">THREATS</div></div>
-        <div class="stat-card"><div class="stat-icon">⛓</div><div class="stat-val" id="st-chains">—</div><div class="stat-label">CHAINS</div></div>
+        <div class="stat-card"><div class="stat-icon">PKT</div><div class="stat-val" id="st-packets">—</div><div class="stat-label">PACKETS</div></div>
+        <div class="stat-card"><div class="stat-icon">FLW</div><div class="stat-val" id="st-flows">—</div><div class="stat-label">FLOWS</div></div>
+        <div class="stat-card"><div class="stat-icon">THR</div><div class="stat-val" id="st-threats">—</div><div class="stat-label">THREATS</div></div>
+        <div class="stat-card"><div class="stat-icon">CHN</div><div class="stat-val" id="st-chains">—</div><div class="stat-label">CHAINS</div></div>
       </div>
       <div>
         <div style="font-size:.65rem;color:var(--gdim);letter-spacing:2px;margin-bottom:10px">KILL CHAIN COVERAGE</div>
@@ -285,11 +285,11 @@
     <div class="card">
       <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" onclick="filterEvents('ALL')">ALL</button>
-        <button class="btn" onclick="filterEvents('CRITICAL')">🔴 CRITICAL</button>
-        <button class="btn" onclick="filterEvents('HIGH')">🟠 HIGH</button>
-        <button class="btn" onclick="filterEvents('C2_BEACON')">📡 BEACONS</button>
-        <button class="btn" onclick="filterEvents('JA3_ANOMALY')">🔒 JA3</button>
-        <button class="btn" onclick="filterEvents('PORT_SCAN')">🔍 SCANS</button>
+        <button class="btn" onclick="filterEvents('CRITICAL')">CRITICAL</button>
+        <button class="btn" onclick="filterEvents('HIGH')">HIGH</button>
+        <button class="btn" onclick="filterEvents('C2_BEACON')">BEACONS</button>
+        <button class="btn" onclick="filterEvents('JA3_ANOMALY')">JA3</button>
+        <button class="btn" onclick="filterEvents('PORT_SCAN')">SCANS</button>
       </div>
       <div class="tbl-wrap">
         <table>
@@ -671,7 +671,7 @@ renderEventsTable(_allEvents);
     const scope = f.is_external ? `<span style="color:var(--orange)">EXTERNAL</span>` : `<span style="color:var(--gdim)">internal</span>`;
     return `<tr>
       <td style="color:var(--cyan)">${f.src_ip}</td>
-      <td class="${cls}">${f.os_icon} ${f.os_guess}</td>
+      <td class="${cls}">${f.os_guess}</td>
       <td style="color:var(--gdim)">${f.observed_ttl}</td>
       <td style="color:var(--gdim)">${f.initial_ttl}</td>
       <td style="color:var(--gdim)">${f.hops}</td>
@@ -698,7 +698,7 @@ renderEventsTable(_allEvents);
       <div class="attr-card" style="border-color:${col}44">
         <div class="attr-card" style="display:none"></div><!-- spacer -->
         <style>.attr-card[data-actor="${a.name}"]::before{background:${col}}</style>
-        <div class="attr-icon">${a.icon}</div>
+        
         <div class="attr-name" style="color:${col}">${a.name}</div>
         <div class="attr-aliases">${(a.aliases||[]).slice(0,3).join(' · ')}</div>
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -763,7 +763,7 @@ renderEventsTable(_allEvents);
             <span class="sigma-title">${r.title}</span>
           </div>
           <div style="display:flex;gap:8px">
-            <button class="btn" onclick="copyRule('${id}')">⎘ COPY</button>
+            <button class="btn" onclick="copyRule('${id}')">COPY</button>
             <button class="btn" onclick="toggleRule('${id}')">▼ EXPAND</button>
           </div>
         </div>

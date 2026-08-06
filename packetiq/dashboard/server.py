@@ -191,7 +191,6 @@ def _ser_fp(f) -> dict:
     return {
         "src_ip":       f.src_ip,
         "os_guess":     f.os_guess,
-        "os_icon":      f.os_icon,
         "observed_ttl": f.observed_ttl,
         "initial_ttl":  f.initial_ttl,
         "hops":         f.hops,
@@ -209,7 +208,6 @@ def _ser_attr(a) -> dict:
         "matched_ttps":   a.matched_ttps,
         "phases":         list(a.phases),
         "description":    a.description,
-        "icon":           a.icon,
         "color":          a.color,
         "mitre_group":    a.mitre_group,
         "target_sectors": a.target_sectors,

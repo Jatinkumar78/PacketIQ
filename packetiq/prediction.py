@@ -5,14 +5,28 @@ Given the extracted flows/services and the detections already raised, this modul
 forecasts the attacks a capture is *most exposed to next*. Two grounded sources,
 never invented:
 
-1. **Exposed attack surface** — the services actually observed on the wire
-   (open/responding where we can tell) mapped to the concrete attacks that target
-   them (e.g. SMB → EternalBlue / ransomware lateral movement; FTP/Telnet →
-   credential sniffing). Higher likelihood when a scan was seen probing them.
+1. **Exposed attack surface** — services the packets *prove* are listening
+   (`ExtractionResult.service_exposure` state == "open": a completed TCP
+   handshake, or a UDP service that answered) **on a host inside the monitored
+   network**, mapped to the concrete attacks that target them (e.g. SMB →
+   EternalBlue / ransomware lateral movement; FTP/Telnet → credential sniffing).
 
 2. **Behavioural trajectory** — where the *detected* activity typically leads in
    the kill chain (e.g. a port scan → targeted exploitation of what it found; an
-   ARP sweep → lateral movement / MITM; a C2 beacon → data exfiltration).
+   ARP sweep → lateral movement / MITM; a C2 beacon → data exfiltration). Each
+   one quotes the detection it follows from.
+
+Two rules keep this free of the false positives a naive version produces:
+
+* **Proven-open only.** A port that answered a SYN with RST is proven *closed*,
+  and a port that never answered is *filtered*. Neither is attack surface, so
+  neither is ever forecast. Only "open" counts.
+* **Your network only.** A service is only your exposure if the *serving* host is
+  on the monitored network. An internal client browsing an external web server
+  does not make that server your attack surface.
+
+If a capture is benign — clients talking outward, nothing listening locally —
+this module correctly returns **no predictions at all**.
 
 Every prediction names the exact evidence it rests on. This is a forecast of
 *possible* attacks given what is exposed and observed — not a claim that an attack
@@ -25,7 +39,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from packetiq.detection.models import EventType
-from packetiq.utils.helpers import get_service_name
+from packetiq.utils.helpers import monitored_network
 
 _SEV_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 _LIK_RANK = {"High": 0, "Medium": 1, "Low": 2}
@@ -182,27 +196,30 @@ _SERVICE_THREATS: dict = {
 _CLEARTEXT = {"FTP", "TELNET", "HTTP", "SMTP", "POP3", "IMAP", "SNMP", "LDAP", "TFTP"}
 
 
-def _observed_services(result) -> dict:
-    """port → {'service', 'hosts': set, 'responded': bool, 'flows': int}.
+def _exposed_services(result, local: set) -> dict:
+    """service name → aggregated evidence for ports PROVEN open on our hosts.
 
-    'responded' means we actually saw the port answer (SYN-ACK, or bidirectional
-    UDP) — i.e. it is genuinely open, not merely probed by a scan.
+    Only `state == "open"` is considered. Ports proven closed (answered a SYN
+    with RST) and ports that never answered are deliberately excluded — they are
+    not attack surface, and forecasting an attack against them is the single
+    biggest source of false positives.
     """
     svc: dict = {}
-    for f in result.flows.values():
-        port = f.dst_port
-        if port is None or f.protocol not in ("TCP", "UDP"):
+    for (ip, port, proto), info in (result.service_exposure or {}).items():
+        if info.get("state") != "open" or ip not in local:
             continue
-        rec = svc.setdefault(port, {"service": get_service_name(port),
-                                    "hosts": set(), "responded": False, "flows": 0})
-        rec["flows"] += 1
-        if f.dst_ip:
-            rec["hosts"].add(f.dst_ip)
-        flags = f.tcp_flags_seen or set()
-        if any("SYNACK" in x or "ACKSYN" in x for x in flags):
-            rec["responded"] = True
-        elif f.protocol == "UDP" and f.packets > 1:
-            rec["responded"] = True  # a UDP reply came back
+        rec = svc.setdefault(info["service"], {
+            "ports": set(), "hosts": set(), "protos": set(),
+            "ext_clients": set(), "client_count": 0,
+        })
+        rec["ports"].add(port)
+        rec["hosts"].add(ip)
+        rec["protos"].add(proto)
+        clients = info.get("clients") or set()
+        rec["client_count"] += len(clients)
+        # A client outside the monitored network proves the service is reachable
+        # from off-net — a materially higher exposure than LAN-only reachability.
+        rec["ext_clients"] |= {c for c in clients if c and c not in local}
     return svc
 
 
@@ -218,45 +235,59 @@ def _scanned_ports(events) -> set:
     return ports
 
 
+def _fmt(items, limit: int = 4) -> str:
+    """Render a bounded, deterministic list of evidence items."""
+    vals = sorted(items, key=str)
+    head = ", ".join(str(v) for v in vals[:limit])
+    return head + (f" and {len(vals) - limit} more" if len(vals) > limit else "")
+
+
 def predict(result, events: list) -> list[ThreatPrediction]:
-    """Return grounded attack forecasts, most severe/likely first."""
+    """Return grounded attack forecasts, most severe/likely first.
+
+    Returns an empty list when the capture shows no exposed service on the
+    monitored network and no attack behaviour — which is the correct answer for
+    ordinary benign traffic.
+    """
     preds: list[ThreatPrediction] = []
-    services = _observed_services(result)
+    local = monitored_network(result)
+    services = _exposed_services(result, local)
     scanned = _scanned_ports(events)
     event_types = {e.event_type for e in events}
-    scan_seen = bool(event_types & {EventType.PORT_SCAN, EventType.HOST_SCAN,
-                                    EventType.ARP_SCAN})
 
-    # ── 1. Exposed-service attack surface ────────────────────────────────────
-    for port, info in services.items():
-        threat = _SERVICE_THREATS.get(info["service"])
+    # ── 1. Exposed-service attack surface (proven-open, our hosts only) ──────
+    for name, info in services.items():
+        threat = _SERVICE_THREATS.get(name)
         if not threat:
             continue
         attack, category, severity, mitre, rationale, remediation = threat
-        hosts = sorted(info["hosts"])[:8]
-        responded = info["responded"]
-        was_scanned = port in scanned or (scan_seen and not responded)
+        hosts  = sorted(info["hosts"])
+        ports  = sorted(info["ports"])
+        proto  = "/".join(sorted(info["protos"]))
+        ext    = sorted(info["ext_clients"])
+        probed = [p for p in ports if p in scanned]
 
-        # Likelihood: confirmed-open + actively scanned → High; open → Medium;
-        # only probed (not confirmed open) → Low.
-        if responded and (was_scanned or port in scanned):
-            likelihood = "High"
-        elif responded:
-            likelihood = "Medium"
-        else:
-            likelihood = "Low"
+        # Likelihood is set by what the packets show, not by the service name:
+        # actively probed, or reachable from off-net → High; otherwise open but
+        # only ever used from inside the monitored network → Medium.
+        likelihood = "High" if (probed or ext) else "Medium"
 
-        ev = [f"{info['service']} (port {port}) observed on {', '.join(hosts) or 'the network'}"
-              f"{' — port responded (open)' if responded else ' — probed'}"]
-        if port in scanned:
-            ev.append(f"port {port} was included in an observed scan")
-        if info["service"] in _CLEARTEXT and responded:
-            ev.append(f"{info['service']} is a cleartext protocol — credentials/data are exposed on the wire")
+        ev = [f"{name} on {_fmt(f'{h}:{p}' for h in hosts for p in ports)} "
+              f"({proto}) is confirmed listening — it completed a handshake with "
+              f"{info['client_count']} client connection(s) in this capture"]
+        if probed:
+            ev.append(f"port {_fmt(probed)} was probed by a scan detected in this capture")
+        if ext:
+            ev.append(f"reachable from outside the monitored network — connected from {_fmt(ext)}")
+        if name in _CLEARTEXT:
+            ev.append(f"{name} is a cleartext protocol — credentials and data are readable "
+                      f"by anyone on the path")
 
         preds.append(ThreatPrediction(
             attack=attack, category=category, likelihood=likelihood, severity=severity,
             rationale=rationale, recommendation=remediation,
-            evidence=ev, mitre=list(mitre), affected=[f"{h}:{port}" for h in hosts] or [f"port {port}"],
+            evidence=ev, mitre=list(mitre),
+            affected=[f"{h}:{p}" for h in hosts[:8] for p in ports[:4]],
         ))
 
     # ── 2. Behavioural trajectory from detections ────────────────────────────
@@ -264,50 +295,67 @@ def predict(result, events: list) -> list[ThreatPrediction]:
         preds.append(ThreatPrediction(attack, category, likelihood, severity, rationale,
                                       recommendation, evidence, mitre, affected))
 
+    def _cite(*types) -> tuple:
+        """(evidence lines, source IPs) quoted from the matching detections."""
+        hits = [e for e in events if e.event_type in types]
+        lines = [e.description for e in hits[:3] if e.description]
+        srcs = sorted({e.src_ip for e in hits if e.src_ip})[:6]
+        return lines, srcs
+
     scan_events = [e for e in events if e.event_type in
                    (EventType.PORT_SCAN, EventType.HOST_SCAN, EventType.ARP_SCAN)]
     if scan_events:
-        srcs = sorted({e.src_ip for e in scan_events if e.src_ip})[:6]
-        open_svcs = sorted({info["service"] for info in services.values() if info["responded"]})
-        _add("Targeted exploitation of discovered services", "Initial Access", "High", "HIGH",
+        lines, srcs = _cite(EventType.PORT_SCAN, EventType.HOST_SCAN, EventType.ARP_SCAN)
+        open_svcs = sorted(services)
+        ev = list(lines)
+        if open_svcs:
+            ev.append(f"live services the scan could have found: {_fmt(open_svcs, 10)}")
+        else:
+            ev.append("no service on the monitored network answered — the scan found nothing open")
+        _add("Targeted exploitation of discovered services", "Initial Access",
+             "High" if open_svcs else "Low", "HIGH",
              "Reconnaissance was observed — a scanner is enumerating the network. Attackers follow discovery with "
              "targeted exploitation of the live services they found.",
-             "Treat the scanning host as hostile, block it, and prioritise patching the exposed services below.",
-             [f"scan/recon from {', '.join(srcs)}"] + ([f"live services found: {', '.join(open_svcs[:10])}"] if open_svcs else []),
-             ["T1046 Network Service Scanning", "T1190 Exploit Public-Facing Application"],
-             srcs)
+             ("Treat the scanning host as hostile, block it, and prioritise patching the exposed services listed "
+              "in the other forecasts." if open_svcs else
+              "Treat the scanning host as hostile and block it. Nothing answered this time, so there is no exposure "
+              "to patch — but the same sweep against a host with a service running would find it."),
+             ev, ["T1046 Network Service Scanning", "T1190 Exploit Public-Facing Application"], srcs)
 
     if EventType.ARP_SCAN in event_types or EventType.ARP_SPOOFING in event_types:
-        srcs = sorted({e.src_ip for e in events if e.event_type in
-                       (EventType.ARP_SCAN, EventType.ARP_SPOOFING) and e.src_ip})[:6]
+        lines, srcs = _cite(EventType.ARP_SCAN, EventType.ARP_SPOOFING)
         _add("Man-in-the-middle / lateral movement staging", "Lateral Movement", "Medium", "HIGH",
              "Layer-2 activity (ARP sweep/poisoning) precedes on-path interception and pivoting between hosts.",
              "Enable dynamic ARP inspection and port security; investigate the source host on the switch.",
-             [f"ARP activity from {', '.join(srcs)}"], ["T1557.002 ARP Cache Poisoning", "T1018 Remote System Discovery"], srcs)
+             lines, ["T1557.002 ARP Cache Poisoning", "T1018 Remote System Discovery"], srcs)
 
     if EventType.BRUTE_FORCE in event_types:
+        lines, srcs = _cite(EventType.BRUTE_FORCE)
         _add("Account takeover via credential guessing", "Credential Access", "High", "HIGH",
              "A brute-force burst was seen; success yields valid credentials for deeper access.",
              "Lock out/rate-limit the source, enforce MFA, and hunt for any successful login after the burst.",
-             ["brute-force detection present"], ["T1110 Brute Force", "T1078 Valid Accounts"], [])
+             lines, ["T1110 Brute Force", "T1078 Valid Accounts"], srcs)
 
     if EventType.CREDENTIAL_EXPOSURE in event_types:
+        lines, srcs = _cite(EventType.CREDENTIAL_EXPOSURE)
         _add("Credential reuse across services", "Lateral Movement", "High", "HIGH",
              "Cleartext credentials were captured; attackers reuse them against other services and hosts.",
              "Rotate the exposed credentials now and move the service to an encrypted protocol.",
-             ["cleartext credentials observed"], ["T1078 Valid Accounts", "T1552.001 Credentials In Files"], [])
+             lines, ["T1078 Valid Accounts", "T1552.001 Credentials In Files"], srcs)
 
     if event_types & {EventType.C2_BEACON, EventType.DNS_TUNNELING, EventType.JA3_ANOMALY}:
+        lines, srcs = _cite(EventType.C2_BEACON, EventType.DNS_TUNNELING, EventType.JA3_ANOMALY)
         _add("Command-and-control & data exfiltration", "Exfiltration", "High", "CRITICAL",
              "C2/tunnelling indicators suggest an active implant; the next stage is data exfiltration over the channel.",
              "Isolate the internal host, block the destination, and triage the endpoint for malware.",
-             ["C2 / tunnelling indicator present"], ["T1041 Exfiltration Over C2 Channel", "T1071 Application Layer Protocol"], [])
+             lines, ["T1041 Exfiltration Over C2 Channel", "T1071 Application Layer Protocol"], srcs)
 
     if EventType.DOS_FLOOD in event_types:
+        lines, srcs = _cite(EventType.DOS_FLOOD)
         _add("Service outage from flooding", "Impact", "High", "HIGH",
              "A high-rate half-open/flood pattern was seen, which exhausts server connection state.",
              "Enable SYN cookies/rate-limiting upstream and block the source.",
-             ["flood/half-open burst present"], ["T1499.002 Service Exhaustion Flood"], [])
+             lines, ["T1499.002 Service Exhaustion Flood"], srcs)
 
     # ── Dedup (same attack+affected) keeping the strongest, then sort ────────
     best: dict = {}

@@ -6,6 +6,7 @@ import ipaddress
 import socket
 import struct
 from datetime import datetime
+from typing import Optional
 
 # ── IANA IP-protocol numbers → name (Internet & transport layers) ──────────────
 # Covers the core Internet Protocol Suite transport/internet-layer protocols.
@@ -197,13 +198,14 @@ def get_service_name(port: int) -> str:
     return PORT_SERVICE_MAP.get(port, str(port))
 
 
-def format_bytes(size: int) -> str:
+def format_bytes(size: float) -> str:
     """Human-readable byte size."""
+    value = float(size)
     for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} PB"
+        if value < 1024:
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} PB"
 
 
 def format_duration(seconds: float) -> str:
@@ -290,6 +292,75 @@ def same_org_network(ip_a: str, ip_b: str, prefix: int = 16) -> bool:
     # both public → same organisation only if they share the same prefix block
     same_prefix = prefix if a.version == 4 else 48
     return b in ipaddress.ip_network(f"{ip_a}/{same_prefix}", strict=False)
+
+
+def _ip_network_key(ip: str) -> Optional[str]:
+    """The L2-segment-sized network an address belongs to (/24 v4, /64 v6)."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    prefix = 24 if addr.version == 4 else 64
+    return str(ipaddress.ip_network(f"{ip}/{prefix}", strict=False))
+
+
+def monitored_network(result) -> set:
+    """The set of IPs the capture gives evidence sit on the network being watched.
+
+    This exists because RFC1918 addressing is only a *proxy* for "internal". A
+    university or hosting LAN can be publicly addressed (e.g. CTU's
+    147.32.0.0/16); treating those hosts as internet peers produces false
+    positives, and treating a web server we merely browsed as "ours" produces
+    the opposite kind. Evidence is applied strongest-first:
+
+    1. **Router elimination.** A host on the segment sends frames from its own
+       NIC, so its IP pairs with its own MAC. Hosts reached *through* a router
+       all share the router's MAC, so a MAC carrying addresses from two or more
+       different networks is a router and none of its addresses are local.
+    2. **One segment, one subnet.** What survives should be a single broadcast
+       domain. If it still spans several networks we keep the dominant one —
+       most distinct NICs first, private addressing as the tie-break — plus any
+       private and IPv6 link-local addresses, which cannot be routed in.
+    3. **Fallback.** With no link-layer data at all (NetFlow, Zeek, cooked
+       captures) fall back to RFC1918. If even that yields nothing we return an
+       empty set, and callers must not claim to know where the boundary is.
+    """
+    ip_to_mac: dict = getattr(result, "ip_to_mac", None) or {}
+    if ip_to_mac:
+        # Group per address family: one dual-stack host legitimately owns an
+        # IPv4 /24 *and* an IPv6 /64, which must not read as "spans two
+        # networks, therefore a router".
+        mac_nets: dict = {}
+        for ip, mac in ip_to_mac.items():
+            net = _ip_network_key(ip)
+            if net:
+                family = 6 if ":" in ip else 4
+                mac_nets.setdefault((mac, family), set()).add(net)
+        router_macs = {mac for (mac, _fam), nets in mac_nets.items() if len(nets) >= 2}
+        survivors = {ip for ip, mac in ip_to_mac.items() if ip and mac not in router_macs}
+
+        by_net: dict = {}
+        for ip in survivors:
+            net = _ip_network_key(ip)
+            if net:
+                by_net.setdefault(net, set()).add(ip_to_mac.get(ip))
+        if len(by_net) > 1:
+            def _score(item):
+                net, macs = item
+                private = net.split("/")[0].startswith(("10.", "192.168.", "172."))
+                return (len(macs), private)
+            best = max(by_net.items(), key=_score)[0]
+            survivors = {
+                ip for ip in survivors
+                if _ip_network_key(ip) == best
+                or is_private_ip(ip)
+                or ip.lower().startswith("fe80:")
+            }
+        if survivors:
+            return survivors
+
+    return {ip for ip in (getattr(result, "transmitted_ips", None) or set())
+            if ip and is_private_ip(ip)}
 
 
 # ── MAC OUI → vendor (partial, curated) ───────────────────────────────────────

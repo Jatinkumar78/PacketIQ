@@ -29,6 +29,7 @@ from packetiq.utils.helpers import (
     format_duration,
     get_service_name,
     is_private_ip,
+    monitored_network,
 )
 
 _SEV_COLOR = {"CRITICAL": "#dc2626", "HIGH": "#f59e0b", "MEDIUM": "#06b6d4", "LOW": "#22c55e"}
@@ -100,6 +101,12 @@ def _network_svg(result, events) -> str:
     dashed-red arrowed scan/attack edges over the conversation edges."""
     ip_to_device = getattr(result, "ip_to_device", {}) or {}
     transmitted = getattr(result, "transmitted_ips", None)
+    # Same packet-derived boundary the web graph uses, so the two agree. RFC1918
+    # alone mislabels a publicly addressed LAN as "external".
+    scope = monitored_network(result)
+
+    def _local(ip: str) -> bool:
+        return ip in scope if scope else is_private_ip(ip)
 
     def node_of(ip: str) -> str:
         return ip_to_device.get(ip, ip)
@@ -167,7 +174,9 @@ def _network_svg(result, events) -> str:
     kinds: dict = {}
     for dev in (getattr(result, "devices", []) or []):
         did = str(dev["id"])
-        if did in top or "." in did or ":" not in did:
+        # A device with any IP is already a node above; only address-less NICs
+        # need a MAC node. (Sniffing the id's shape misreads an IPv6-only host.)
+        if did in top or dev.get("ips"):
             continue
         infra_ids.append(did)
         kinds[did] = dev.get("kind", "infrastructure")
@@ -256,12 +265,13 @@ def _network_svg(result, events) -> str:
         is_infra = ip in infra_ids
         fill = ("#14b8a6" if is_infra else "#dc2626" if ip in attackers
                 else "#f59e0b" if ip in targets
-                else "#3b82f6" if is_private_ip(ip) else "#94a3b8")
+                else "#3b82f6" if _local(ip) else "#94a3b8")
         r = 6 + min(12, math.log10(max(counts.get(ip, 1), 1)) * 4)
         stroke = ' stroke="#fecaca" stroke-width="2"' if ip in attackers else ''
         if is_infra:
-            s = r * 1.7
-            parts.append(f'<rect x="{x - s / 2:.0f}" y="{y - s / 2:.0f}" width="{s:.0f}" height="{s:.0f}" '
+            side = r * 1.7
+            parts.append(f'<rect x="{x - side / 2:.0f}" y="{y - side / 2:.0f}" '
+                         f'width="{side:.0f}" height="{side:.0f}" '
                          f'rx="3" fill="{fill}" opacity="0.9"/>')
         else:
             parts.append(f'<circle cx="{x:.0f}" cy="{y:.0f}" r="{r:.0f}" fill="{fill}" opacity="0.9"{stroke}/>')
@@ -388,6 +398,7 @@ def _top_talkers_table(result) -> str:
     src = getattr(result, "ip_src_counts", {}) or {}
     dst = getattr(result, "ip_dst_counts", {}) or {}
     ttl = getattr(result, "src_ip_ttl", {}) or {}
+    scope = monitored_network(result)
     combined: dict = {}
     for ip, c in src.items():
         combined[ip] = combined.get(ip, 0) + c
@@ -398,10 +409,10 @@ def _top_talkers_table(result) -> str:
     total = sum(combined.values()) or 1
     rows = []
     for ip, tot in sorted(combined.items(), key=lambda x: -x[1])[:12]:
-        scope = "internal" if is_private_ip(ip) else "external"
+        label = "internal" if (ip in scope if scope else is_private_ip(ip)) else "external"
         rows.append(
             f"<tr><td>{_esc(ip)}</td>"
-            f"<td><span class='pill'>{scope}</span></td>"
+            f"<td><span class='pill'>{label}</span></td>"
             f"<td class='num'>{src.get(ip, 0):,}</td>"
             f"<td class='num'>{dst.get(ip, 0):,}</td>"
             f"<td class='num'>{_pct(tot, total):.1f}%</td>"
@@ -864,7 +875,7 @@ def _exec_summary(file_meta, result, events, chains, risk) -> str:
     top = ", ".join(t for t, _ in top_types.most_common(3)) or "no high-severity findings"
     protos = getattr(result, "protocol_counts", {}) or {}
     proto_str = ", ".join(f"{p}" for p, _ in sorted(protos.items(), key=lambda x: -x[1])[:4]) or "—"
-    ext = getattr(result, "external_ips", set()) or set()
+    ext: set = getattr(result, "external_ips", set()) or set()
     return (
         f"PacketIQ analysed <b>{_esc(file_meta.get('filename',''))}</b> "
         f"({result.total_packets:,} packets, {format_bytes(getattr(result, 'total_bytes', 0))}, over "
@@ -891,7 +902,7 @@ def _vulns_html(vulns: dict) -> str:
     out = [f"<p><b>Vulnerability risk:</b> {rk.get('score', 0)}/100 ({_esc(rk.get('tier', ''))}) · "
            f"{tot.get('cves', 0)} CVE(s), {tot.get('kev', 0)} actively exploited (CISA KEV).</p>"]
     for c in vulns.get("correlations", []):
-        out.append(f"<p class='note'>⚡ Exploit attempt for {_esc(c.get('name'))} "
+        out.append(f"<p class='note'>Exploit attempt for {_esc(c.get('name'))} "
                    f"({_esc(', '.join(c.get('cves', [])))}) → target {_esc(c.get('target'))}"
                    + (f" — runs {_esc(', '.join(c.get('target_software', [])))}" if c.get("target_software") else "") + "</p>")
     for p in vulns["products"]:

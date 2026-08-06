@@ -46,7 +46,6 @@ class AttributionMatch:
     matched_ttps: list[str]    # EventType values that matched
     phases:       set[str]
     description:  str
-    icon:         str
     color:        str
     mitre_group:  str
     target_sectors: list[str]
@@ -112,7 +111,6 @@ class AttributionEngine:
                 matched_ttps = [et.value for et in matched],
                 phases       = actor["phases"],
                 description  = actor["description"],
-                icon         = actor["icon"],
                 color        = actor["color"],
                 mitre_group  = actor["mitre_group"],
                 target_sectors = actor["target_sectors"],

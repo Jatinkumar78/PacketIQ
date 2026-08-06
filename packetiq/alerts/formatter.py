@@ -18,36 +18,22 @@ from packetiq.detection.models import DetectionEvent
 from packetiq.detection.risk_scorer import RiskReport
 from packetiq.utils.helpers import format_duration, ts_to_str
 
-# ── Severity cosmetics ────────────────────────────────────────────────────────
+# ── Severity labels ───────────────────────────────────────────────────────────
+# Plain text, no emoji: these messages are read as security reporting, and a
+# named severity survives every client, log, and copy-paste that a coloured
+# circle does not.
 
-SEV_EMOJI = {
-    "CRITICAL": "🔴",
-    "HIGH":     "🟠",
-    "MEDIUM":   "🟡",
-    "LOW":      "🟢",
+_SEV_LABEL = {
+    "CRITICAL": "CRITICAL",
+    "HIGH":     "HIGH",
+    "MEDIUM":   "MEDIUM",
+    "LOW":      "LOW",
 }
 
-EVENT_EMOJI = {
-    "BRUTE_FORCE":        "🔨",
-    "PORT_SCAN":          "🔍",
-    "HOST_SCAN":          "🌐",
-    "DNS_ANOMALY":        "🔮",
-    "DNS_TUNNELING":      "🕳",
-    "CREDENTIAL_EXPOSURE":"🔑",
-    "PROTOCOL_MISUSE":    "⚠️",
-    "ICMP_TUNNELING":     "📡",
-    "SUSPICIOUS_FLAGS":   "🚩",
-}
 
-PHASE_EMOJI = {
-    "Reconnaissance":      "🔍",
-    "Weaponization":       "⚙️",
-    "Delivery":            "📦",
-    "Exploitation":        "💥",
-    "Installation":        "🛠",
-    "Command & Control":   "📡",
-    "Actions on Objectives":"🎯",
-}
+def sev_tag(severity: str) -> str:
+    """Bracketed severity tag, e.g. '[HIGH]'. Unknown severities read '[—]'."""
+    return f"[{_SEV_LABEL.get(str(severity).upper(), '—')}]"
 
 
 # ── Public formatters ─────────────────────────────────────────────────────────
@@ -63,58 +49,52 @@ def format_summary(
     """
     Top-level summary message. Sent once at the start of an alert batch.
     """
-    sev_emoji = SEV_EMOJI.get(risk.tier, "⚪")
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     start_str = ts_to_str(capture_start) if capture_start else "N/A"
 
     lines = [
-        f"{sev_emoji} <b>PacketIQ Security Alert</b>",
+        f"<b>PacketIQ Security Alert {sev_tag(risk.tier)}</b>",
         "",
-        f"📁 <b>File:</b> <code>{esc(file_name)}</code>",
-        f"🕐 <b>Capture:</b> {esc(start_str)} ({esc(format_duration(capture_duration))})",
-        f"📅 <b>Analysed:</b> {now}",
+        f"<b>File:</b> <code>{esc(file_name)}</code>",
+        f"<b>Capture:</b> {esc(start_str)} ({esc(format_duration(capture_duration))})",
+        f"<b>Analysed:</b> {now}",
         "",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"<b>🎯 Risk Score: {risk.score}/100 [{esc(risk.tier)}]</b>",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "──────────────────────────",
+        f"<b>Risk Score: {risk.score}/100 [{esc(risk.tier)}]</b>",
+        "──────────────────────────",
         "",
     ]
 
     # Severity breakdown
-    lines.append("📊 <b>Findings:</b>")
-    if risk.by_severity.get("CRITICAL", 0):
-        lines.append(f"  🔴 Critical: <b>{risk.by_severity['CRITICAL']}</b>")
-    if risk.by_severity.get("HIGH", 0):
-        lines.append(f"  🟠 High:     <b>{risk.by_severity['HIGH']}</b>")
-    if risk.by_severity.get("MEDIUM", 0):
-        lines.append(f"  🟡 Medium:   {risk.by_severity['MEDIUM']}")
-    if risk.by_severity.get("LOW", 0):
-        lines.append(f"  🟢 Low:      {risk.by_severity['LOW']}")
-    lines.append(f"  ⛓  Chains:   <b>{len(chains)}</b>")
+    lines.append("<b>Findings:</b>")
+    for sev, label in (("CRITICAL", "Critical"), ("HIGH", "High"),
+                       ("MEDIUM", "Medium"), ("LOW", "Low")):
+        if risk.by_severity.get(sev, 0):
+            lines.append(f"  {label + ':':<10} <b>{risk.by_severity[sev]}</b>")
+    lines.append(f"  {'Chains:':<10} <b>{len(chains)}</b>")
 
     # Top attackers
     if risk.top_sources:
         lines.append("")
-        lines.append("🕵 <b>Top Attacker IPs:</b>")
+        lines.append("<b>Top Attacker IPs:</b>")
         for ip in risk.top_sources[:5]:
             lines.append(f"  • <code>{esc(ip)}</code>")
 
     # Top targets
     if risk.top_targets:
         lines.append("")
-        lines.append("🎯 <b>Top Target IPs:</b>")
+        lines.append("<b>Top Target IPs:</b>")
         for ip in risk.top_targets[:5]:
             lines.append(f"  • <code>{esc(ip)}</code>")
 
     if chains:
         lines.append("")
-        lines.append(f"⛓ <b>Attack Chain{'s' if len(chains) > 1 else ''} Detected ({len(chains)}):</b>")
+        lines.append(f"<b>Attack Chain{'s' if len(chains) > 1 else ''} Detected ({len(chains)}):</b>")
         for chain in chains[:5]:
-            sev_e = SEV_EMOJI.get(chain.severity.value, "⚪")
-            lines.append(f"  {sev_e} {esc(chain.name)}")
+            lines.append(f"  {sev_tag(chain.severity.value)} {esc(chain.name)}")
 
     lines.append("")
-    lines.append("<i>Full details in subsequent messages ↓</i>")
+    lines.append("<i>Full details in subsequent messages.</i>")
 
     return "\n".join(lines)
 
@@ -137,52 +117,51 @@ def format_webapp_findings(res: dict) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     lines = [
-        f"{SEV_EMOJI.get(tier, '⚪')} <b>PacketIQ Security Report</b>",
+        f"<b>PacketIQ Security Report {sev_tag(tier)}</b>",
         "",
-        f"📁 <b>File:</b> <code>{esc(fname)}</code>",
-        f"🎯 <b>Risk:</b> <b>{esc(risk.get('score', 0))}/100 [{esc(tier)}]</b>",
-        f"📅 <b>Analysed:</b> {now}",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"<b>File:</b> <code>{esc(fname)}</code>",
+        f"<b>Risk:</b> <b>{esc(risk.get('score', 0))}/100 [{esc(tier)}]</b>",
+        f"<b>Analysed:</b> {now}",
+        "──────────────────────────",
     ]
     if risk.get("summary"):
         lines += [f"<i>{esc(risk['summary'])}</i>", ""]
 
     # Severity breakdown (single compact line)
     brk = "  ".join(
-        f"{SEV_EMOJI[s]} {bd.get(s, 0)}"
+        f"{s.title()} {bd.get(s, 0)}"
         for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW") if bd.get(s, 0)
-    ) or "🟢 none"
-    lines.append(f"📊 <b>Findings:</b> {len(events)}  ({brk})  ·  ⛓ <b>{len(chains)}</b> chain(s)")
+    ) or "none"
+    lines.append(f"<b>Findings:</b> {len(events)}  ({brk})  ·  <b>{len(chains)}</b> chain(s)")
 
     # Capture context
     lines.append(
-        f"📦 {esc(meta.get('total_packets', 0))} pkts · "
+        f"{esc(meta.get('total_packets', 0))} pkts · "
         f"{esc(meta.get('bytes_fmt', '—'))} · {esc(meta.get('duration', '—'))} · "
-        f"🌐 {esc(meta.get('external_ips', 0))} external IPs"
+        f"{esc(meta.get('external_ips', 0))} external IPs"
     )
 
     # Top talkers
     top_src = res.get("top_src_ips", [])[:3]
     if top_src:
         lines.append("")
-        lines.append("🕵 <b>Top sources:</b> " + ", ".join(
+        lines.append("<b>Top sources:</b> " + ", ".join(
             f"<code>{esc(s.get('ip', ''))}</code>" for s in top_src))
 
     # Attack chains (with MITRE)
     if chains:
         lines.append("")
-        lines.append(f"⛓ <b>Attack chain{'s' if len(chains) > 1 else ''}:</b>")
+        lines.append(f"<b>Attack chain{'s' if len(chains) > 1 else ''}:</b>")
         for c in sorted(chains, key=lambda c: len(c.get("target_ips", [])), reverse=True)[:4]:
-            sev_e = SEV_EMOJI.get(str(c.get("severity", "")).upper(), "⚪")
             atk = ", ".join(c.get("attacker_ips", [])[:2]) or "?"
             tgt = ", ".join(c.get("target_ips", [])[:2]) or "?"
-            lines.append(f"  {sev_e} <b>{esc(c.get('name', 'Chain'))}</b>")
+            lines.append(f"  {sev_tag(c.get('severity', ''))} <b>{esc(c.get('name', 'Chain'))}</b>")
             lines.append(f"     <code>{esc(atk)}</code> → <code>{esc(tgt)}</code>")
             mitre = c.get("mitre", []) or []
             if mitre:
                 ids = ", ".join(m.get("id", "") for m in mitre[:5] if m.get("id"))
                 if ids:
-                    lines.append(f"     🛡 {esc(ids)}")
+                    lines.append(f"     MITRE: {esc(ids)}")
 
     # Key findings (CRITICAL/HIGH first, with one-line evidence)
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
@@ -191,17 +170,15 @@ def format_webapp_findings(res: dict) -> str:
     top = [e for e in ranked if e.get("severity") in ("CRITICAL", "HIGH")][:6] or ranked[:4]
     if top:
         lines.append("")
-        lines.append("🚨 <b>Key findings:</b>")
+        lines.append("<b>Key findings:</b>")
         for e in top:
             sev = str(e.get("severity", "")).upper()
-            sev_e = SEV_EMOJI.get(sev, "⚪")
-            ev_e = EVENT_EMOJI.get(e.get("event_type", ""), "•")
             name = str(e.get("event_type", "")).replace("_", " ")
             dst = esc(e.get("dst_ip", "") or "—")
             if e.get("dst_port"):
                 dst += f":{esc(e['dst_port'])}"
             lines.append(
-                f"  {sev_e}{ev_e} <b>[{esc(sev)}] {esc(name)}</b> "
+                f"  <b>[{esc(sev)}] {esc(name)}</b> "
                 f"({esc(e.get('confidence', 0))}%)")
             lines.append(f"     <code>{esc(e.get('src_ip', '') or '?')}</code> → <code>{dst}</code>")
             desc = (e.get("description", "") or "")[:140]
@@ -209,7 +186,7 @@ def format_webapp_findings(res: dict) -> str:
                 lines.append(f"     <i>{esc(desc)}</i>")
 
     lines.append("")
-    lines.append("📄 <b>Full professional SOC report attached as PDF ↓</b>")
+    lines.append("<b>Full SOC report attached as PDF.</b>")
     return "\n".join(lines)
 
 
@@ -217,12 +194,11 @@ def format_chain_alert(chain: AttackChain, index: int, total: int) -> str:
     """
     Detailed alert for a single attack chain.
     """
-    sev_emoji = SEV_EMOJI.get(chain.severity.value, "⚪")
     conf_pct  = f"{chain.confidence * 100:.0f}%"
 
     lines = [
-        f"⛓ <b>Attack Chain {index}/{total}</b>",
-        f"{sev_emoji} <b>{esc(chain.name)}</b>",
+        f"<b>Attack Chain {index}/{total}</b>",
+        f"{sev_tag(chain.severity.value)} <b>{esc(chain.name)}</b>",
         f"Confidence: <b>{conf_pct}</b> | Events: <b>{chain.event_count}</b>",
         "",
     ]
@@ -230,18 +206,15 @@ def format_chain_alert(chain: AttackChain, index: int, total: int) -> str:
     # Attacker → Targets
     if chain.attacker_ips:
         attackers = ", ".join(f"<code>{esc(ip)}</code>" for ip in sorted(chain.attacker_ips))
-        lines.append(f"🕵 <b>Attacker:</b> {attackers}")
+        lines.append(f"<b>Attacker:</b> {attackers}")
     if chain.target_ips:
         targets = ", ".join(f"<code>{esc(ip)}</code>" for ip in sorted(chain.target_ips))
-        lines.append(f"🎯 <b>Targets:</b> {targets}")
+        lines.append(f"<b>Targets:</b> {targets}")
 
     # Kill chain phases
     if chain.kill_chain_phases:
-        phase_str = " → ".join(
-            f"{PHASE_EMOJI.get(p, '')} {esc(p)}"
-            for p in chain.kill_chain_phases
-        )
-        lines.append(f"🔗 <b>Kill Chain:</b> {phase_str}")
+        phase_str = " → ".join(esc(p) for p in chain.kill_chain_phases)
+        lines.append(f"<b>Kill Chain:</b> {phase_str}")
 
     # MITRE
     if chain.mitre_techniques:
@@ -249,11 +222,11 @@ def format_chain_alert(chain: AttackChain, index: int, total: int) -> str:
             f"<code>{esc(t.technique_id)}</code>"
             for t in chain.mitre_techniques[:6]
         )
-        lines.append(f"🛡 <b>MITRE:</b> {techs}")
+        lines.append(f"<b>MITRE:</b> {techs}")
 
     # Duration
     if chain.duration > 0:
-        lines.append(f"⏱ <b>Duration:</b> {esc(format_duration(chain.duration))}")
+        lines.append(f"<b>Duration:</b> {esc(format_duration(chain.duration))}")
 
     # Description
     lines.append("")
@@ -262,7 +235,7 @@ def format_chain_alert(chain: AttackChain, index: int, total: int) -> str:
     # Analyst note (highlighted)
     if chain.analyst_note:
         lines.append("")
-        lines.append("💡 <b>Analyst Note:</b>")
+        lines.append("<b>Analyst Note:</b>")
         # Trim note to 500 chars for Telegram
         note = chain.analyst_note[:500]
         if len(chain.analyst_note) > 500:
@@ -274,15 +247,13 @@ def format_chain_alert(chain: AttackChain, index: int, total: int) -> str:
         lines.append("")
         lines.append("<b>Linked Events:</b>")
         for e in chain.events[:8]:
-            ev_emoji = EVENT_EMOJI.get(e.event_type.value, "•")
-            sev_e    = SEV_EMOJI.get(e.severity.value, "")
             dst = (
                 f"{esc(e.dst_ip)}:{e.dst_port}"
                 if e.dst_ip and e.dst_port
                 else esc(e.dst_ip or "—")
             )
             lines.append(
-                f"  {sev_e}{ev_emoji} <code>{esc(e.src_ip or '?')}</code> → "
+                f"  {sev_tag(e.severity.value)} <code>{esc(e.src_ip or '?')}</code> → "
                 f"<code>{dst}</code>"
             )
             # Short description truncated
@@ -296,8 +267,6 @@ def format_orphan_event(event: DetectionEvent, index: int, total: int) -> str:
     """
     Alert for a HIGH/CRITICAL event that is not part of any chain.
     """
-    sev_emoji  = SEV_EMOJI.get(event.severity.value, "⚪")
-    ev_emoji   = EVENT_EMOJI.get(event.event_type.value, "•")
     event_name = event.event_type.value.replace("_", " ")
 
     dst = (
@@ -307,21 +276,21 @@ def format_orphan_event(event: DetectionEvent, index: int, total: int) -> str:
     )
 
     lines = [
-        f"{sev_emoji}{ev_emoji} <b>{esc(event.severity.value)}: {esc(event_name)}</b>"
+        f"<b>{esc(event.severity.value)}: {esc(event_name)}</b>"
         f"  [{index}/{total}]",
         "",
-        f"🕵 <b>Source:</b> <code>{esc(event.src_ip or '?')}</code>",
-        f"🎯 <b>Target:</b> <code>{dst}</code>",
+        f"<b>Source:</b> <code>{esc(event.src_ip or '?')}</code>",
+        f"<b>Target:</b> <code>{dst}</code>",
     ]
 
     if event.protocol:
-        lines.append(f"📡 <b>Protocol:</b> {esc(event.protocol)}")
+        lines.append(f"<b>Protocol:</b> {esc(event.protocol)}")
 
-    lines.append(f"🔍 <b>Confidence:</b> {event.confidence * 100:.0f}%")
-    lines.append(f"📦 <b>Packets:</b> {event.packet_count:,}")
+    lines.append(f"<b>Confidence:</b> {event.confidence * 100:.0f}%")
+    lines.append(f"<b>Packets:</b> {event.packet_count:,}")
 
     if event.timestamp:
-        lines.append(f"🕐 <b>Time:</b> {esc(ts_to_str(event.timestamp))}")
+        lines.append(f"<b>Time:</b> {esc(ts_to_str(event.timestamp))}")
 
     lines.append("")
     lines.append("<b>Description:</b>")
@@ -343,9 +312,9 @@ def format_orphan_event(event: DetectionEvent, index: int, total: int) -> str:
 def format_clean_scan(file_name: str) -> str:
     """Message sent when no threats are detected."""
     return (
-        "🟢 <b>PacketIQ — Clean Scan</b>\n\n"
-        f"📁 <b>File:</b> <code>{esc(file_name)}</code>\n"
-        f"📅 <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        "✅ No HIGH or CRITICAL threats detected in this capture.\n"
+        "<b>PacketIQ — Clean Scan</b>\n\n"
+        f"<b>File:</b> <code>{esc(file_name)}</code>\n"
+        f"<b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        "No HIGH or CRITICAL threats detected in this capture.\n"
         "<i>Low/Medium findings may still exist — run packetiq analyze for full details.</i>"
     )
