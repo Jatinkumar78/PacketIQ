@@ -322,7 +322,8 @@ def _is_graphable_host(ip: str) -> bool:
     pseudo-addresses (0.0.0.0, 255.255.255.255, x.x.x.255, 224–239.x.x.x,
     ff00::/8) are traffic sinks, not hosts — graphing them clutters the view
     and makes DHCP/mDNS noise dwarf the real talkers."""
-    if not ip or ip in ("0.0.0.0", "255.255.255.255", "::", "::1"):  # nosec B104 # string comparison against pseudo-hosts, not a socket bind
+    from packetiq.utils.helpers import UNSPECIFIED_IPV4, UNSPECIFIED_IPV6
+    if not ip or ip in (UNSPECIFIED_IPV4, "255.255.255.255", UNSPECIFIED_IPV6, "::1"):
         return False
     if ":" in ip:                              # IPv6
         return not ip.lower().startswith("ff")  # drop multicast, keep unicast/link-local

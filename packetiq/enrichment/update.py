@@ -21,7 +21,7 @@ _TIMEOUT = 30
 
 
 def _stamp_header(name: str, source: str, fmt: str) -> str:
-    ts = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     return (
         f"# PacketIQ feed: {name}\n"
         f"# Source : {source}\n"

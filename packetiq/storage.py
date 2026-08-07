@@ -95,12 +95,18 @@ def clear() -> int:
 
 
 def delete(analysis_id: int) -> bool:
-    """Delete a single analysis row by id."""
+    """Delete a single analysis row by id. True only if a row was actually removed.
+
+    Reporting the row count rather than "the statement ran" matters because the
+    web UI echoes this straight back as {"deleted": …}; returning True for an id
+    that was never there told the user something had happened when nothing had.
+    """
     try:
         conn = _connect()
-        conn.execute("DELETE FROM analyses WHERE id = ?", (int(analysis_id),))
+        cur = conn.execute("DELETE FROM analyses WHERE id = ?", (int(analysis_id),))
+        removed = cur.rowcount
         conn.commit()
         conn.close()
-        return True
+        return removed > 0
     except Exception:
         return False

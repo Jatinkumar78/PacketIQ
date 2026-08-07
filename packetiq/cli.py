@@ -20,7 +20,7 @@ from packetiq.detection.models import Severity
 from packetiq.display.terminal import TerminalUI
 from packetiq.extractor.data_extractor import DataExtractor
 from packetiq.parser.pcap_parser import PCAPParser
-from packetiq.utils.helpers import format_bytes, format_duration
+from packetiq.utils.helpers import UNSPECIFIED_IPV4, format_bytes, format_duration
 
 
 def _run_pipeline(pcap_path: Path, ui: TerminalUI, quiet: bool = False) -> tuple:
@@ -110,6 +110,25 @@ def _run_pipeline(pcap_path: Path, ui: TerminalUI, quiet: bool = False) -> tuple
 ui = TerminalUI()
 
 
+def _machine_output_requested(argv=None) -> bool:
+    """True when this invocation writes a JSON/YAML document to stdout.
+
+    The banner is printed by this group callback, before Click has parsed the
+    subcommand, so the decision has to come from raw argv. Being wrong only moves
+    decoration between stdout and stderr — the document itself is written
+    verbatim either way — so a conservative match is fine.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--json" in argv:
+        return True
+    if argv[:1] == ["misp"] and "--dry-run" in argv:
+        return True
+    # These print their document to stdout unless an output file was named.
+    if argv and argv[0] in ("stix", "navigator", "sigma"):
+        return not any(a in ("-o", "--out") for a in argv)
+    return False
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Root group
 # ──────────────────────────────────────────────────────────────────────────────
@@ -122,6 +141,8 @@ def main(ctx):
     PacketIQ — AI PCAP Forensics & SOC Copilot
     Defensive network intelligence for SOC analysts.
     """
+    if _machine_output_requested():
+        ui.route_chrome_to_stderr()
     ui.print_banner()
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
@@ -777,7 +798,7 @@ def sigma_cmd(pcap_file: str, out: str, min_level: str):
     if not out:
         for r in rules:
             ui.print_raw(f"\n[bold cyan]─── {r.title} [{r.level.upper()}] ───[/bold cyan]")
-            ui.print_raw(f"[dim white]{r.raw_yaml}[/dim white]")
+            ui.print_data(r.raw_yaml)
     else:
         out_dir = Path(out)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -1002,7 +1023,7 @@ def stix_cmd(pcap_file: str, out: str):
         ui.print_status(f"Wrote {n} indicator(s) → {Path(out).resolve()}", status="ok")
     else:
         ui.print_status(f"{n} indicator(s):", status="ok")
-        ui.print_raw(payload)
+        ui.print_data(payload)
 
 
 @main.command("navigator")
@@ -1034,7 +1055,7 @@ def navigator_cmd(pcap_file: str, out: str):
         ui.print_status("Open it at https://mitre-attack.github.io/attack-navigator/", status="info")
     else:
         ui.print_status(f"{n} technique(s):", status="ok")
-        ui.print_raw(payload)
+        ui.print_data(payload)
 
 
 @main.command("cve")
@@ -1067,8 +1088,14 @@ def cve_cmd(pcap_file: str, as_json: bool):
     banners = extractor.finalize().software_banners
 
     if not banners:
-        ui.print_status("No HTTP Server / User-Agent banners observed. Encrypted (HTTPS) "
-                        "traffic exposes none, so there is nothing to look up.", status="warn")
+        note = ("No HTTP Server / User-Agent banners observed. Encrypted (HTTPS) "
+                "traffic exposes none, so there is nothing to look up.")
+        ui.print_status(note, status="warn")
+        # --json promises a JSON document on every run; returning prose here left
+        # `packetiq cve … --json | jq` failing on any all-encrypted capture.
+        if as_json:
+            import json
+            ui.print_data(json.dumps({"results": [], "note": note}, indent=2))
         return
 
     ui.print_status(f"Observed {len(banners)} software banner(s):", status="ok")
@@ -1083,7 +1110,7 @@ def cve_cmd(pcap_file: str, as_json: bool):
 
     if as_json:
         import json
-        ui.print_raw(json.dumps(data, indent=2))
+        ui.print_data(json.dumps(data, indent=2))
         return
 
     if data.get("error"):
@@ -1139,7 +1166,14 @@ def vulns_cmd(pcap_file: str, as_json: bool):
                for e in events if e.event_type == EventType.HTTP_ATTACK]
 
     if not banners:
-        ui.print_status("No software banners observed (encrypted traffic exposes none). Nothing to assess.", status="warn")
+        note = "No software banners observed (encrypted traffic exposes none). Nothing to assess."
+        ui.print_status(note, status="warn")
+        if as_json:
+            import json
+            ui.print_data(json.dumps(
+                {"products": [], "correlations": [], "note": note,
+                 "risk": {"score": 0, "tier": "NONE"},
+                 "totals": {"cves": 0, "kev": 0}}, indent=2))
         return
     if not nvd.get_api_key():
         ui.print_status("No NVD_API_KEY set — using the slower anonymous rate limit.", status="warn")
@@ -1148,7 +1182,7 @@ def vulns_cmd(pcap_file: str, as_json: bool):
     data = nvd.assess_vulnerabilities(banners, attacks)
     if as_json:
         import json
-        ui.print_raw(json.dumps(data, indent=2))
+        ui.print_data(json.dumps(data, indent=2))
         return
     if data.get("error"):
         ui.print_status(f"NVD error: {data['error']}", status="error")
@@ -1446,7 +1480,7 @@ def misp_cmd(pcap_file: str, url: str, key: str, dry_run: bool):
     n = len(event["Event"]["Attribute"])
     if dry_run:
         ui.print_status(f"{n} attribute(s) (dry run, not pushed):", status="ok")
-        ui.print_raw(json.dumps(event, indent=2))
+        ui.print_data(json.dumps(event, indent=2))
         return
     if n == 0:
         ui.print_status("No indicators to push.", status="warn")
@@ -1786,7 +1820,7 @@ def webapp(port: int, host: str, no_browser: bool):
 
     from packetiq.webapp import create_app
 
-    url = f"http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}/"  # nosec B104 # string compare, not a bind
+    url = f"http://{host if host != UNSPECIFIED_IPV4 else '127.0.0.1'}:{port}/"
     ui.print_status(f"PacketIQ Web App → {url}", status="info")
     ui.print_status("Upload a PCAP file in your browser to begin analysis.", status="info")
     ui.print_status("Press Ctrl+C to stop.", status="info")
@@ -1794,7 +1828,7 @@ def webapp(port: int, host: str, no_browser: bool):
         # Widen the DNS-rebinding/CSRF Host allow-list for the operator's chosen
         # bind address (or disable the Host check for a wildcard 0.0.0.0 bind).
         import os as _os
-        _os.environ["PACKETIQ_ALLOWED_HOSTS"] = "*" if host == "0.0.0.0" else host  # nosec B104 # operator opt-in
+        _os.environ["PACKETIQ_ALLOWED_HOSTS"] = "*" if host == UNSPECIFIED_IPV4 else host
         ui.print_status(
             "SECURITY: the web API has no authentication. Binding to "
             f"'{host}' exposes upload/analysis (and AI usage) to your network. "

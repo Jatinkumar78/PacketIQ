@@ -25,6 +25,8 @@ import math
 from datetime import datetime
 
 from packetiq.utils.helpers import (
+    UNSPECIFIED_IPV4,
+    UNSPECIFIED_IPV6,
     format_bytes,
     format_duration,
     get_service_name,
@@ -78,7 +80,7 @@ _GRAPH_ATTACK_EVENTS = {"PORT_SCAN", "HOST_SCAN", "ARP_SCAN", "ARP_SPOOFING",
 
 def _graphable(ip: str) -> bool:
     """Real endpoints only — drop broadcast/multicast/unspecified pseudo-hosts."""
-    if not ip or ip in ("0.0.0.0", "255.255.255.255", "::", "::1"):  # nosec B104 # string comparison against pseudo-hosts, not a socket bind
+    if not ip or ip in (UNSPECIFIED_IPV4, "255.255.255.255", UNSPECIFIED_IPV6, "::1"):
         return False
     if ":" in ip:
         return not ip.lower().startswith("ff")

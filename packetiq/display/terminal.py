@@ -3,6 +3,7 @@ Terminal UI - Hacker-themed display layer for PacketIQ.
 Uses rich for styled, matrix-style terminal output.
 """
 
+import sys
 from datetime import datetime
 
 from rich import box
@@ -34,10 +35,35 @@ class TerminalUI:
     def __init__(self):
         self.console = console
 
+    def route_chrome_to_stderr(self) -> None:
+        """Send styled human output to stderr, leaving stdout for data alone.
+
+        Commands that emit a JSON/YAML document write it to stdout so it can be
+        redirected or piped. The banner, section headers and progress bars would
+        otherwise land in the same stream and make the document unusable.
+        """
+        self.console = Console(highlight=False, stderr=True)
+
+    def print_data(self, text: str) -> None:
+        """Write machine-readable output to stdout exactly as given.
+
+        Deliberately bypasses rich. Its console soft-wraps at the terminal width —
+        which inserts newlines *inside* JSON string literals and makes the
+        document unparseable — and it interprets square-bracketed text as style
+        markup, so a CVE description containing "[bold]" silently lost characters.
+        """
+        sys.stdout.write(text + "\n")
+        sys.stdout.flush()
+
     def print_banner(self):
+        from packetiq import __version__
+
         banner_text = Text(BANNER, style="bold green")
         tagline_text = Text(TAGLINE, style="dim green", justify="center")
-        version_text = Text("v1.0.0  |  github.com/PacketIQ  |  SOC Ready", style="dim cyan", justify="center")
+        # Read the version rather than repeating it, so the banner cannot drift
+        # from the package the user actually has installed.
+        version_text = Text(f"v{__version__}  |  github.com/PacketIQ  |  SOC Ready",
+                            style="dim cyan", justify="center")
 
         self.console.print()
         self.console.print(Align.center(banner_text))

@@ -54,17 +54,33 @@ IMAP_LOGIN_RE = re.compile(
 # POP3 PASS
 POP3_PASS_RE = re.compile(rb"^PASS\s+(\S+)", re.IGNORECASE | re.MULTILINE)
 
-# Ports that carry application-layer credentials
+# Ports that carry application-layer credentials, mapped to the protocol whose
+# handler can read them. `scan_record` dispatches off this table, so it is the one
+# place a port has to be added — it previously sat here unused while the dispatch
+# carried its own hardcoded port lists, and the two had already drifted apart.
 CRED_PORTS = {
-    21:  "FTP",
-    23:  "TELNET",
-    25:  "SMTP",
-    80:  "HTTP",
-    110: "POP3",
-    143: "IMAP",
-    587: "SMTP",
+    21:   "FTP",
+    23:   "TELNET",
+    25:   "SMTP",
+    80:   "HTTP",
+    110:  "POP3",
+    143:  "IMAP",
+    587:  "SMTP",
+    8000: "HTTP",
     8080: "HTTP",
 }
+
+
+def _ports_for(protocol: str) -> frozenset:
+    return frozenset(p for p, name in CRED_PORTS.items() if name == protocol)
+
+
+_HTTP_PORTS   = _ports_for("HTTP")
+_FTP_PORTS    = _ports_for("FTP")
+_SMTP_PORTS   = _ports_for("SMTP")
+_IMAP_PORTS   = _ports_for("IMAP")
+_POP3_PORTS   = _ports_for("POP3")
+_TELNET_PORTS = _ports_for("TELNET")
 
 
 def scan_record(record: RawPacketRecord, seen: set, events: list) -> None:
@@ -79,17 +95,17 @@ def scan_record(record: RawPacketRecord, seen: set, events: list) -> None:
     dport = record.dst_port or 0
     sport = record.src_port or 0
 
-    if dport in (80, 8080, 8000) or sport in (80, 8080, 8000):
+    if dport in _HTTP_PORTS or sport in _HTTP_PORTS:
         _check_http(record, src, dst, dport, seen, events)
-    if dport == 21 or sport == 21:
+    if dport in _FTP_PORTS or sport in _FTP_PORTS:
         _check_ftp(record, src, dst, seen, events)
-    if dport in (25, 587) or sport in (25, 587):
+    if dport in _SMTP_PORTS or sport in _SMTP_PORTS:
         _check_smtp(record, src, dst, seen, events)
-    if dport == 143 or sport == 143:
+    if dport in _IMAP_PORTS or sport in _IMAP_PORTS:
         _check_imap(record, src, dst, seen, events)
-    if dport == 110 or sport == 110:
+    if dport in _POP3_PORTS or sport in _POP3_PORTS:
         _check_pop3(record, src, dst, seen, events)
-    if dport == 23 or sport == 23:
+    if dport in _TELNET_PORTS or sport in _TELNET_PORTS:
         _check_telnet(record, src, dst, seen, events)
 
 

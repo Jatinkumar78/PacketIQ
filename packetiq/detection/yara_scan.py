@@ -36,6 +36,27 @@ def _rule_files() -> list[str]:
     return files
 
 
+def _compile_valid_only(yara_mod, files: list):
+    """Compile just the rule files that are individually valid.
+
+    One malformed rule makes a whole-set compile fail, which would silently cost
+    us every other rule. Retesting file by file keeps the good ones loaded.
+    """
+    good = {}
+    for i, path in enumerate(files):
+        try:
+            yara_mod.compile(filepath=path)
+        except Exception:  # nosec B112 # a broken rule file is skipped; the rest still load
+            continue
+        good[f"ns{i}"] = path
+    if not good:
+        return None
+    try:
+        return yara_mod.compile(filepaths=good)
+    except Exception:
+        return None
+
+
 @lru_cache(maxsize=1)
 def _rules():
     try:
@@ -49,19 +70,7 @@ def _rules():
     try:
         return yara.compile(filepaths=namespaces)
     except Exception:
-        # try compiling individually, skipping broken files
-        good = {}
-        try:
-            import yara as _y
-            for i, path in enumerate(files):
-                try:
-                    _y.compile(filepath=path)
-                    good[f"ns{i}"] = path
-                except Exception:  # nosec B112 # skip a rule file that fails to compile, keep the rest
-                    continue
-            return _y.compile(filepaths=good) if good else None
-        except Exception:
-            return None
+        return _compile_valid_only(yara, files)
 
 
 def scan_bytes(data: bytes) -> list[dict]:

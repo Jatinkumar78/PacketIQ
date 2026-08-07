@@ -5,6 +5,113 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Machine-readable output, deprecated APIs, and a coverage sweep
+
+**Fixed**
+- **`--json` output was not valid JSON.** Every document-producing command printed
+  through the rich console, which soft-wraps at the terminal width — inserting raw
+  newlines *inside* JSON string literals — and interprets square-bracketed text as
+  style markup. A CVE description was therefore both unparseable and silently
+  missing characters. Documents are now written to stdout verbatim; the banner and
+  status lines move to stderr for those runs, so `packetiq cve x.pcap --json | jq`
+  works. Affected `cve --json`, `vulns --json`, `stix`, `navigator`, `sigma`, and
+  `misp --dry-run`.
+- **`cve --json` / `vulns --json` returned prose, not JSON, when a capture exposed
+  no software banners** — the common case for all-encrypted traffic. Both now emit
+  a valid document on every path.
+- **Deprecated third-party APIs that were one release from breaking.** DNS query
+  names were read through scapy's `qd.qname` compatibility shim (removed in a
+  future release, which would have silently turned every query name into `None`);
+  feed refresh timestamps used `datetime.utcnow()`, deprecated in Python 3.12 and
+  naive, so "UTC"-stamped files were wrong on a non-UTC host. The suite now runs
+  with zero warnings.
+- **`DELETE /api/history/{id}` reported success for an id that never existed.**
+  `storage.delete()` now returns whether a row was actually removed.
+- **Evidence slicing raised on a capture that had gone away**, aborting the whole
+  request when the web UI slices several captures at once. A missing or unreadable
+  source now yields no evidence instead of an exception.
+- **`CRED_PORTS` was decorative.** The credential detector's documented port table
+  was never read — the dispatch carried its own hardcoded lists, and the two had
+  already drifted (port 8000 was inspected but unlisted). The table is now the
+  single source of truth.
+- The terminal banner had **v1.0.0 hardcoded**; it now reads the package version,
+  so it cannot drift from what is installed.
+
+**Changed**
+- Test suite grown from **375 to 714 tests**; line coverage from **73.7% to 87%**,
+  measured over the whole package with nothing excluded. Three modules that were at
+  **0%** — the standalone dashboard server, the OSINT feed refresher, and the GeoIP
+  loader — are now covered, along with the CLI (17% → 78%), JA3/JA4 fingerprinting
+  (41% → 96%), credential exposure (47% → 94%) and capture-privilege setup
+  (45% → 92%). The CI coverage floor rises from 65% to **85%**.
+- `geoip.reset()` added so a database configured after first use is picked up; the
+  reader cache previously froze the answer for the life of the process.
+- README test-count and coverage figures corrected to the measured values.
+
+### HTTP is identified by its bytes, not by its port
+
+**Fixed**
+- **HTTP served on any port other than TCP 80 or 8080 was not recognised at all.**
+  Scapy binds its HTTP dissector to those two ports and nothing else, so
+  byte-identical HTTP on 8000 / 8888 / 3128 / 81 parsed as anonymous TCP:
+  `has_http` stayed `False` and the method, path, `Host`, `User-Agent`, `Server`
+  and status fields were all `None`. Everything downstream went blind with them —
+  HTTP inspection, HTTP-based beaconing evidence, and server-banner CVE
+  matching — on exactly the ports C2 traffic prefers.
+
+  The parser now reads the request line or status line off the wire, so the port
+  number is no longer part of the decision. It sets nothing unless the payload
+  genuinely opens with an HTTP/1.x start line, so a non-HTTP service on a
+  web-looking port is never relabelled on a guess: TLS, SSH, SMTP, gzip, the
+  HTTP/2 preface, a request line appearing inside a body, and binary payloads
+  that happen to start with `0x47` are all left as TCP.
+
+  Recovered on the real CTU-13 corpus, none of it visible before: a malware
+  config fetch on **3389** (`GET /tool/train/q.txt`, `User-Agent: VBTagEdit`),
+  botnet C2 polling on **179**, and `.exe` payload downloads on **88** — 4,586
+  additional HTTP messages across five captures.
+- Header lookup reads the full TCP payload rather than the 512-byte
+  `raw_payload` cap, so a `Host` pushed past 512 bytes by long preceding headers
+  is still found, and it stops at the blank line so a body containing `Host:`
+  cannot be misread as a header.
+- **A request target containing unencoded spaces lost everything after the first
+  one** — including on port 80, where Scapy's `Path` field truncates there. A
+  crude scanner sending `GET /index.php?id=1' OR 1=1-- HTTP/1.1` had its
+  injection discarded before any detector saw it. The start line is now split on
+  its first and last space, so the full request-target is kept and the parse is
+  identical on every port.
+- **Only the header packets of an off-port HTTP session read as HTTP.** Segments
+  continuing a message carry no start line, so the port table named them by port
+  instead — 28,681 of the 32,000 packets in `qvod.pcap`'s malware HTTP session on
+  3389 were labelled "RDP". A flow proven to carry HTTP now keeps that name for
+  its data segments, as Wireshark does, with bare ACKs staying "TCP". That moves
+  11,979 of those packets to HTTP. The rest are the ones that precede the first
+  start line in their flow: a single streaming pass cannot label a packet from
+  evidence that arrives after it, and guessing by port is the behaviour being
+  removed. The flow memo is capped at 50,000 entries so a capture of many
+  short-lived flows cannot grow it without bound.
+- **HTTP findings quoted port 80 regardless of the port observed.**
+  `http_inspect` hardcoded `dst_port = 80` and `beacon` grouped HTTP beacons
+  under port 80. That was almost always right while only 80/8080 were dissected
+  and is wrong now, so `ExtractionResult.http_requests` / `.http_responses`
+  carry the real server port and both detectors report it. Beacons to the same
+  host on different ports are also no longer merged into one channel.
+
+**Changed**
+- The seven modules that compared against the `0.0.0.0` / `::` unspecified
+  sentinels now share `UNSPECIFIED_IPV4` / `UNSPECIFIED_IPV6` from
+  `packetiq.utils.helpers` instead of repeating the literal. This removes all 11
+  `# nosec B104` suppressions: bandit flags every bare `"0.0.0.0"` string, and it
+  emits a spurious "nosec encountered, but no failed test" warning once per
+  *other* string literal sharing a suppressed line. Naming the sentinel once
+  removes both the duplication and the noise.
+- `yara_scan._rules()` had its per-file retry extracted into
+  `_compile_valid_only()`. Behaviour is unchanged; the nested `try` inside an
+  `except` handler was what made bandit misreport its `# nosec B112`.
+- Dropped the `B607` id from the `setcap` suppression in `capture_setup.py`: the
+  argv there is built at runtime, so that test never fired. `B603` still applies.
+- Bandit now scans completely clean — 0 findings **and** 0 warnings.
+
 ### CI type gate, and the crash it had been reporting
 
 **Fixed**

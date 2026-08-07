@@ -175,7 +175,7 @@ def _linux_setup() -> tuple[bool, str]:
     cmd = ["setcap", "cap_net_raw,cap_net_admin+eip", py]
     runner = ["sudo"] if shutil.which("sudo") else []
     try:
-        r = subprocess.run(runner + cmd, capture_output=True, text=True, timeout=120)  # nosec B603 B607 # fixed argv, no shell; sudo/setcap resolved from PATH
+        r = subprocess.run(runner + cmd, capture_output=True, text=True, timeout=120)  # nosec B603 # fixed argv, no shell; sudo/setcap resolved from PATH
     except Exception as e:  # noqa: BLE001
         return False, f"setcap failed: {e}"
     if r.returncode != 0:

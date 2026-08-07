@@ -48,6 +48,17 @@ def _reader():
         return None
 
 
+def reset() -> None:
+    """Forget the cached reader so a newly-configured database is picked up.
+
+    ``_reader`` is cached because opening an mmdb per lookup would be wasteful, but
+    that also freezes the answer for the life of the process — pointing
+    ``PACKETIQ_GEOIP_DB`` at a database after the first call would otherwise never
+    take effect. Call this after changing the setting.
+    """
+    _reader.cache_clear()
+
+
 def available() -> bool:
     return _reader() is not None
 

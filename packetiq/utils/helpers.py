@@ -8,6 +8,14 @@ import struct
 from datetime import datetime
 from typing import Optional
 
+# The IPv4/IPv6 "unspecified" addresses. A DHCP client sends from 0.0.0.0 before
+# it owns a lease, so these show up as packet sources without ever being hosts —
+# several modules must exclude them from device inventory, graphs and
+# fingerprinting. Named once here because as a bare literal each use site tripped
+# bandit's B104 (bind-to-all-interfaces) and needed its own suppression comment.
+UNSPECIFIED_IPV4 = "0.0.0.0"  # nosec B104 # sentinel compared against, never a bind address
+UNSPECIFIED_IPV6 = "::"
+
 # ── IANA IP-protocol numbers → name (Internet & transport layers) ──────────────
 # Covers the core Internet Protocol Suite transport/internet-layer protocols.
 PROTOCOL_MAP = {
@@ -415,3 +423,24 @@ def oui_vendor(mac: str) -> str:
     if first & 0x2:                       # locally-administered / randomised MAC
         return ""
     return _OUI_VENDOR.get(":".join(parts[:3]), "")
+
+
+def dns_questions(dns) -> list:
+    """The question records of a scapy DNS layer, as a plain list.
+
+    Scapy 2.5 turned ``qd``/``an``/``ns``/``ar`` into PacketListFields. Reaching
+    through ``dns.qd`` as if it were a single record still works, but only via a
+    compatibility shim that raises DeprecationWarning and is slated for removal —
+    so read the list properly and index it here instead. Older scapy handed back
+    one bare record, which is normalised to a one-element list.
+    """
+    qd = getattr(dns, "qd", None)
+    if not qd:
+        return []
+    return list(qd) if isinstance(qd, list) else [qd]
+
+
+def dns_first_question(dns):
+    """The first DNS question record, or None when the message carries none."""
+    qs = dns_questions(dns)
+    return qs[0] if qs else None

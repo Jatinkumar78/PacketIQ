@@ -14,7 +14,12 @@ Returns a list of Fingerprint objects (informational, not DetectionEvents).
 from dataclasses import dataclass
 
 from packetiq.extractor.data_extractor import ExtractionResult
-from packetiq.utils.helpers import is_private_ip, monitored_network
+from packetiq.utils.helpers import (
+    UNSPECIFIED_IPV4,
+    UNSPECIFIED_IPV6,
+    is_private_ip,
+    monitored_network,
+)
 
 # TTL milestone → (initial_ttl, os_label)
 _TTL_MAP: list[tuple[int, int, str]] = [
@@ -27,7 +32,7 @@ _TTL_MAP: list[tuple[int, int, str]] = [
 
 # 0.0.0.0 is the DHCP "unspecified" sentinel a host uses before it has an
 # address — it is not a host and must never be fingerprinted as one.
-_NON_HOSTS = {"0.0.0.0", "::"}  # nosec B104 # sentinel values, not a socket bind
+_NON_HOSTS = {UNSPECIFIED_IPV4, UNSPECIFIED_IPV6}
 
 
 @dataclass

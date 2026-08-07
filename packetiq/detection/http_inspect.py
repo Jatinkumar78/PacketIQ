@@ -51,6 +51,9 @@ def detect(result: ExtractionResult) -> list[DetectionEvent]:
         src  = r.get("src") or ""
         dst  = r.get("dst") or ""
         ts   = r.get("ts", 0.0)
+        # Real server port — HTTP is recognised on any port, so reporting 80 here
+        # would put a wrong port in the finding for C2 served on 8888 / 3389 / 88.
+        port = r.get("port") or 80
 
         decoded = unquote_plus(path)
         target  = f"{host}{decoded}"
@@ -69,7 +72,7 @@ def detect(result: ExtractionResult) -> list[DetectionEvent]:
                     severity     = severity,
                     src_ip       = src,
                     dst_ip       = dst,
-                    dst_port     = 80,
+                    dst_port     = port,
                     protocol     = "HTTP",
                     timestamp    = ts,
                     packet_count = 1,
@@ -95,7 +98,7 @@ def detect(result: ExtractionResult) -> list[DetectionEvent]:
                     severity     = Severity.MEDIUM,
                     src_ip       = src,
                     dst_ip       = dst,
-                    dst_port     = 80,
+                    dst_port     = port,
                     protocol     = "HTTP",
                     timestamp    = ts,
                     packet_count = 1,

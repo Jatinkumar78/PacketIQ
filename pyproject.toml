@@ -91,7 +91,7 @@ filterwarnings = [
 ]
 
 # Coverage is measured in CI (not in the default local addopts, so a plain
-# `pytest` stays fast). The CI step runs: pytest --cov=packetiq --cov-fail-under=65
+# `pytest` stays fast). The CI step runs: pytest --cov=packetiq --cov-fail-under=85
 # The whole package is measured — nothing is omitted to inflate the number,
 # including the hardware-dependent live-capture path and terminal renderers.
 [tool.coverage.run]

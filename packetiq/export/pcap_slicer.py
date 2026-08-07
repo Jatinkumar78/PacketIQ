@@ -70,7 +70,14 @@ def slice_pcap(
     written = 0
     writer = PcapWriter(out_path, append=False, sync=True)
     try:
-        with PcapReader(src_path) as reader:
+        # A capture that vanished or is unreadable yields no evidence rather than
+        # an exception: the web UI slices several captures in one request, and one
+        # missing file must not abort the others or surface as a 500.
+        try:
+            reader = PcapReader(src_path)
+        except Exception:
+            return 0
+        with reader:
             for pkt in reader:
                 try:
                     if pcap_filter.is_empty or pcap_filter.matches(pkt):
@@ -78,7 +85,7 @@ def slice_pcap(
                         written += 1
                         if max_packets and written >= max_packets:
                             break
-                except Exception:  # nosec B112 # skip an unreadable packet/source, keep slicing the rest
+                except Exception:  # nosec B112 # skip an unreadable packet, keep slicing the rest
                     continue
     finally:
         writer.close()

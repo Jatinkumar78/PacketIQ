@@ -19,7 +19,11 @@ from scapy.layers.inet6 import IPv6
 from scapy.layers.l2 import ARP, LLC, SNAP, STP
 from scapy.packet import Packet
 
-from packetiq.utils.helpers import get_protocol_name, get_service_name
+from packetiq.utils.helpers import (
+    dns_first_question,
+    get_protocol_name,
+    get_service_name,
+)
 
 
 @dataclass
@@ -93,6 +97,8 @@ class PCAPParser:
         self.filepath = filepath
         self.filesize = os.path.getsize(filepath)
         self._packet_count = 0
+        # TCP flows proven to carry HTTP — see _HTTP_FLOW_CAP.
+        self._http_flows: set = set()
 
     # ------------------------------------------------------------------ #
     #  Public API                                                          #
@@ -104,6 +110,7 @@ class PCAPParser:
         multi-GB captures fully into memory.
         """
         index = 0
+        self._http_flows.clear()   # each pass starts with no flow history
         with PcapReader(self.filepath) as reader:
             for pkt in reader:
                 record = self._parse_packet(pkt, index)
@@ -184,6 +191,10 @@ class PCAPParser:
                 record.protocol = str(getattr(pkt, "name", None) or "OTHER")
 
             # ── Transport layer ────────────────────────────────────────
+            # Full TCP payload, kept past record.raw_payload's 512-byte cap so
+            # the HTTP header scan below can still see a long header block.
+            tcp_payload = b""
+
             if pkt.haslayer(TCP):
                 tcp = pkt[TCP]
                 record.src_port  = tcp.sport
@@ -196,6 +207,7 @@ class PCAPParser:
                 pl = bytes(tcp.payload)          # build once, not twice
                 record.payload_size = len(pl)
                 record.raw_payload  = pl[:512]
+                tcp_payload = pl
 
             elif pkt.haslayer(UDP):
                 udp = pkt[UDP]
@@ -214,26 +226,44 @@ class PCAPParser:
             if pkt.haslayer(DNS):
                 record.has_dns = True
                 dns = pkt[DNS]
-                if dns.qd:
+                q = dns_first_question(dns)
+                if q is not None:
                     with contextlib.suppress(Exception):
-                        record.dns_qname = dns.qd.qname.decode("utf-8", errors="replace").rstrip(".")
+                        record.dns_qname = q.qname.decode("utf-8", errors="replace").rstrip(".")
 
+            # Read the start line off the wire first. Scapy binds its HTTP
+            # dissector to TCP 80/8080 only, so trusting it alone left HTTP
+            # invisible on every other port, and its Path field truncates at the
+            # first space — dropping exactly the payload an injection carries.
+            if tcp_payload:
+                self._sniff_http(tcp_payload, record)
+
+            # Scapy's dissected layer then fills anything still unset.
             if pkt.haslayer(HTTPRequest):
                 record.has_http = True
                 req = pkt[HTTPRequest]
-                record.http_method = self._safe_decode(req.Method)
-                record.http_host   = self._safe_decode(req.Host)
-                record.http_path   = self._safe_decode(req.Path)
-                record.http_user_agent = self._safe_decode(getattr(req, "User_Agent", None))
+                if record.http_method is None:
+                    record.http_method = self._safe_decode(req.Method)
+                if record.http_host is None:
+                    record.http_host = self._safe_decode(req.Host)
+                if record.http_path is None:
+                    record.http_path = self._safe_decode(req.Path)
+                if record.http_user_agent is None:
+                    record.http_user_agent = self._safe_decode(getattr(req, "User_Agent", None))
 
             elif pkt.haslayer(HTTPResponse):
                 record.has_http = True
                 resp = pkt[HTTPResponse]
-                with contextlib.suppress(Exception):
-                    record.http_status = int(resp.Status_Code)
+                if record.http_status is None:
+                    with contextlib.suppress(Exception):
+                        record.http_status = int(resp.Status_Code)
                 # The Server header names the server software/version — the most
                 # CVE-relevant fingerprint we can read from plaintext HTTP.
-                record.http_server = self._safe_decode(getattr(resp, "Server", None))
+                if record.http_server is None:
+                    record.http_server = self._safe_decode(getattr(resp, "Server", None))
+
+            if record.has_http:
+                self._remember_http_flow(record)
 
             # ── Most-specific protocol name (Wireshark-style composition) ──
             record.display_protocol = self._display_proto(pkt, record)
@@ -283,6 +313,15 @@ class PCAPParser:
                 port = (record.dst_port if (record.dst_port or 0) < 49152 else record.src_port) or 0
                 return self._UDP_APP.get(port, "UDP")
             if record.protocol == "TCP":
+                # A stream proven to carry HTTP keeps its name, as in Wireshark.
+                # Segments continuing an HTTP message have no start line of their
+                # own, so the port table below would name them by port instead —
+                # calling the continuation of a malware HTTP session on 3389
+                # "RDP" while only its header packets read "HTTP".
+                # Same rule the port-80 branch below uses: data segments are the
+                # protocol, a bare ACK is just TCP.
+                if self._flow_key(record) in self._http_flows:
+                    return "HTTP" if record.payload_size > 0 else "TCP"
                 for p in (record.dst_port, record.src_port):
                     if p in self._TCP_APP:
                         return self._TCP_APP[p]
@@ -309,6 +348,107 @@ class PCAPParser:
                 return "LLC"
         return record.protocol if record.protocol not in (None, "UNKNOWN") else (
             pkt.name if hasattr(pkt, "name") else "OTHER")
+
+    # ------------------------------------------------------------------ #
+    #  HTTP recovered from payload bytes (port-independent)                #
+    # ------------------------------------------------------------------ #
+    #
+    # Scapy binds its HTTP dissector to TCP 80 and 8080 and nothing else, so
+    # byte-identical HTTP served on 8000 / 8888 / 3128 / 81 used to arrive as
+    # anonymous TCP: no `has_http`, no method / Host / User-Agent / Server, and
+    # therefore no HTTP inspection, no HTTP beaconing evidence and no server
+    # banner for CVE matching — on exactly the ports C2 traffic prefers.
+    #
+    # These read the request/status line off the wire instead of trusting the
+    # port number, so a message is only called HTTP when it actually is one.
+
+    # RFC 9110 methods plus PATCH (RFC 5789). "PRI" is deliberately absent: it
+    # opens the HTTP/2 connection preface, which is not an HTTP/1 request.
+    _HTTP_METHODS = frozenset((
+        b"GET", b"POST", b"HEAD", b"PUT", b"DELETE",
+        b"OPTIONS", b"PATCH", b"TRACE", b"CONNECT",
+    ))
+    # First byte of every method above, and of "HTTP/1." itself. One integer
+    # comparison rejects almost all non-HTTP payloads before any splitting.
+    _HTTP_LEAD = b"GPHDOTC"
+    # Past this, a first line is not a header block worth parsing.
+    _MAX_START_LINE = 8192
+
+    def _sniff_http(self, payload: bytes, record: "RawPacketRecord") -> None:
+        """Populate the HTTP fields from a raw TCP payload, whatever the port.
+
+        Sets nothing unless the payload genuinely opens with an HTTP/1.x request
+        line or status line, so a non-HTTP service that happens to sit on a
+        web-ish port is never relabelled on a port guess.
+        """
+        if not payload or payload[0] not in self._HTTP_LEAD:
+            return
+        line_end = payload.find(b"\r\n")
+        if line_end < 0 or line_end > self._MAX_START_LINE:
+            return
+        start = payload[:line_end]
+
+        # Status line: HTTP/1.x SP 3DIGIT [SP reason-phrase]
+        if start.startswith(b"HTTP/1."):
+            parts = start.split(b" ", 2)
+            if len(parts) < 2 or len(parts[1]) != 3 or not parts[1].isdigit():
+                return
+            record.has_http = True
+            record.http_status = int(parts[1])
+            # Names the server software/version — our best plaintext CVE hint.
+            record.http_server = self._header_value(payload, b"server")
+            return
+
+        # Request line: METHOD SP request-target SP HTTP/1.x
+        # Take the method from the first field and the version from the last, so
+        # a crude scanner that leaves spaces unencoded inside the target keeps
+        # its full request-target — that text is the attack evidence.
+        parts = start.split(b" ")
+        if len(parts) < 3 or parts[0] not in self._HTTP_METHODS:
+            return
+        if not parts[-1].startswith(b"HTTP/1."):
+            return
+        record.has_http = True
+        record.http_method = parts[0].decode("ascii")
+        record.http_path = self._safe_decode(b" ".join(parts[1:-1]))
+        record.http_host = self._header_value(payload, b"host")
+        record.http_user_agent = self._header_value(payload, b"user-agent")
+
+    # A capture of many short-lived flows must not grow this without bound. Past
+    # the cap we simply stop learning new flows; the ones already known keep
+    # their label and everything else falls back to the port table.
+    _HTTP_FLOW_CAP = 50_000
+
+    @staticmethod
+    def _flow_key(record: "RawPacketRecord") -> tuple:
+        """Direction-independent TCP flow identity, so a reply matches its request."""
+        a = (record.src_ip or "", record.src_port or 0)
+        b = (record.dst_ip or "", record.dst_port or 0)
+        return (a, b) if a <= b else (b, a)
+
+    def _remember_http_flow(self, record: "RawPacketRecord") -> None:
+        """Record that this TCP flow carries HTTP, for its later segments."""
+        if record.protocol != "TCP" or not record.src_ip or not record.dst_ip:
+            return
+        if len(self._http_flows) < self._HTTP_FLOW_CAP:
+            self._http_flows.add(self._flow_key(record))
+
+    @staticmethod
+    def _header_value(payload: bytes, name: bytes) -> Optional[str]:
+        """Return one header's value, matched case-insensitively.
+
+        ``name`` must already be lowercase. Stops at the blank line ending the
+        header block, so a body that happens to contain "Host:" is not read as
+        a header. Headers split across TCP segments simply come back None.
+        """
+        end = payload.find(b"\r\n\r\n")
+        block = payload if end < 0 else payload[:end]
+        prefix = name + b":"
+        n = len(prefix)
+        for line in block.split(b"\r\n")[1:]:
+            if line[:n].lower() == prefix:
+                return line[n:].strip().decode("utf-8", errors="replace") or None
+        return None
 
     # ------------------------------------------------------------------ #
     #  Helpers                                                             #

@@ -11,7 +11,7 @@ import contextlib
 import math
 import re
 
-from packetiq.utils.helpers import get_service_name, is_private_ip
+from packetiq.utils.helpers import dns_first_question, get_service_name, is_private_ip
 
 
 def _ips(pkt):
@@ -167,10 +167,11 @@ def _dns_info(pkt) -> str:
     d = pkt[DNS]
     kind = "Standard query response" if int(getattr(d, "qr", 0)) else "Standard query"
     parts = [kind, f"0x{int(getattr(d, 'id', 0)):04x}"]
-    if getattr(d, "qd", None):
+    q = dns_first_question(d)
+    if q is not None:
         with contextlib.suppress(Exception):
-            qtype = _DNS_QTYPES.get(int(d.qd.qtype), str(int(d.qd.qtype)))
-            qname = d.qd.qname.decode("latin-1", "replace").rstrip(".")
+            qtype = _DNS_QTYPES.get(int(q.qtype), str(int(q.qtype)))
+            qname = q.qname.decode("latin-1", "replace").rstrip(".")
             parts.append(f"{qtype} {qname}")
     return " ".join(parts)[:120]
 

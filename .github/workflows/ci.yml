@@ -61,7 +61,7 @@ jobs:
         run: mypy packetiq
 
       - name: Unit + integration tests (with coverage gate)
-        run: pytest -q --cov=packetiq --cov-report=term-missing --cov-fail-under=65
+        run: pytest -q --cov=packetiq --cov-report=term-missing --cov-fail-under=85
 
       # Standing guarantee: the deterministic grounding guardrail redacts every
       # ungrounded IP / MITRE technique / CVE / domain / file-hash. These tests use

@@ -47,8 +47,11 @@ class BeaconDetector:
             src  = req.get("src") or ""
             host = req.get("host") or req.get("dst") or ""
             ts   = req.get("ts", 0.0)
+            # Group per server port: HTTP is recognised on any port now, so two
+            # beacons to the same host on different ports are separate channels.
+            port = req.get("port") or 80
             if src and host and ts:
-                http_groups[(src, host, 80)].append(ts)
+                http_groups[(src, host, port)].append(ts)
 
         for (src, host, port), ts_list in http_groups.items():
             ev = self._analyse(src, host, port, ts_list, "HTTP", local)
