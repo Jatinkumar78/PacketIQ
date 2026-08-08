@@ -24,6 +24,24 @@ ICMP_DST = "188.114.96.3"      # external
 RESOLVER = "8.8.8.8"
 
 
+@pytest.fixture(autouse=True)
+def isolate_analysis_history(tmp_path, monkeypatch):
+    """Give every test its own analysis-history database.
+
+    `storage._db_path()` falls back to ``~/.packetiq/history.db``, so any test that
+    recorded an analysis without overriding ``PACKETIQ_DB`` wrote into the developer's
+    real history — a full run added six fixture rows named `attack.pcap` to it. The
+    same leak made coverage irreproducible: the web app renders a different branch once
+    history is non-empty, so `webapp/app.py` swung by 14 statements between consecutive
+    runs depending on what the previous run had left behind.
+
+    Isolation is the default now rather than something each test has to remember. Tests
+    that need a specific path still just set ``PACKETIQ_DB`` themselves; monkeypatch
+    applies theirs after this one.
+    """
+    monkeypatch.setenv("PACKETIQ_DB", str(tmp_path / "history.db"))
+
+
 def _build_attack_pcap(path: str):
     random.seed(7)
     pkts = []

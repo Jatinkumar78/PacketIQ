@@ -190,9 +190,61 @@ def test_packet_explain_guard(client, tmp_path, monkeypatch):
     assert client.post(f"/api/packets/{job}/0/explain").status_code == 503
 
 
+def test_the_live_capture_callback_records_a_packet():
+    """Drive the sniffer callback directly rather than hoping a real one fires.
+
+    `test_live_packets_and_pcap` below starts a genuine interface capture, so whether
+    this callback ever ran depended on whether traffic happened to arrive inside the
+    test window. That left fourteen statements in `_LiveSession._cb` covered on some
+    runs and not others — coverage swung by 0.15% between back-to-back runs of an
+    unchanged tree. Feeding it a synthetic packet makes the path an assertion instead
+    of a coincidence, and exercises it on machines where capture is not permitted.
+    """
+    from packetiq.webapp.app import _LiveSession
+
+    session = _LiveSession("lo0", "LOW")
+    assert session.sniffer is None, "constructing a session must not start capturing"
+
+    pkt = Ether() / IP(src="192.0.2.1", dst="192.0.2.2") / TCP(sport=1234, dport=80, flags="S")
+    session._cb(pkt)
+
+    assert session.packets == 1
+    assert session._i == 1
+    assert len(session.pkt_summaries) == 1, "the rolling per-packet view must get the summary"
+
+
+def test_the_live_callback_writes_to_the_recording_and_handles_ipv6():
+    """The two branches of `_cb` a synthetic IPv4 packet alone does not reach.
+
+    Both were previously covered only when a real loopback capture happened to see
+    traffic — the recording branch needs a writer attached, and the IPv6 address path
+    in `inspect._ips` needs an IPv6 packet, which loopback chatter supplies at random.
+    """
+    from scapy.layers.inet6 import IPv6
+
+    from packetiq.webapp.app import _LiveSession
+
+    session = _LiveSession("lo0", "LOW")
+
+    written = []
+    session._writer = type("W", (), {"write": lambda _self, p: written.append(p)})()
+
+    session._cb(Ether() / IPv6(src="::1", dst="::1") / TCP(sport=5555, dport=80, flags="S"))
+
+    assert written, "a packet arriving while recording must reach the pcap writer"
+    assert session.packets == 1
+    summary = session.pkt_summaries[0]
+    assert "::1" in str(summary), f"IPv6 endpoints should appear in the summary: {summary}"
+
+
 def test_live_packets_and_pcap(client):
     ifs = client.get("/api/live/interfaces").json()["interfaces"]
-    iface = "lo0" if "lo0" in ifs else ("lo" if "lo" in ifs else (ifs[0] if ifs else "lo"))
+    # Loopback only. The previous fallback to `ifs[0]` meant that on a host without a
+    # loopback entry the suite would start a real capture on a physical NIC and write
+    # the developer's own network traffic into an upload-directory pcap.
+    iface = next((n for n in ("lo0", "lo") if n in ifs), None)
+    if iface is None:
+        pytest.skip("no loopback interface to capture on")
     r = client.post("/api/live/start", json={"interface": iface, "threshold": "LOW"})
     if r.status_code != 200:
         return  # capture not permitted in this environment

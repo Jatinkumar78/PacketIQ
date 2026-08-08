@@ -5,6 +5,77 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Type-check gate fixed on Python 3.9, and packaging promises made enforceable
+
+**Fixed**
+- **The CI type-check gate failed on Python 3.9 only.** mypy 2.x requires Python
+  >=3.10, so the 3.9 matrix leg resolves to mypy 1.x — and the two majors disagree on
+  a default: `ignore_missing_imports` covers a module mypy cannot find, but only 2.x
+  extends that to a module which *is* installed and simply carries no types. mypy 1.x
+  reports the latter as `import-untyped`, so the six modules importing `requests`
+  failed the gate on 3.9 while 3.10–3.12 stayed green. Fixed by shipping the real
+  `types-requests` stubs in the `dev` extra rather than suppressing the diagnostic, so
+  `requests` call sites are genuinely type-checked on every leg. Verified against both
+  mypy 1.19.1 and 2.3.0. Because the gate failed first, every later step on that leg —
+  the test suite, the coverage floor, the guardrail and detection gates, the benchmark
+  — was skipped and had never actually run on 3.9; all of them have now been executed
+  end to end on a real 3.9.25 interpreter and pass, at 87.29% coverage.
+
+- **MANIFEST.in shipped a rule pattern that matched nothing.** It listed
+  `*.yar *.yara` under `yara_rules/` while `[tool.setuptools.package-data]` listed
+  `yara_rules/*`; only `.yar` files exist, so every sdist build printed
+  `warning: no files found matching '*.yara'`, and the two manifests disagreed about
+  what a rules directory contains. Both now say "everything in that directory", so a
+  rule added with either extension ships.
+- **The test suite wrote into the developer's real analysis history.**
+  `storage._db_path()` falls back to `~/.packetiq/history.db`, and overriding
+  `PACKETIQ_DB` was left to each test to remember. Tests that forgot recorded fixture
+  rows named `attack.pcap` into the real database — a full run added six, and they had
+  been accumulating. `tests/conftest.py` now points the database at a per-test
+  temporary file for every test automatically; a test that wants a specific path still
+  just sets the variable itself.
+- **Coverage was not reproducible.** Two runs of an unchanged tree reported anywhere
+  between 87.34% and 87.49%. Two causes, both now closed: the history-database leak
+  above (the web app renders a different branch once history exists), and a live-capture
+  test that starts a genuine interface capture — whether the sniffer callback ever ran
+  depended on whether traffic happened to arrive inside the test window, so fourteen
+  statements in `_LiveSession._cb` were covered by luck. That callback is now driven
+  directly with synthetic IPv4 and IPv6 packets, making it an assertion rather than a
+  coincidence. Five consecutive runs now report exactly 87.49%.
+- **A live-capture test could sniff a physical interface.** It preferred loopback but
+  fell back to the first interface in the list, so on a host without a loopback entry
+  running the suite would capture the developer's own network traffic into an
+  upload-directory pcap. It is loopback-only now, and skips when there is none.
+- **A module-level fixture asserted an attribute that tests remove.**
+  `test_yara_and_channels.py` cleared the memoised rule set in teardown via
+  `_rules.cache_clear()`, which does not exist while a test has `_rules` replaced with a
+  stub. Whether that mattered depended on fixture ordering elsewhere in the session; it
+  now looks the attribute up instead of assuming it.
+- **Deprecated license metadata.** `license = { file = "LICENSE" }` and the
+  `License :: OSI Approved` classifier each raised a `SetuptoolsDeprecationWarning` on
+  every build. Replaced with the PEP 639 form (`license = "MIT"` plus
+  `license-files`), which builds clean and emits `License-Expression: MIT` in the
+  wheel metadata with LICENSE still shipped in `dist-info`.
+
+**Changed**
+- The CI `test` job no longer installs `ruff` and `mypy` a second time on top of
+  `pip install ".[dev]"`. The extra already provides both, and the duplicate line was
+  a second place for the tool list to drift.
+- Build backend floor raised to `setuptools>=77`, the first release that understands
+  PEP 639. This is a build-time requirement resolved in pip's isolated build
+  environment; it does not change what the installed package runs on, and the 3.9 leg
+  was re-run end to end to confirm it.
+
+**Added**
+- `tests/test_project_metadata_sync.py` — turns three packaging promises that existed
+  only as prose comments into failing tests: that `requirements.txt` really does stay
+  in lockstep with `[project.dependencies]` (names, version floors, and environment
+  markers alike), that the advertised Python classifiers and `requires-python` floor
+  match the versions CI actually tests, and that every tool the workflow invokes comes
+  from the `dev` extra. Each guard was mutation-checked to confirm it fails on the
+  drift it claims to catch. Ten tests in total across this entry and the live-capture
+  callback above, taking the suite to **724** at a reproducible **87.49%**.
+
 ### Machine-readable output, deprecated APIs, and a coverage sweep
 
 **Fixed**

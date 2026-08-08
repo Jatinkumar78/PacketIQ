@@ -5,7 +5,7 @@ include .env.example
 
 # Bundled threat-intel feeds, YARA rules, and web templates
 recursive-include packetiq/detection/data *.csv
-recursive-include packetiq/detection/data/yara_rules *.yar *.yara
+recursive-include packetiq/detection/data/yara_rules *
 recursive-include packetiq/enrichment/data *
 recursive-include packetiq/webapp/templates *.html
 recursive-include packetiq/webapp/static *.js

@@ -1,5 +1,9 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+# setuptools 77 is the first release to understand PEP 639 (`license` as an SPDX
+# expression plus `license-files`). This is a build-time requirement only — pip
+# fetches it into an isolated build env — so it does not constrain what the
+# installed package runs on.
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -12,7 +16,11 @@ version = "1.0.0"
 description = "AI PCAP Forensics & SOC Copilot"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { file = "LICENSE" }
+# PEP 639 form. The old `{ file = "LICENSE" }` table and the matching
+# "License :: OSI Approved" classifier are both deprecated, and each one emitted a
+# SetuptoolsDeprecationWarning on every build.
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Jatin Kumar" }]
 keywords = ["pcap", "forensics", "network-security", "soc", "threat-intel", "dfir"]
 
@@ -44,14 +52,27 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Security",
     "Topic :: System :: Networking :: Monitoring",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0", "pytest-cov>=4.0.0", "pyyaml>=6.0.0", "pysigma>=0.11.0", "yara-python>=4.3.0", "ruff", "mypy"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "pyyaml>=6.0.0",
+    "pysigma>=0.11.0",
+    "yara-python>=4.3.0",
+    "ruff",
+    "mypy",
+    # Real stubs for `requests`, not a suppression. `ignore_missing_imports` covers a
+    # module mypy cannot find; it does not cover one that is installed but untyped —
+    # mypy 1.x reports that as `import-untyped` and fails the gate. Python 3.9 resolves
+    # to mypy 1.x (2.x requires >=3.10), so omitting this failed only the 3.9 CI leg
+    # while 3.10-3.12 passed, which is exactly the kind of split that hides for weeks.
+    "types-requests",
+]
 yara = ["yara-python>=4.3.0"]
 geoip = ["geoip2>=4.7.0"]
 
@@ -131,6 +152,12 @@ ignore = [
 # requires-python (">=3.9"). The 3.9 floor the CI matrix actually tests is
 # enforced by tests/test_python39_compat.py instead; leaving "3.9" here only
 # produced an "unsupported" warning while silently checking 3.10 semantics.
+#
+# Consequence worth remembering: because mypy 2.x needs >=3.10, the 3.9 matrix leg
+# installs mypy 1.x. Everything below has to satisfy *both* majors, and the two do
+# not agree on defaults — 1.x fails on an installed-but-untyped import that 2.x lets
+# through, which is why the type stubs are pinned into the dev extra rather than
+# papered over here. Check a config change against 1.x before trusting a green run.
 python_version = "3.10"
 ignore_missing_imports = true
 warn_unused_ignores = false

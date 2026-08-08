@@ -49,9 +49,22 @@ BROKEN_RULE = "rule Broken { condition: this is not valid yara }"
 
 @pytest.fixture(autouse=True)
 def _clear_rule_cache():
-    yara_scan._rules.cache_clear()
+    """Drop the memoised rule set around every test in this module.
+
+    Looks the attribute up on each side instead of assuming it: a test may replace
+    `yara_scan._rules` with a plain stub, and a plain function has no `cache_clear`.
+    Whether teardown runs before or after monkeypatch restores the original depends on
+    fixture ordering elsewhere in the session, so relying on it made an otherwise
+    passing test fail during teardown.
+    """
+    def clear():
+        clear_cache = getattr(yara_scan._rules, "cache_clear", None)
+        if clear_cache is not None:
+            clear_cache()
+
+    clear()
     yield
-    yara_scan._rules.cache_clear()
+    clear()
 
 
 def test_rule_files_are_discovered_from_a_directory(tmp_path, monkeypatch):

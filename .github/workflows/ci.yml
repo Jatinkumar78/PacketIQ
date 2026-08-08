@@ -44,8 +44,10 @@ jobs:
           # Regular (non-editable) install so the `packetiq` console script resolves
           # from any working directory (editable/.pth installs are unreliable on some
           # Python 3.12+ standalone builds; verified by the entry-point smoke test).
+          # The dev extra is the single source of truth for the tooling this job
+          # runs (ruff, mypy, and the type stubs the mypy gate needs). Installing
+          # any of them again here would let the two lists drift apart silently.
           pip install ".[dev]"
-          pip install ruff mypy
 
       - name: Entry point works from any directory
         run: cd "$RUNNER_TEMP" && packetiq --help >/dev/null && python -c "import packetiq; print('import OK', packetiq.__version__)"
