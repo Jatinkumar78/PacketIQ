@@ -126,7 +126,14 @@ exclude_also = [
     "if __name__ == .__main__.:",
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
-    "\\.\\.\\.",
+    # Anchored, and deliberately so. The bare `\.\.\.` this replaces matched any line
+    # containing three dots anywhere — including `File(...)` in a FastAPI signature and
+    # every `"Parsing packets..."` progress string. coverage.py drops the *whole body*
+    # when the matching line opens a block, so `/api/upload`, `/api/fuse` and
+    # `/api/analyze` plus 32 statements of cli.py were silently absent from the
+    # denominator: 98 statements the gate could never fail on. The intent was only ever
+    # to skip `...` Protocol stubs, which is exactly what the anchors now express.
+    "^\\s*\\.\\.\\.\\s*$",
 ]
 
 [tool.ruff]

@@ -52,14 +52,16 @@ def _int(b: bytes) -> int:
 
 
 def _ip(b: bytes):
-    """Decode a 4- or 16-byte address field to a string, else None."""
-    try:
-        if len(b) == 4:
-            return str(ipaddress.IPv4Address(b))
-        if len(b) == 16:
-            return str(ipaddress.IPv6Address(b))
-    except ValueError:
-        return None
+    """Decode a 4- or 16-byte address field to a string, else None.
+
+    Any 4 bytes are a valid packed IPv4 address and any 16 a valid IPv6 one, so
+    the width check is the whole validation — the ValueError handler that used
+    to wrap this could never fire on the packed slices the decoder passes in.
+    """
+    if len(b) == 4:
+        return str(ipaddress.IPv4Address(b))
+    if len(b) == 16:
+        return str(ipaddress.IPv6Address(b))
     return None
 
 

@@ -181,8 +181,9 @@ def _parse_client_hello(payload: bytes) -> Optional[dict]:
 
     pos = 9  # skip: record(5) + handshake_type(1) + length(3)
 
-    if pos + 2 > len(payload):
-        return None
+    # No bounds check needed here: the 43-byte minimum above already guarantees
+    # there are two bytes at offset 9. The check that used to sit here could
+    # never fire, which made it read as though short payloads reached this point.
     version = struct.unpack_from("!H", payload, pos)[0]
     pos += 2 + 32  # version + random
 

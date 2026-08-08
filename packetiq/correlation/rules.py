@@ -288,13 +288,14 @@ def covert_exfiltration(events: list[DetectionEvent]) -> list[AttackChain]:
         icmp_evs = _events_of_type(src_events, EventType.ICMP_TUNNELING)
         dns_evs  = _events_of_type(src_events, EventType.DNS_TUNNELING)
 
+        # At least one confirmed tunnel is required (not just an anomaly). The
+        # guard below is the whole check — a second `len(combined) < 1` used to
+        # follow it, which could never be true once one of the two lists is
+        # known non-empty.
         if not icmp_evs and not dns_evs:
             continue
 
-        # Need at least one confirmed tunnel (not just anomaly)
         combined = icmp_evs + dns_evs
-        if len(combined) < 1:
-            continue
 
         # If both channels are active simultaneously, escalate
         both_active = bool(icmp_evs and dns_evs)

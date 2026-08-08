@@ -36,18 +36,16 @@ def enrich(result: ExtractionResult, store: Optional[IOCStore] = None) -> list[D
         last_ts[fl.dst_ip] = max(last_ts.get(fl.dst_ip, 0.0), fl.last_seen)
 
     # ── IP / CIDR matches ────────────────────────────────────────────────────
-    seen_ips: set = set()
+    # `candidate_ips` is a set, so each address is visited once — the dedup
+    # bookkeeping that used to sit in this loop could never fire.
     candidate_ips = set(result.external_ips) | {
         ip for ip in (set(result.ip_src_counts) | set(result.ip_dst_counts))
         if not is_private_ip(ip)
     }
     for ip in candidate_ips:
-        if ip in seen_ips:
-            continue
         hit = store.lookup_ip(ip)
         if not hit:
             continue
-        seen_ips.add(ip)
         internal = next((p for p in peers.get(ip, ()) if is_private_ip(p)), None)
         events.append(DetectionEvent(
             event_type   = EventType.IOC_MATCH,

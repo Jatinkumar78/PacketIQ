@@ -27,7 +27,10 @@ _TTL_MAP: list[tuple[int, int, str]] = [
     (64,  64,  "Linux / Android / macOS"),
     (128, 128, "Windows"),
     (200, 255, "BSD / Solaris"),
-    (255, 255, "Network Device (Cisco/HP)"),
+    # Anything above 200 is network gear. That used to be a fourth row capped at
+    # 255, which made the fallback below unreachable — a TTL is one byte, so the
+    # row always matched first. Two spellings of one answer; this is the one that
+    # runs.
 ]
 
 # 0.0.0.0 is the DHCP "unspecified" sentinel a host uses before it has an

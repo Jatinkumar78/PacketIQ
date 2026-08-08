@@ -114,7 +114,12 @@ class InteractiveChat:
             full_response = self._stream_response()
             console.print()  # newline after streaming
 
-            self.history.append({"role": "assistant", "content": full_response})
+            # None means the turn failed and `_stream_response` already rolled the
+            # user message back out. Appending an assistant turn anyway would leave
+            # a history that opens with the assistant, which the API rejects — so a
+            # single transient error would break every question after it.
+            if full_response is not None:
+                self.history.append({"role": "assistant", "content": full_response})
 
     # ── Private: UI rendering ─────────────────────────────────────────────────
 
@@ -147,10 +152,20 @@ class InteractiveChat:
             "[dim green]┌─[/dim green][bold cyan][COPILOT][/bold cyan]"
             "[dim green]──────────────────────────────────────[/dim green]"
         )
-        console.print("[dim green]└──[/dim green] ", end="", flush=True)
+        console.print("[dim green]└──[/dim green] ", end="")
+        # Rich's Console.print takes no `flush` argument — passing one raised a
+        # TypeError on every question asked, which killed the REPL before the
+        # first token arrived. The prefix still has to reach the terminal before
+        # `_stream_response` starts writing chunks with the builtin print, so
+        # flush the underlying stream directly.
+        console.file.flush()
 
-    def _stream_response(self) -> str:
-        """Stream Claude's response, printing each chunk as it arrives."""
+    def _stream_response(self) -> Optional[str]:
+        """Stream Claude's response, printing each chunk as it arrives.
+
+        Returns the full text, or None when the turn failed — in which case the
+        user message has already been rolled back out of the history.
+        """
         full_text = ""
 
         def on_chunk(chunk: str):
@@ -170,6 +185,7 @@ class InteractiveChat:
             if self.history and self.history[-1]["role"] == "user":
                 self.history.pop()
             self.turn = max(0, self.turn - 1)
+            return None
 
         return full_text
 

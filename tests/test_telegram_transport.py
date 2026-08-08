@@ -309,3 +309,131 @@ def test_connection_test_reports_the_bot_identity(monkeypatch):
     ok, msg = s.test_connection()
     assert isinstance(ok, bool)
     assert msg
+
+
+def test_connection_test_reports_an_unreachable_api(monkeypatch):
+    """getMe never completes — the setup UI has to say so rather than hang."""
+    def boom(*a, **k):
+        raise OSError("no route to host")
+
+    monkeypatch.setattr(tg, "requests", _fake_requests(get=boom, post=boom))
+    s = tg.TelegramSender("123456789:" + "A" * 25, "-100123456")
+    monkeypatch.setattr(s, "_rate_limit", lambda: None)
+
+    ok, err = s.test_connection()
+    assert ok is False
+    assert "Network error" in err and "no route to host" in err
+
+
+def test_connection_test_names_a_bad_token(monkeypatch):
+    """The two failure modes must stay distinguishable: a rejected token is a
+    typo to fix, an accepted token with a rejected message is a wrong chat id."""
+    monkeypatch.setattr(tg, "requests", _fake_requests(
+        get=lambda url, **kw: types.SimpleNamespace(
+            status_code=401, json=lambda: {"ok": False, "description": "Unauthorized"})))
+    s = tg.TelegramSender("123456789:" + "A" * 25, "-100123456")
+    monkeypatch.setattr(s, "_rate_limit", lambda: None)
+
+    ok, err = s.test_connection()
+    assert ok is False
+    assert "Invalid bot token" in err and "Unauthorized" in err
+
+
+def test_connection_test_distinguishes_a_valid_token_from_a_bad_chat(monkeypatch):
+    monkeypatch.setattr(tg, "requests", _fake_requests(
+        get=lambda url, **kw: types.SimpleNamespace(
+            status_code=200,
+            json=lambda: {"ok": True, "result": {"username": "packetiq_bot"}}),
+        post=lambda url, **kw: types.SimpleNamespace(
+            status_code=400, json=lambda: {"ok": False, "description": "chat not found"})))
+    s = tg.TelegramSender("123456789:" + "A" * 25, "-100123456")
+    monkeypatch.setattr(s, "_rate_limit", lambda: None)
+
+    ok, err = s.test_connection()
+    assert ok is False
+    assert "Token valid but message failed" in err
+    assert "chat not found" in err
+
+
+def test_a_rejected_document_upload_surfaces_the_api_description(monkeypatch, tmp_path):
+    f = tmp_path / "report.pdf"
+    f.write_bytes(b"%PDF-1.4 synthetic")
+    s = _sender(monkeypatch, types.SimpleNamespace(
+        status_code=400,
+        json=lambda: {"ok": False, "description": "file is too big"}))
+
+    ok, err = s.send_document(str(f))
+    assert ok is False
+    assert "file is too big" in err
+
+
+def test_a_document_rejection_with_no_description_still_reports_failure(monkeypatch, tmp_path):
+    f = tmp_path / "report.pdf"
+    f.write_bytes(b"%PDF-1.4 synthetic")
+    s = _sender(monkeypatch, types.SimpleNamespace(status_code=500, json=lambda: {"ok": False}))
+
+    ok, err = s.send_document(str(f))
+    assert ok is False
+    assert err == "Unknown error"
+
+
+def test_a_send_timeout_is_named_as_such(monkeypatch):
+    """`requests.Timeout` and `ConnectionError` produce different guidance for
+    the user — one means retry, the other means check the network."""
+    import requests as real
+
+    def timeout(*a, **k):
+        raise real.Timeout()
+
+    monkeypatch.setattr(tg, "requests", _fake_requests(post=timeout, get=timeout))
+    s = tg.TelegramSender("123456789:" + "A" * 25, "-100123456")
+    monkeypatch.setattr(s, "_rate_limit", lambda: None)
+
+    ok, err = s.send("x")
+    assert (ok, err) == (False, "Request timed out")
+
+
+def test_a_send_connection_error_is_named_as_such(monkeypatch):
+    import requests as real
+
+    def unreachable(*a, **k):
+        raise real.ConnectionError()
+
+    monkeypatch.setattr(tg, "requests", _fake_requests(post=unreachable, get=unreachable))
+    s = tg.TelegramSender("123456789:" + "A" * 25, "-100123456")
+    monkeypatch.setattr(s, "_rate_limit", lambda: None)
+
+    ok, err = s.send("x")
+    assert (ok, err) == (False, "Network unreachable")
+
+
+def test_consecutive_sends_are_spaced_by_the_rate_limit(monkeypatch):
+    """Telegram throttles a bot to roughly one message per second per chat.
+
+    Every other test stubs this out, so the real arithmetic — how long to wait
+    given how long ago the last send was — was never exercised. Getting it wrong
+    means a burst of findings is rejected by the API, not delivered slowly.
+    """
+    slept: list = []
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(tg.time, "time", lambda: clock["t"])
+    monkeypatch.setattr(tg.time, "sleep", lambda s: slept.append(s))
+
+    s = tg.TelegramSender("123456789:" + "A" * 25, "-100123456")
+    s._last_sent = clock["t"]          # a send just happened
+    s._rate_limit()
+
+    assert slept == [pytest.approx(tg.MIN_DELAY)]
+    assert s._last_sent == clock["t"]
+
+
+def test_a_send_after_a_long_gap_does_not_wait(monkeypatch):
+    slept: list = []
+    monkeypatch.setattr(tg.time, "time", lambda: 2000.0)
+    monkeypatch.setattr(tg.time, "sleep", lambda s: slept.append(s))
+
+    s = tg.TelegramSender("123456789:" + "A" * 25, "-100123456")
+    s._last_sent = 1000.0              # far longer ago than the minimum delay
+    s._rate_limit()
+
+    assert slept == [], "no need to throttle when the last send was ages ago"

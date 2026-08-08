@@ -62,8 +62,25 @@ jobs:
       - name: Type check (mypy)
         run: mypy packetiq
 
+      # 100, not a margin. Every statement in the package is executed by the
+      # suite, so any number below 100 means a line shipped that no test ran —
+      # and the gate should say so on the commit that introduced it, not weeks
+      # later. Deliberately unreachable code is deleted rather than excluded;
+      # the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs,
+      # `raise NotImplementedError` and `__main__` guards (see pyproject).
+      #
+      # The floor is 99 on 3.9 for two measurement reasons, neither a test gap:
+      #   * `_load_toml`'s `tomllib` branch cannot run where tomllib does not
+      #     exist — 3.9 takes the `tomli` backport branch instead (both covered).
+      #   * CPython 3.9 emits no trace event for ~12 `continue`/`break` statements
+      #     that 3.10+ records. Verified directly: the zeek endpoint guard skips
+      #     the record on 3.9 (1 of 2 flows kept, test green) while coverage still
+      #     reports the line unhit.
+      # 3.10-3.12 measure faithfully and are held at exactly 100.
       - name: Unit + integration tests (with coverage gate)
-        run: pytest -q --cov=packetiq --cov-report=term-missing --cov-fail-under=85
+        run: |
+          if [ "${{ matrix.python-version }}" = "3.9" ]; then FLOOR=99; else FLOOR=100; fi
+          pytest -q --cov=packetiq --cov-report=term-missing --cov-fail-under=$FLOOR
 
       # Standing guarantee: the deterministic grounding guardrail redacts every
       # ungrounded IP / MITRE technique / CVE / domain / file-hash. These tests use

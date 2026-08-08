@@ -111,11 +111,10 @@ class CorrelationEngine:
             if not merged_flags[i]:
                 result.append(chain_i)
 
-        # Collect any chains that were absorbed-into but not yet in result
-        for i, chain in enumerate(chains):
-            if not merged_flags[i] and chain not in result:
-                result.append(chain)
-
+        # The loop above already appends exactly the chains that were not merged
+        # away, so the sweep that used to follow could never add anything: every
+        # chain with `merged_flags[i]` false is in `result`, and every other one
+        # was deliberately absorbed.
         return result
 
     def _rank(self, chains: list[AttackChain]) -> list[AttackChain]:

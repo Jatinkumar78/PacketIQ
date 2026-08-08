@@ -375,3 +375,72 @@ def test_broadcast_falls_back_to_a_default_webhook_payload(monkeypatch):
     monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hook.example.com/y")
     ch.broadcast("Subj", "Body")
     assert sent[0]["json"] == {"subject": "Subj", "text": "Body"}
+
+
+def test_configured_channels_includes_a_generic_webhook(monkeypatch):
+    """The webhook arm of the listing — the UI shows this list before sending."""
+    monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://hook.example.com/y")
+    assert ch.configured_channels() == ["webhook"]
+
+
+def test_a_generic_webhook_reports_a_transport_failure(monkeypatch):
+    """An unreachable webhook is a failed delivery, not an exception up the stack.
+
+    broadcast() collects per-channel results, so a raise here would take down
+    the alerts that were still deliverable.
+    """
+    def post(url, json=None, timeout=None):
+        raise ConnectionError("connection reset")
+
+    monkeypatch.setattr(ch, "requests", types.SimpleNamespace(post=post))
+
+    ok, err = ch.GenericWebhook("https://hook.example.com/y").send({"a": 1})
+    assert ok is False
+    assert "connection reset" in err
+
+
+def test_broadcast_sends_email_when_smtp_is_configured(monkeypatch):
+    """The email arm of broadcast, wired from environment to EmailSender.
+
+    Checks the address defaulting too: with no ALERT_EMAIL_FROM set, the SMTP
+    user becomes the sender rather than the message going out with no From.
+    """
+    captured = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            captured["host"], captured["port"] = host, port
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def starttls(self, context=None):
+            captured["tls"] = True
+
+        def login(self, user, password):
+            captured["login"] = (user, password)
+
+        def send_message(self, msg):
+            captured["msg"] = msg
+
+    monkeypatch.setattr(ch.smtplib, "SMTP", FakeSMTP)
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_PORT", "2525")
+    monkeypatch.setenv("SMTP_USER", "alerts@example.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "secret")
+    monkeypatch.setenv("ALERT_EMAIL_TO", "soc@example.com")
+    monkeypatch.delenv("ALERT_EMAIL_FROM", raising=False)
+
+    results = ch.broadcast("Critical finding", "3 events")
+
+    assert results == {"email": (True, "")}
+    assert captured["host"] == "smtp.example.com"
+    assert captured["port"] == 2525
+    assert captured["tls"] is True
+    assert captured["login"] == ("alerts@example.com", "secret")
+    assert captured["msg"]["To"] == "soc@example.com"
+    assert captured["msg"]["From"] == "alerts@example.com"
+    assert captured["msg"]["Subject"] == "Critical finding"

@@ -847,8 +847,11 @@ def _run_fuse(job_id: str, pcap_paths: list, loop: asyncio.AbstractEventLoop) ->
         return data
     except Exception as exc:  # noqa: BLE001
         import traceback
-        asyncio.run_coroutine_threadsafe(queue.put({"type": "error", "message": f"{type(exc).__name__}: {exc}",
-                                                    "traceback": traceback.format_exc()}), loop)
+        reason = f"{type(exc).__name__}: {exc}"
+        _jobs[job_id]["error"] = reason      # so a late WS/REST reader gets the reason
+        asyncio.run_coroutine_threadsafe(
+            queue.put({"type": "error", "message": reason,
+                       "traceback": traceback.format_exc()}), loop)
         return None
 
 
@@ -976,8 +979,12 @@ def _run_analysis(job_id: str, pcap_path: str, loop: asyncio.AbstractEventLoop) 
 
     except Exception as exc:
         import traceback
-        push(type="error", message=f"{type(exc).__name__}: {exc}",
-             traceback=traceback.format_exc())
+        reason = f"{type(exc).__name__}: {exc}"
+        # Record it on the job as well as pushing it down the socket. A browser
+        # that connects *after* the failure reads `job["error"]`, which was left
+        # at None — so a reconnect showed an error with no reason at all.
+        _jobs[job_id]["error"] = reason
+        push(type="error", message=reason, traceback=traceback.format_exc())
         return None
 
 
@@ -2393,7 +2400,10 @@ def create_app() -> FastAPI:
             await websocket.close()
             return
         if job["status"] == "error":
-            await websocket.send_text(json.dumps({"type": "error", "message": job.get("error", "Unknown error")}))
+            # `or`, not a dict default: the key is always present and starts as
+            # None, so a default would never be used.
+            await websocket.send_text(json.dumps(
+                {"type": "error", "message": job.get("error") or "Unknown error"}))
             await websocket.close()
             return
 

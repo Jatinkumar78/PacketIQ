@@ -75,3 +75,111 @@ def test_iocs_and_recommendations_are_grounded():
     assert "172.20.10.1" in iocs.get("Hosts named in findings", [])
     recs = report_style.recommendations(_RES["events"])
     assert recs == ["Block the resolver path and inspect the host."]
+
+
+# --------------------------------------------------------------------------- #
+#  Degradation and the branches a single happy-path render never reaches        #
+# --------------------------------------------------------------------------- #
+
+def test_a_capture_with_only_low_findings_is_described_as_informational():
+    """The lead paragraph is what an executive reads first. Saying a LOW-only
+    capture 'warrants analyst attention' would misdirect the whole report."""
+    res = {**_RES,
+           "risk": {"score": 5, "tier": "LOW", "summary": "Quiet capture.",
+                    "breakdown": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 1}},
+           "events": [{"event_type": "DNS_ANOMALY", "severity": "LOW",
+                       "src_ip": "10.0.0.5", "dst_ip": "8.8.8.8", "dst_port": 53,
+                       "confidence": 40, "description": "High-volume DNS.",
+                       "recommendation": "None required.", "mitre": []}]}
+
+    data = pdf_report.build_pdf_bytes(res)
+    assert data and data[:5] == b"%PDF-"
+
+
+def test_a_large_finding_set_is_truncated_with_a_pointer_to_the_html_export():
+    """45 rows is the table cap. Beyond it the PDF must say what was left out."""
+    events = [{"event_type": "PORT_SCAN", "severity": "HIGH", "src_ip": f"45.33.32.{i}",
+               "dst_ip": "10.0.0.5", "dst_port": 445, "confidence": 80,
+               "description": f"Scan {i}", "recommendation": "Investigate.",
+               "mitre": [{"id": "T1046", "name": "Network Service Discovery"}, "T1595"]}
+              for i in range(60)]
+
+    data = pdf_report.build_pdf_bytes({**_RES, "events": events})
+    assert data and data[:5] == b"%PDF-"
+    assert len(data) > 5000, "a 60-finding report should be substantially longer"
+
+
+def test_a_chain_with_timestamps_and_attributions_renders():
+    """Exercises the observed-window line and the attribution caveat, both of
+    which only appear when the analysis produced that data."""
+    res = {**_RES,
+           "attributions": [{"actor": "Unattributed cluster", "confidence": 0.3}],
+           "chains": [{**_RES["chains"][0],
+                       "first_seen": "2026-07-09 12:00:00",
+                       "last_seen": "2026-07-09 12:07:31"}]}
+
+    data = pdf_report.build_pdf_bytes(res)
+    assert data and data[:5] == b"%PDF-"
+
+
+def test_a_non_numeric_count_is_passed_through_rather_than_crashing():
+    """Serialized meta can carry a pre-formatted string; the PDF must render it
+    as-is instead of failing the whole document on an int() call."""
+    assert pdf_report._count(1234567) == "1,234,567"
+    assert pdf_report._count("n/a") == "n/a"
+    assert pdf_report._count(None) == "None"
+
+
+def test_mitre_techniques_render_from_both_dicts_and_bare_ids():
+    e = {"mitre": [{"id": "T1046", "name": "Network Service Discovery"},
+                   "T1595 Active Scanning",
+                   {"name": "no id — skipped"}]}
+    rendered = pdf_report._tech_ids(e)
+
+    assert "T1046 Network Service Discovery" in rendered
+    assert "T1595 Active Scanning" in rendered
+    assert "no id" not in rendered
+
+
+def test_an_event_with_no_mitre_mapping_renders_empty():
+    assert pdf_report._tech_ids({}) == ""
+
+
+def test_the_pdf_path_reports_failure_rather_than_raising(tmp_path, monkeypatch):
+    """A write to an unwritable location must come back as False so the caller
+    can fall back to the HTML report instead of the run dying."""
+    unwritable = tmp_path / "no-such-dir" / "report.pdf"
+    assert pdf_report.build_pdf(str(unwritable), _RES) is False
+
+
+def test_build_pdf_bytes_returns_none_when_the_render_fails(monkeypatch):
+    monkeypatch.setattr(pdf_report, "build_pdf", lambda path, res: False)
+    assert pdf_report.build_pdf_bytes(_RES) is None
+
+
+def test_the_temp_file_is_cleaned_up_even_when_it_is_already_gone(monkeypatch):
+    """The finally-block unlink races with anything else clearing /tmp; an
+    OSError there must not mask the returned bytes."""
+    import os as _os
+
+    def vanishing_unlink(path):
+        raise OSError("already removed")
+
+    monkeypatch.setattr(_os, "unlink", vanishing_unlink)
+    data = pdf_report.build_pdf_bytes(_RES)
+    assert data and data[:5] == b"%PDF-"
+
+
+def test_reportlab_being_absent_is_reported_not_raised(monkeypatch):
+    """PDF export is optional; without reportlab the caller uses HTML instead."""
+    import builtins
+    real_import = builtins.__import__
+
+    def no_reportlab(name, *a, **kw):
+        if name == "reportlab" or name.startswith("reportlab."):
+            raise ImportError("not installed")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", no_reportlab)
+    assert pdf_report.available() is False
+    assert pdf_report.build_pdf("/tmp/never-written.pdf", _RES) is False

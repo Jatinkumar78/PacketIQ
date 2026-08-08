@@ -5,6 +5,86 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### 100% line coverage, and four real defects it uncovered
+
+Coverage went from a reported 87.49% to **100.00%** — every one of the 9,879
+statements in `packetiq/` is now executed by the suite, which grew from 724 tests
+to **1,716**. The CI floor moved from 85% to 100%.
+
+The point was never the number. Driving it there ran code that had never
+executed before, and four of those lines were broken.
+
+**Fixed**
+- **`packetiq chat` crashed on the first question.** `_print_thinking_prefix`
+  called Rich's `Console.print(..., flush=True)`, and Rich's `print` takes no
+  `flush` argument — so every question raised `TypeError` before a single token
+  arrived. The interactive REPL loop had zero coverage, which is exactly why a
+  crash on its most common path survived. The prefix now flushes the underlying
+  stream directly.
+- **One failed AI turn broke the rest of the chat session.** On an API error the
+  REPL correctly rolled the user message back out of the history, then appended
+  an assistant turn anyway — leaving a conversation that opened with the
+  assistant, which the API rejects. Every subsequent question in that session
+  failed. `_stream_response` now returns `None` on failure and the caller skips
+  the append.
+- **A failed web analysis reported no reason on reconnect.** `_jobs[id]["error"]`
+  was initialised to `None` and never written; the worker only pushed the reason
+  onto the WebSocket queue. A browser that connected *after* the failure received
+  `{"type": "error", "message": null}`. The reason is now recorded on the job, so
+  both the socket and `GET /api/results/{id}` report it.
+- **One corrupt frame could fail the whole packet list.** `summarize()` called
+  `len(pkt)`, which re-serialises the packet and raises on a frame from a
+  truncated capture. Since the packet browser renders every row through
+  `summarize`, one bad frame took down the entire list — and it also made
+  `dissect()`'s own "unbuildable packet" fallback unreachable. Frame length now
+  degrades to 0 and the rest of the row still renders.
+
+**Fixed — measurement**
+- **The coverage number was overstated, and the config was hiding code.** The
+  `exclude_also` list carried a bare `\.\.\.` pattern, intended for `...`
+  Protocol stubs. It matched any line containing three dots anywhere — including
+  `File(...)` in a FastAPI signature and every `"Parsing packets..."` progress
+  string. coverage.py drops the *whole body* when the matching line opens a
+  block, so `/api/upload`, `/api/fuse` and `/api/analyze` plus 32 statements of
+  `cli.py` were absent from the denominator: 96 statements the gate could never
+  fail on. The pattern is now anchored (`^\s*\.\.\.\s*$`). Re-measuring on the
+  honest denominator put the real starting figure at 87.45%.
+
+**Changed**
+- **Unreachable code deleted rather than excluded.** Five guards could not fire
+  on any input and were removed with the reason recorded in place: a `_TTL_MAP`
+  row duplicated by its own fallback; a bounds check in the JA3 ClientHello
+  parser already guaranteed by the 43-byte minimum above it; a `ValueError`
+  handler around `ipaddress` calls that a width check makes impossible; a
+  dedup pass over a `set`; a second `len(combined) < 1` after a check that
+  already proved the list non-empty; and a chain-collection sweep that could
+  never append. Excluding them would have hidden the same dead code behind a
+  green number.
+- **CI coverage gate raised from 85% to 100%** on Python 3.10–3.12, so a line
+  that ships untested fails the commit that introduced it. The 3.9 leg is held at
+  99% for two measurement reasons, neither a test gap: `tomllib` does not exist
+  there (3.9 runs the `tomli` backport branch instead, and both branches are
+  covered), and CPython 3.9 emits no trace event for about a dozen
+  `continue`/`break` statements that 3.10+ records. The latter was verified
+  directly rather than assumed — the Zeek endpoint guard demonstrably skips the
+  record on 3.9 (one of two flows kept, test green) while coverage still reports
+  the line unhit.
+
+**Added**
+- Sixteen new test modules covering the surfaces that had none: the interactive
+  copilot REPL, TLS certificate carving (driven with real X.509 certificates),
+  file carving and TCP reassembly, the JA3/JA4 ClientHello parser, malformed
+  NetFlow/IPFIX exports, live capture and interface enumeration (with the Linux
+  and Windows paths stubbed so they run on macOS too), every AI provider's
+  streaming arm and the cross-provider fallback loop, and the web app's
+  rejection paths, worker-thread failures and grounding redactor.
+
+**Fixed — test hygiene**
+- A new CLI test set `PACKETIQ_ALLOWED_HOSTS=*` and leaked it into the
+  DNS-rebinding and CSRF guards, failing them. `monkeypatch.delenv` records
+  nothing for a variable that was never set, so it restores nothing; the test now
+  seeds the variable with `setenv` first.
+
 ### Type-check gate fixed on Python 3.9, and packaging promises made enforceable
 
 **Fixed**

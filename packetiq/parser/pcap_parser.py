@@ -177,10 +177,10 @@ class PCAPParser:
                 arp = pkt[ARP]
                 record.is_arp      = True
                 record.protocol    = "ARP"
-                try:
-                    record.arp_op = int(arp.op)
-                except Exception:
-                    record.arp_op = None
+                # `op` is a ShortEnumField: scapy dissects it as an int, and a
+                # frame truncated before it does not dissect as ARP at all, so
+                # this cast cannot fail on anything that reaches here.
+                record.arp_op      = int(arp.op)
                 record.arp_src_mac = self._norm_mac(arp.hwsrc)
                 record.arp_src_ip  = arp.psrc
                 record.arp_dst_mac = self._norm_mac(arp.hwdst)

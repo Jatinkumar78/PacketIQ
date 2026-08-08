@@ -205,6 +205,20 @@ def _wireshark_info(pkt, proto, sport, dport) -> str:
         return proto
 
 
+def _frame_len(pkt) -> int:
+    """On-the-wire length, or 0 when the frame cannot be rebuilt.
+
+    `len(pkt)` re-serialises the packet, which raises on a frame dissected from a
+    truncated or corrupt capture. The packet list renders every row through
+    `summarize`, so letting that propagate would fail the whole list over one bad
+    frame — and it also made `dissect`'s own fallback unreachable.
+    """
+    try:
+        return len(pkt)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def summarize(pkt, index: int) -> dict:
     """One-line summary row for the packet list."""
     from packetiq.utils.helpers import ts_to_str
@@ -224,7 +238,7 @@ def summarize(pkt, index: int) -> dict:
         "dst": f"{dst}:{dport}" if (dst and dport) else dst,
         "proto": proto,
         "service": svc,
-        "length": len(pkt),
+        "length": _frame_len(pkt),
         "info": info[:160],
         "protocols": _protocol_tokens(pkt, proto, sport, dport, svc),
     }
@@ -326,12 +340,11 @@ def _ttl_analysis(ttl: int):
 
 
 def _ip_role(ip: str) -> str:
+    # `is_private_ip` already swallows an unparseable address and answers False,
+    # so there is nothing left here to guard against.
     if not ip:
         return ""
-    try:
-        return "private / internal (RFC1918)" if is_private_ip(ip) else "public / external"
-    except Exception:
-        return ""
+    return "private / internal (RFC1918)" if is_private_ip(ip) else "public / external"
 
 
 def _port_role(port: int) -> str:
