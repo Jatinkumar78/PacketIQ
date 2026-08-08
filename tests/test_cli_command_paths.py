@@ -469,6 +469,22 @@ def test_setup_capture_applies_the_fix_when_privileges_are_missing(run, monkeypa
     assert "Granted CAP_NET_RAW" in out
 
 
+def test_setup_capture_does_nothing_when_capture_already_works(run, monkeypatch):
+    """The machine this was first run on already had capture enabled, so this
+    early return was covered locally and absent on the CI runner, where the probe
+    says no. Assert the command stops rather than re-applying a fix nobody needs.
+    """
+    from packetiq import capture_setup
+
+    monkeypatch.setattr(capture_setup, "status", lambda: (True, "mac", "member of access_bpf"))
+    monkeypatch.setattr(capture_setup, "setup",
+                        lambda: pytest.fail("setup must not run when capture already works"))
+
+    out = _ok(run("setup-capture"))
+    assert "already enabled" in out
+    assert "Applying one-time capture-privilege setup" not in out
+
+
 def test_a_failed_capture_setup_exits_nonzero(run, monkeypatch):
     from packetiq import capture_setup
 

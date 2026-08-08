@@ -6,6 +6,7 @@ then runs the full analysis pipeline once and exposes the results.
 """
 
 import random
+import socket
 
 import pytest
 from scapy.all import ICMP, IP, TCP, UDP, Ether, Raw, wrpcap
@@ -40,6 +41,39 @@ def isolate_analysis_history(tmp_path, monkeypatch):
     applies theirs after this one.
     """
     monkeypatch.setenv("PACKETIQ_DB", str(tmp_path / "history.db"))
+
+
+@pytest.fixture(autouse=True)
+def no_outbound_network(monkeypatch):
+    """Turn any escape to the internet into a failed test.
+
+    Deleting ``TELEGRAM_BOT_TOKEN`` from the environment does not unconfigure
+    alerting: ``telegram.load_credentials`` also scans ``./.env`` and ``../.env``,
+    so the "does not send without configuration" test found the developer's real
+    bot token and POSTed the findings to a real chat on every local run. Nothing
+    failed, because sending worked. The same silence made the coverage number
+    machine-dependent — that request was the only thing exercising the alert
+    formatter's MITRE block, which is why CI came up short.
+
+    Blocking at ``connect`` rather than at ``requests`` catches every client
+    (requests, httpx, urllib, raw sockets) and every credential source. Loopback
+    stays open for the local Ollama endpoint, and AF_UNIX for anything that talks
+    to a socket file; a test that wants a remote call still stubs it and never
+    gets here.
+    """
+    real_connect = socket.socket.connect
+
+    def guarded_connect(self, address, *args, **kwargs):
+        if self.family != getattr(socket, "AF_UNIX", object()):
+            host = address[0] if isinstance(address, tuple) else address
+            if host not in ("127.0.0.1", "::1", "localhost", "0.0.0.0", ""):
+                raise AssertionError(
+                    f"test attempted an outbound connection to {host!r}; stub the "
+                    "client at its boundary instead"
+                )
+        return real_connect(self, address, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
 
 
 def _build_attack_pcap(path: str):

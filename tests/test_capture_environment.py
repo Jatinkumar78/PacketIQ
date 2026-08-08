@@ -3,10 +3,13 @@
 These are the parts of PacketIQ that touch the host itself, so they are the
 hardest to cover and the easiest to break on a machine that is not the
 developer's. Every OS-specific branch here is driven with a stubbed OS rather
-than skipped, so the Linux and Windows paths are exercised on macOS CI too.
+than skipped, so the same lines are measured on a macOS workstation and on the
+Linux CI runner. Anything left to the real host reads as covered on whichever
+machine happens to have that OS, and missing on the other.
 """
 
 import io
+import types
 
 import pytest
 
@@ -68,6 +71,39 @@ def test_a_failing_os_tool_yields_no_output(monkeypatch):
 
     monkeypatch.setattr(net_interfaces.subprocess, "run", boom)
     assert net_interfaces._run(["networksetup", "-listallhardwareports"]) == ""
+
+
+def test_a_successful_os_tool_returns_its_stdout(monkeypatch):
+    """`_run`'s success path, and the reason it needs naming explicitly: its only
+    callers are the two macOS helpers, and `list_interfaces` skips both unless the
+    host is a Mac. Reached for free on a developer laptop, never on a Linux
+    runner — the line was covered here and missing in CI.
+    """
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"] = argv
+        return types.SimpleNamespace(stdout="Hardware Port: Wi-Fi\nDevice: en0\n")
+
+    monkeypatch.setattr(net_interfaces.shutil, "which", lambda exe: f"/usr/sbin/{exe}")
+    monkeypatch.setattr(net_interfaces.subprocess, "run", fake_run)
+
+    out = net_interfaces._run(["networksetup", "-listallhardwareports"])
+
+    assert out.startswith("Hardware Port:")
+    # The absolute path resolved by `which`, not the bare name — that, plus the
+    # constant argument list, is what makes running this without a shell safe.
+    assert seen["argv"] == ["/usr/sbin/networksetup", "-listallhardwareports"]
+
+
+def test_a_tool_that_prints_nothing_yields_an_empty_string(monkeypatch):
+    """`capture_output=True` leaves `stdout` as None when the process wrote
+    nothing. Callers iterate the result, so it has to be a string either way."""
+    monkeypatch.setattr(net_interfaces.shutil, "which", lambda exe: f"/sbin/{exe}")
+    monkeypatch.setattr(net_interfaces.subprocess, "run",
+                        lambda argv, **kw: types.SimpleNamespace(stdout=None))
+
+    assert net_interfaces._run(["ifconfig"]) == ""
 
 
 # ── Linux link state ─────────────────────────────────────────────────────────
@@ -171,6 +207,24 @@ def test_access_bpf_membership_grants_capture_before_a_device_exists(monkeypatch
     monkeypatch.setattr(grp, "getgrall",
                         lambda: [type("G", (), {"gr_name": "access_bpf", "gr_gid": 4242})()])
     monkeypatch.setattr(capture_setup.os.path, "exists", lambda p: False)
+
+    assert capture_setup._mac_capture_ok() is True
+
+
+def test_a_readable_bpf_device_confirms_capture_is_already_live(monkeypatch):
+    """The fully-configured Mac: in the group *and* a /dev/bpfN it can read.
+    `status()` only calls this helper on darwin, so on the Linux runner nothing
+    reached the early return — it was covered here purely because the developer's
+    own machine had already been through `setup-capture`.
+    """
+    import grp
+
+    monkeypatch.setattr(capture_setup.os, "geteuid", lambda: 501)
+    monkeypatch.setattr(capture_setup.os, "getgroups", lambda: [501, 20, 4242])
+    monkeypatch.setattr(grp, "getgrall",
+                        lambda: [type("G", (), {"gr_name": "access_bpf", "gr_gid": 4242})()])
+    monkeypatch.setattr(capture_setup.os.path, "exists", lambda p: p == "/dev/bpf0")
+    monkeypatch.setattr(capture_setup.os, "access", lambda p, mode: True)
 
     assert capture_setup._mac_capture_ok() is True
 

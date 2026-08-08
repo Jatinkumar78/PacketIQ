@@ -99,9 +99,24 @@ def test_analyze_can_suppress_the_timeline(run, attack_pcap):
     assert "Risk:" in out
 
 
-def test_analyze_with_alerts_does_not_send_without_configuration(run, attack_pcap, monkeypatch):
+def test_analyze_with_alerts_does_not_send_without_configuration(run, attack_pcap, tmp_path,
+                                                                 monkeypatch):
+    """Clearing the two environment variables is *not* enough to unconfigure
+    alerting: `telegram.load_credentials` falls back to scanning `./.env` and
+    `../.env`, so on a developer machine this test used to find a real bot token
+    and POST the findings to a real chat — proven by the fact that it was the
+    only thing covering the formatter's MITRE block. Run it from an empty
+    directory instead, and make any outbound request a failure rather than a
+    silent side effect.
+    """
+    import requests
+
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(requests, "post",
+                        lambda *a, **kw: pytest.fail(f"unconfigured alerting sent to {a[:1]}"))
+
     _ok(run("analyze", attack_pcap, "--alert", "--alert-threshold", "CRITICAL"))
 
 
@@ -319,7 +334,17 @@ def test_history_lists_past_analyses(run):
     assert out.strip()
 
 
-def test_setup_capture_reports_privilege_state(run):
+def test_setup_capture_reports_privilege_state(run, monkeypatch):
+    """The privilege *probe* runs for real — that is the point — but the fix does
+    not. On a host where capture is not already enabled the unstubbed command
+    goes on to call `setcap` on the interpreter, and a CI runner grants
+    passwordless sudo, so the suite would silently re-permission its own Python.
+    """
+    from packetiq import capture_setup
+
+    monkeypatch.setattr(capture_setup, "setup",
+                        lambda: (False, "privileged setup is not attempted from tests"))
+
     result = run("setup-capture")
     assert result.exit_code in (0, 1)
     assert result.output.strip()

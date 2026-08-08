@@ -5,6 +5,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Coverage made a property of the suite rather than of the machine
+
+The 100% gate passed on the workstation it was written on and failed on all three
+Linux legs of CI (3.10, 3.11, 3.12; 3.9 sits at a 99% floor and stayed green,
+which is what made the split hard to read). Reproduced two ways before anything
+was changed — the platform dispatch forced to Linux on this host, and a clean
+checkout run against a `.[dev]`-only environment with an empty `HOME` — and the
+two reproductions found six lines and one outright test failure between them.
+
+**Fixed**
+- **The test suite was sending real Telegram alerts.** The CLI test named
+  "analyze with alerts does not send without configuration" cleared
+  `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` and considered alerting
+  unconfigured. It is not:
+  `telegram.load_credentials` also scans `./.env` and `../.env`, so on a machine
+  with a populated `.env` the test found a real bot token and chat id and POSTed
+  the findings to a real chat. Confirmed from the coverage contexts, which show
+  that test executing `telegram.py`'s `requests.post` to `api.telegram.org`.
+  Nothing ever failed, because sending worked — and the same silence is why the
+  chain formatter's MITRE block was covered here and missing in CI. The test now
+  runs from an empty directory where no `.env` is discoverable, and treats any
+  outbound request as a failure.
+- **The TOML backport test failed wherever the backport is not installed.**
+  `tomli` is a conditional dependency (`python_version < '3.11'`), so on 3.11 and
+  3.12 it is genuinely absent. The test hid `tomllib` and imported the real
+  `tomli`, which raised, landed in `except Exception: return {}`, and asserted
+  against a default value. Both `tomllib` and `tomli` are now bound to a stand-in
+  that delegates to whichever parser the interpreter does have, so the fallback
+  wiring is what is measured. This also closed the last non-`continue`/`break`
+  gap on 3.9, taking that leg from 99.84% to **99.88%**.
+- **A test ran the privileged capture fix for real.** `setup-capture`'s
+  smoke test invoked the unstubbed command; where capture is not already enabled
+  that goes on to call `setcap` on the interpreter, and CI runners grant
+  passwordless sudo. The probe still runs for real; the fix no longer does.
+
+**Fixed — measurement**
+- **Six lines were covered by the machine rather than by a test** — green here,
+  red in CI. Four turned on the operating system: `_run`'s success path (its only
+  callers are the two macOS interface helpers, which `list_interfaces` skips off
+  darwin), the `/dev/bpf` branch of the macOS privilege check, and the CLI's
+  "capture is already enabled, nothing to do" branch — the last two reachable
+  only on a machine that had already been through `setup-capture`. The other two
+  turned on which packages happened to be installed: the `tomli` arm of
+  `_load_toml`. All six are now driven with an explicit stub, so the same lines
+  execute on every matrix leg. The suite grew from 1,716 tests to **1,723**.
+
+**Added**
+- **An autouse guard in `tests/conftest.py` that fails any test which opens an
+  outbound connection.** It sits at `socket.connect`, so it catches every client
+  and every credential source rather than one library's `post`; loopback stays
+  open for the local Ollama endpoint, and AF_UNIX for socket files. This is the
+  standing form of the Telegram fix above — the suite can no longer touch the
+  outside world without saying so.
+
 ### 100% line coverage, and four real defects it uncovered
 
 Coverage went from a reported 87.49% to **100.00%** — every one of the 9,879
@@ -51,27 +105,29 @@ executed before, and four of those lines were broken.
   honest denominator put the real starting figure at 87.45%.
 
 **Changed**
-- **Unreachable code deleted rather than excluded.** Five guards could not fire
+- **Unreachable code deleted rather than excluded.** Seven guards could not fire
   on any input and were removed with the reason recorded in place: a `_TTL_MAP`
   row duplicated by its own fallback; a bounds check in the JA3 ClientHello
   parser already guaranteed by the 43-byte minimum above it; a `ValueError`
   handler around `ipaddress` calls that a width check makes impossible; a
-  dedup pass over a `set`; a second `len(combined) < 1` after a check that
-  already proved the list non-empty; and a chain-collection sweep that could
-  never append. Excluding them would have hidden the same dead code behind a
-  green number.
+  `try/except` around `int(arp.op)`, which scapy has already dissected as an
+  integer by the time it is read; a dedup pass over a `set`; a second
+  `len(combined) < 1` after a check that already proved the list non-empty; and a
+  chain-collection sweep that could never append. Excluding them would have
+  hidden the same dead code behind a green number.
 - **CI coverage gate raised from 85% to 100%** on Python 3.10–3.12, so a line
   that ships untested fails the commit that introduced it. The 3.9 leg is held at
   99% for two measurement reasons, neither a test gap: `tomllib` does not exist
   there (3.9 runs the `tomli` backport branch instead, and both branches are
-  covered), and CPython 3.9 emits no trace event for about a dozen
-  `continue`/`break` statements that 3.10+ records. The latter was verified
-  directly rather than assumed — the Zeek endpoint guard demonstrably skips the
-  record on 3.9 (one of two flows kept, test green) while coverage still reports
+  covered — since closed outright, see the section above), and CPython 3.9 emits
+  no trace event for about a dozen `continue`/`break` statements that 3.10+
+  records. The latter was verified directly rather than assumed — the Zeek
+  endpoint guard demonstrably skips the record on 3.9 (one of two flows kept,
+  test green) while coverage still reports
   the line unhit.
 
 **Added**
-- Sixteen new test modules covering the surfaces that had none: the interactive
+- Twenty-nine new test modules covering the surfaces that had none: the interactive
   copilot REPL, TLS certificate carving (driven with real X.509 certificates),
   file carving and TCP reassembly, the JA3/JA4 ClientHello parser, malformed
   NetFlow/IPFIX exports, live capture and interface enumeration (with the Linux

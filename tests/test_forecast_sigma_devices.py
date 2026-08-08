@@ -211,52 +211,129 @@ def test_a_nic_with_a_couple_of_addresses_is_an_endpoint():
 
 
 # ── TOML config loading ──────────────────────────────────────────────────────
+#
+# `_load_toml` prefers `tomllib` and falls back to the `tomli` backport, and no
+# supported interpreter has both as a given: `tomllib` arrived in 3.11, and
+# `tomli` is only a dependency *below* 3.11. Reaching for whichever module the
+# interpreter happens to ship therefore measures the interpreter, not PacketIQ —
+# and it showed up twice. The 3.9 leg reported the `tomllib` branch as untested
+# because it cannot exist there, and on a clean 3.11/3.12 install the backport
+# test failed outright, because hiding `tomllib` and importing the real `tomli`
+# found nothing and landed in `except Exception: return {}`.
+#
+# Binding a stand-in that delegates to whatever parser *is* present makes the
+# same lines run on every leg, so the coverage number stops depending on which
+# Python is measuring it.
+
+def _bind_toml_parser(monkeypatch, name, seen=None):
+    """Bind ``sys.modules[name]`` to a stand-in that parses for real."""
+    import sys
+    import types
+
+    try:
+        import tomllib as parser  # 3.11+
+    except ModuleNotFoundError:       # 3.9 / 3.10 — the backport is a hard dep there
+        import tomli as parser
+
+    module = types.ModuleType(name)
+
+    def load(fh):
+        if seen is not None:
+            seen[name] = True
+        return parser.load(fh)
+
+    module.load = load                                       # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, name, module)
+
+
+def _hide(monkeypatch, *names):
+    """Make ``import <name>`` raise, and return the real ``__import__``."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def guarded(name, *a, **kw):
+        if name in names:
+            raise ModuleNotFoundError(f"No module named {name!r}")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    return real_import
+
+
+def _restore_import(monkeypatch, real_import):
+    """Put the real ``__import__`` back.
+
+    Deliberately not ``monkeypatch.undo()``: that would also revert conftest's
+    autouse history-DB isolation, since pytest hands the fixture and the test the
+    same monkeypatch instance.
+    """
+    import builtins
+
+    monkeypatch.setattr(builtins, "__import__", real_import)
+
 
 def test_the_toml_backport_is_used_when_the_stdlib_module_is_absent(tmp_path, monkeypatch):
     """Python 3.9 and 3.10 have no `tomllib`, so the whole config system runs
     through `tomli` there. On 3.11+ that path is otherwise never executed, which
     is exactly how it would rot unnoticed until a 3.9 user hit it.
     """
-    import builtins
-
     from packetiq import config
 
     cfg = tmp_path / "packetiq.toml"
     cfg.write_text("[brute_force]\nssh_threshold = 7\n", encoding="utf-8")
 
-    real_import = builtins.__import__
-    loaded_with = {}
+    seen: dict = {}
+    _bind_toml_parser(monkeypatch, "tomli", seen)
+    real_import = _hide(monkeypatch, "tomllib")
 
-    def no_tomllib(name, *a, **kw):
-        if name == "tomllib":
-            raise ModuleNotFoundError("No module named 'tomllib'")
-        module = real_import(name, *a, **kw)
-        if name == "tomli":
-            loaded_with["backport"] = True
-        return module
-
-    monkeypatch.setattr(builtins, "__import__", no_tomllib)
     monkeypatch.setenv("PACKETIQ_CONFIG", str(cfg))
     config.reload()
     try:
         assert config.get("brute_force", "ssh_threshold", None) == 7
-        assert loaded_with.get("backport") is True
+        assert seen.get("tomli") is True
     finally:
-        # Restore only the import hook, so `config.reload()` below runs against
-        # the real one. A blanket `monkeypatch.undo()` would also revert
-        # conftest's autouse history-DB isolation — pytest hands the fixture and
-        # the test the same monkeypatch instance.
-        monkeypatch.setattr(builtins, "__import__", real_import)
+        _restore_import(monkeypatch, real_import)
+        monkeypatch.delenv("PACKETIQ_CONFIG", raising=False)
+        config.reload()
+
+
+def test_the_stdlib_parser_is_used_when_it_is_available(tmp_path, monkeypatch):
+    """The mirror image, and the reason the 3.9 leg could never reach 100%: with
+    no `tomllib` to import, the preferred branch is unreachable on that
+    interpreter and its lines read as untested."""
+    from packetiq import config
+
+    cfg = tmp_path / "packetiq.toml"
+    cfg.write_text("[brute_force]\nssh_threshold = 9\n", encoding="utf-8")
+
+    seen: dict = {}
+    _bind_toml_parser(monkeypatch, "tomllib", seen)
+
+    monkeypatch.setenv("PACKETIQ_CONFIG", str(cfg))
+    config.reload()
+    try:
+        assert config.get("brute_force", "ssh_threshold", None) == 9
+        assert seen.get("tomllib") is True
+    finally:
         monkeypatch.delenv("PACKETIQ_CONFIG", raising=False)
         config.reload()
 
 
 def test_a_config_file_that_is_not_valid_toml_falls_back_to_defaults(tmp_path, monkeypatch):
-    """A broken packetiq.toml must not stop the tool starting."""
+    """A broken packetiq.toml must not stop the tool starting.
+
+    Bound to the stand-in for the same reason as above: without it, the parse
+    error surfaces from the `tomli` arm on 3.9/3.10 and from the `tomllib` arm on
+    3.11+, so the two `except Exception` lines swap places between matrix legs.
+    """
     from packetiq import config
 
     cfg = tmp_path / "packetiq.toml"
     cfg.write_text("[brute_force\nssh_threshold = ", encoding="utf-8")
+
+    _bind_toml_parser(monkeypatch, "tomllib")
+
     monkeypatch.setenv("PACKETIQ_CONFIG", str(cfg))
     config.reload()
     try:
@@ -268,26 +345,18 @@ def test_a_config_file_that_is_not_valid_toml_falls_back_to_defaults(tmp_path, m
 
 def test_a_broken_config_is_also_survivable_without_the_stdlib_parser(tmp_path, monkeypatch):
     """The 3.9 path needs the same guarantee as the 3.11+ one."""
-    import builtins
-
     from packetiq import config
 
     cfg = tmp_path / "packetiq.toml"
     cfg.write_text("[brute_force\n", encoding="utf-8")
 
-    real_import = builtins.__import__
+    real_import = _hide(monkeypatch, "tomllib", "tomli")
 
-    def no_toml_at_all(name, *a, **kw):
-        if name in ("tomllib", "tomli"):
-            raise ModuleNotFoundError(f"No module named {name!r}")
-        return real_import(name, *a, **kw)
-
-    monkeypatch.setattr(builtins, "__import__", no_toml_at_all)
     monkeypatch.setenv("PACKETIQ_CONFIG", str(cfg))
     config.reload()
     try:
         assert config.get("brute_force", "ssh_threshold", None) == 20
     finally:
-        monkeypatch.setattr(builtins, "__import__", real_import)
+        _restore_import(monkeypatch, real_import)
         monkeypatch.delenv("PACKETIQ_CONFIG", raising=False)
         config.reload()

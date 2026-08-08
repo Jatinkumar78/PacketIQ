@@ -10,7 +10,7 @@ them had direct coverage.
 
 from packetiq.alerts import formatter
 from packetiq.alerts.dispatcher import MAX_ORPHANS, AlertDispatcher
-from packetiq.correlation.models import AttackChain
+from packetiq.correlation.models import AttackChain, MitreTechnique
 from packetiq.detection.models import DetectionEvent, EventType, Severity
 from packetiq.detection.risk_scorer import RiskReport
 from packetiq.extractor.data_extractor import ExtractionResult
@@ -315,6 +315,37 @@ def test_a_short_analyst_note_is_printed_whole():
 
     assert "Escalate to IR." in msg
     assert "…" not in msg
+
+
+def test_a_chain_alert_lists_the_mitre_techniques():
+    """Every other chain here carries no techniques, so this block was reached
+    only by a CLI test that had picked real Telegram credentials out of the
+    developer's .env — which is why it was covered on a workstation and missing
+    on the CI runner.
+    """
+    chain = _chain(events=[_event()], mitre_techniques=[
+        MitreTechnique("TA0043", "Reconnaissance", "T1046", "Network Service Discovery"),
+        MitreTechnique("TA0006", "Credential Access", "T1110", "Brute Force"),
+    ])
+    msg = formatter.format_chain_alert(chain, 1, 1)
+
+    assert "<b>MITRE:</b>" in msg
+    assert "<code>T1046</code>" in msg
+    assert "<code>T1110</code>" in msg
+
+
+def test_a_chain_alert_prints_at_most_six_techniques():
+    """A long chain can map to a dozen techniques; Telegram messages are capped,
+    and the header is not the place to spend that budget."""
+    chain = _chain(events=[_event()], mitre_techniques=[
+        MitreTechnique("TA0043", "Reconnaissance", f"T10{i:02d}", f"Technique {i}")
+        for i in range(9)
+    ])
+    msg = formatter.format_chain_alert(chain, 1, 1)
+
+    assert "<code>T1000</code>" in msg
+    assert "<code>T1005</code>" in msg
+    assert "<code>T1006</code>" not in msg
 
 
 def test_a_clean_scan_message_names_the_file_and_stays_honest():
