@@ -243,9 +243,24 @@ def test_no_bpf_group_membership_means_no_capture(monkeypatch):
 
 
 def test_windows_capture_falls_back_to_checking_for_npcap(monkeypatch):
-    """`ctypes.windll` does not exist off Windows, so the admin check raises and
-    the Npcap probe is the answer. That is the branch every non-Windows run
-    takes, and it had never been exercised."""
+    """Without an elevated session, Npcap is the answer — and the only answer.
+
+    The admin probe is stubbed to say "no" rather than left to the host: off
+    Windows `ctypes.windll` does not exist and the check raises, but on the
+    Windows runner it answers for real, the session is elevated, and this
+    returned True whatever the Npcap probe said. Pinning it is what makes the
+    fallback the thing under test on every OS.
+    """
+    import ctypes
+
+    class Shell32:
+        @staticmethod
+        def IsUserAnAdmin():
+            return 0
+
+    monkeypatch.setattr(ctypes, "windll",
+                        type("WinDLL", (), {"shell32": Shell32})(), raising=False)
+
     monkeypatch.setattr(capture_setup, "_npcap_installed", lambda: True)
     assert capture_setup._windows_capture_ok() is True
 

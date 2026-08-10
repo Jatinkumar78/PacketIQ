@@ -57,6 +57,51 @@ from four e-mail tests, whose failure is the simulation itself: CPython's `ssl`
 module imports `enum_certificates` only when `sys.platform == "win32"` at import
 time, and that symbol exists only in a Windows build of `_ssl`.
 
+### The Windows leg, once it got as far as running the suite
+
+Fixing the type gate let the Windows runner reach the tests for the first time,
+and it found four more things the suite had been taking from whatever host ran
+it. Every one is the same defect as the round before in a different disguise,
+and none of them is in shipped code.
+
+**Fixed**
+- **Starting an event loop counted as a network connection.** Windows has no
+  AF_UNIX socketpair, so asyncio builds every loop's self-pipe by connecting to
+  127.0.0.1, and the outbound-network guard refused it. 190 tests failed there
+  without one of them going near a network — every `asyncio.run`, every FastAPI
+  `TestClient`. The guard now allows a connection while, and only while,
+  `socket.socketpair()` is running on that thread, which no client can be inside.
+- **Every frame was stamped with the host's own MAC address.** scapy fills an
+  unset `Ether().src` from `conf.iface`, so the fixture captures the suite writes
+  carried the hardware address of the machine that built them. On the Windows
+  runner, which has no usable scapy interface without Npcap, that same lookup
+  raised `ValueError: Interface 'Microsoft Loopback Adapter' not found` and took
+  out five tests. Source addresses are now pinned to a locally-administered
+  `02:00:00:00:00:01`, alongside the destination pinned in the previous round.
+- **Tables were as wide as whatever console the suite ran in.** `rich` freezes a
+  console's width when it builds one, from `os.get_terminal_size()`. A runner
+  with no tty gets 80 columns; the Windows runner has a console and reported its
+  own, which wrapped `PROTOCOL MISUSE` across two lines and failed the two CLI
+  tests that look for it. 80x25 is now pinned before anything can construct a
+  console — the width the Linux and macOS legs had been rendering at all along.
+- **A capture-privilege test asked the runner whether it was an administrator.**
+  It is, so `_windows_capture_ok()` returned True whatever the Npcap probe said —
+  and that probe was the entire point of the test. Stubbing the elevation check
+  makes the fallback the thing under test on every OS, rather than only on the
+  ones where `ctypes.windll` happens not to exist.
+
+**Added**
+- Four more assertions in `tests/test_harness_guards.py`: the isolated history
+  database, the event loop that must still be allowed to start, the pinned source
+  MAC, and the rendered width.
+
+Verified by simulating the Windows runner's networking on this Mac — asyncio's
+loopback socketpair, and a scapy that cannot resolve any interface — where the
+whole suite of 1,753 passes; by re-running the two CLI tests under a deliberately
+narrow console; and by re-measuring coverage at 100.00% on 3.9, 3.11 and 3.12,
+since pinning the source MAC changes the bytes every fixture capture is built
+from.
+
 ### What the first macOS and Windows runs caught
 
 Both new legs failed the first time they ran, which is the entire reason for

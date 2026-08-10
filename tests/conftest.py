@@ -3,19 +3,46 @@ Shared pytest fixtures for PacketIQ tests.
 
 Builds a deterministic synthetic attack PCAP that exercises every detector,
 then runs the full analysis pipeline once and exposes the results.
+
+Two of the guards below have to be installed here, at import, rather than as
+fixtures: `rich` freezes a console's width when it builds one, which the display
+module does at import; and pytest creates session-scoped fixtures *before* any
+function-scoped autouse fixture, so the attack PCAP would otherwise be built
+with the guards still off.
 """
 
+import os
 import random
 import socket
+import threading
 
-import pytest
-from scapy.all import ICMP, IP, TCP, UDP, Ether, Raw, wrpcap
-from scapy.layers.dns import DNS, DNSQR
+# Rendered width, before anything can construct a `rich` console. See
+# `fixed_terminal_width`.
+os.environ["COLUMNS"] = "80"
+os.environ["LINES"] = "25"
 
-from packetiq.correlation.engine import CorrelationEngine
-from packetiq.detection.engine import DetectionEngine
-from packetiq.extractor.data_extractor import DataExtractor
-from packetiq.parser.pcap_parser import PCAPParser
+import pytest  # noqa: E402
+from scapy.all import ICMP, IP, TCP, UDP, Ether, Raw, wrpcap  # noqa: E402
+from scapy.config import conf as _scapy_conf  # noqa: E402
+from scapy.fields import MACField as _MACField  # noqa: E402
+from scapy.layers.dns import DNS, DNSQR  # noqa: E402
+from scapy.layers.l2 import SourceMACField as _SourceMACField  # noqa: E402
+
+from packetiq.correlation.engine import CorrelationEngine  # noqa: E402
+from packetiq.detection.engine import DetectionEngine  # noqa: E402
+from packetiq.extractor.data_extractor import DataExtractor  # noqa: E402
+from packetiq.parser.pcap_parser import PCAPParser  # noqa: E402
+
+# The MAC every frame is built with when the test did not specify one. The `02`
+# in the first octet marks it locally administered, so it can never collide with
+# a real vendor prefix and can never be mistaken for a device that exists.
+FIXED_SOURCE_MAC = "02:00:00:00:00:01"
+BROADCAST_MAC    = "ff:ff:ff:ff:ff:ff"
+
+_scapy_conf.neighbor.__class__.resolve = (            # destination
+    lambda self, l2inst, l3inst: BROADCAST_MAC)
+_SourceMACField.i2h = (                               # source
+    lambda self, pkt, x: _MACField.i2h(self, pkt, FIXED_SOURCE_MAC if x is None else x))
 
 ATTACKER = "45.33.32.156"      # external
 VICTIM   = "192.168.1.50"      # internal
@@ -67,10 +94,23 @@ def no_network(monkeypatch):
     Blocking at ``connect`` rather than at ``requests`` catches every client
     (requests, httpx, urllib, raw sockets) and every credential source. AF_UNIX
     stays open for anything that talks to a socket file.
+
+    One exception, and it is the operating system rather than a client: Windows
+    has no AF_UNIX socketpair, so ``socket.socketpair()`` there is emulated by
+    binding a listener on 127.0.0.1 and connecting to it. Every asyncio event
+    loop builds its self-pipe that way, which meant *starting a loop at all* —
+    `asyncio.run`, every FastAPI `TestClient` — tripped this guard and failed 190
+    tests on the Windows runner alone. The pair is allowed while, and only while,
+    `socket.socketpair()` is running on this thread; it can never let a client
+    request through.
     """
     real_connect = socket.socket.connect
+    real_socketpair = socket.socketpair
+    inside = threading.local()
 
     def guarded_connect(self, address, *args, **kwargs):
+        if getattr(inside, "socketpair", False):
+            return real_connect(self, address, *args, **kwargs)
         if self.family != getattr(socket, "AF_UNIX", object()):
             host = address[0] if isinstance(address, tuple) else address
             raise AssertionError(
@@ -79,7 +119,15 @@ def no_network(monkeypatch):
             )
         return real_connect(self, address, *args, **kwargs)
 
+    def guarded_socketpair(*args, **kwargs):
+        inside.socketpair = True
+        try:
+            return real_socketpair(*args, **kwargs)
+        finally:
+            inside.socketpair = False
+
     monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket, "socketpair", guarded_socketpair)
 
 
 @pytest.fixture(autouse=True)
@@ -139,15 +187,43 @@ def fixed_link_layer_resolution(monkeypatch):
     itself falls back to when resolution finds nothing, so it is what the Linux
     runners — which have no capture rights either — have been building all along.
 
-    Only packets whose destination MAC was left unspecified are affected; an explicit
-    ``Ether(dst=...)`` never reaches a resolver, and neither does a packet read from a
-    capture file, which carries the address that was actually on the wire.
-    """
-    from scapy.config import conf
+    The *source* MAC is pinned for the same reason and is worse than host-dependent:
+    scapy fills an unset `Ether().src` with the hardware address of `conf.iface`, so
+    every frame the suite builds — and every fixture PCAP it writes — carried this
+    machine's real MAC. On the Windows runner, where scapy has no usable interface
+    without Npcap, that same lookup raises `ValueError: Interface ... not found` and
+    took out five tests.
 
+    Only packets whose MACs were left unspecified are affected; an explicit
+    ``Ether(src=..., dst=...)`` never reaches a resolver, and neither does a packet read
+    from a capture file, which carries the addresses that were actually on the wire.
+
+    Both pins are installed at import (top of this file) because the session-scoped
+    `attack_pcap` is built before any function-scoped fixture runs. Re-applying them
+    per test is what undoes a test that patched scapy's fields for its own purposes.
+    """
     monkeypatch.setattr(
-        type(conf.neighbor), "resolve", lambda self, l2inst, l3inst: "ff:ff:ff:ff:ff:ff"
+        type(_scapy_conf.neighbor), "resolve", lambda self, l2inst, l3inst: BROADCAST_MAC
     )
+    monkeypatch.setattr(
+        _SourceMACField, "i2h",
+        lambda self, pkt, x: _MACField.i2h(self, pkt, FIXED_SOURCE_MAC if x is None else x),
+    )
+
+
+@pytest.fixture(autouse=True)
+def fixed_terminal_width(monkeypatch):
+    """Render every table at the same width, whatever console the host has.
+
+    `rich` sizes its tables from `os.get_terminal_size()`, so the terminal the
+    suite happens to run in decides where a column wraps. A CI runner with no tty
+    falls back to 80 columns; the Windows runner has a console attached and
+    reports its own, which wrapped `PROTOCOL MISUSE` across two lines and failed
+    two CLI tests that look for it. 80x25 is what the Linux and macOS legs have
+    been rendering at all along, so pinning it changes nothing except who agrees.
+    """
+    monkeypatch.setenv("COLUMNS", "80")
+    monkeypatch.setenv("LINES", "25")
 
 
 # The interface list every test sees, in place of whatever NICs this machine has.
