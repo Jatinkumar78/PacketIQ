@@ -90,7 +90,7 @@ jobs:
       # `raise NotImplementedError` and `__main__` guards (see pyproject).
       #
       # Coverage has to be a property of the *suite*, not of the machine running
-      # it, and three times it was not. First the platform switches (the macOS
+      # it, and four times it was not. First the platform switches (the macOS
       # branches, a host that already had capture privileges, the `tomli`
       # backport). Then tests that looked deliberate but asked the host a question
       # and accepted either answer: `/api/live/start` was allowed to return 403
@@ -98,13 +98,17 @@ jobs:
       # and trusted that to mean no provider — on a Mac with capture rights and
       # `ollama serve` running, both took the long branch. Then the interface
       # ranker, whose `bridge` arm ran only because this developer's Mac has four
-      # bridge adapters and a Linux runner has none.
+      # bridge adapters and a Linux runner has none. Then scapy resolving an
+      # unset destination MAC for real, which is an ARP request this workstation
+      # is allowed to send and the macOS runner is not.
       #
-      # Three guards in tests/conftest.py make that class impossible rather than
+      # Four guards in tests/conftest.py make that class impossible rather than
       # merely fixed: no test may open a socket, none may open a real capture
-      # device, and none sees the machine's own interface list. A path that
-      # depends on any of them has to be driven with a fixture, which is the only
-      # way its coverage means the same thing on every host.
+      # device, none sees the machine's own interface list, and none resolves a
+      # link-layer address on the wire. A path that depends on any of them has to
+      # be driven with a fixture, which is the only way its coverage means the
+      # same thing on every host. tests/test_harness_guards.py asserts all four
+      # are still in effect.
       #
       # 3.9 is held at 100 like every other leg, and it is the strictest of them.
       # CPython 3.9 threads the conditional jump for each operand of a

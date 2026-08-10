@@ -102,7 +102,9 @@ def no_real_packet_capture(monkeypatch):
     sending pair, and scapy reaches for them while merely building a packet — a BSD
     route lookup for an IPv6 destination opens one to ask the kernel which interface
     it would use — so blocking those breaks ordinary offline packet construction
-    rather than any capture.
+    rather than any capture. What that construction actually needs is an answer to
+    "which MAC is that address on?", and `fixed_link_layer_resolution` below supplies
+    one without a socket.
     """
     from scapy.config import conf
 
@@ -114,6 +116,38 @@ def no_real_packet_capture(monkeypatch):
 
     for attr in ("L2listen", "L3listen"):
         monkeypatch.setattr(conf, attr, denied, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def fixed_link_layer_resolution(monkeypatch):
+    """Answer "which MAC is that address on?" without asking the network.
+
+    ``Ether()`` leaves its destination unset, and scapy fills it in while *building*
+    the packet by resolving the layer-3 destination for real: an ARP request for
+    IPv4, a neighbour solicitation for IPv6. That is a transmission on a live
+    interface, from a test that never meant to send anything. This Mac has been
+    through ``packetiq setup-capture`` so the account is in `access_bpf`, the
+    solicitation went out on the LAN and the tests passed; the GitHub macOS runner
+    cannot open /dev/bpf0, so building the very same packet raised Scapy_Exception
+    and three IPv6 tests failed there and only there. Three, because scapy catches
+    the failure for IPv4 and falls back to broadcast with a warning, and does not
+    catch it for IPv6 — so the count of failures was never the count of frames
+    being resolved on the wire.
+
+    Pinning the answer to the broadcast address keeps construction offline and
+    identical on every host. Broadcast is not an invention: it is exactly what scapy
+    itself falls back to when resolution finds nothing, so it is what the Linux
+    runners — which have no capture rights either — have been building all along.
+
+    Only packets whose destination MAC was left unspecified are affected; an explicit
+    ``Ether(dst=...)`` never reaches a resolver, and neither does a packet read from a
+    capture file, which carries the address that was actually on the wire.
+    """
+    from scapy.config import conf
+
+    monkeypatch.setattr(
+        type(conf.neighbor), "resolve", lambda self, l2inst, l3inst: "ff:ff:ff:ff:ff:ff"
+    )
 
 
 # The interface list every test sees, in place of whatever NICs this machine has.

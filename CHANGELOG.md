@@ -57,6 +57,55 @@ from four e-mail tests, whose failure is the simulation itself: CPython's `ssl`
 module imports `enum_certificates` only when `sys.platform == "win32"` at import
 time, and that symbol exists only in a Windows build of `_ssl`.
 
+### What the first macOS and Windows runs caught
+
+Both new legs failed the first time they ran, which is the entire reason for
+adding them. Neither failure was visible from Linux or from this workstation.
+
+**Fixed**
+- **The suite transmitted real ARP and neighbour-solicitation packets.** `Ether()`
+  leaves the destination MAC unset, and scapy fills it in while *building* the
+  frame by resolving the layer-3 destination on a live interface. This Mac has
+  been through `packetiq setup-capture`, so its account is in `access_bpf`, the
+  solicitation went out on the LAN and everything passed; the macOS runner cannot
+  open `/dev/bpf0`, so building the same frame raised `Scapy_Exception` and three
+  IPv6 tests failed there and only there. Only three, because scapy catches the
+  failure for IPv4 and warns before falling back to broadcast, and does not catch
+  it for IPv6 — the asymmetry is why hundreds of frames were being resolved on the
+  wire while exactly three tests reported it. A fourth guard in `tests/conftest.py`
+  now answers the resolution with the broadcast address — which is what scapy
+  itself falls back to when it finds nothing, and therefore what the Linux legs
+  had been building all along. No shipped code path is affected: a packet read
+  from a capture file carries the address that was on the wire, so nothing in
+  `packetiq/` ever asks for one.
+- **`mypy` failed on Windows over two POSIX-only calls.** `os.getgroups` and
+  `grp.getgrall` are absent from typeshed when the target platform is Windows, so
+  the type gate failed on a helper that only ever runs on macOS. Suppressing the
+  two lookups is the whole fix; guarding the block on `sys.platform` instead would
+  have made mypy treat it as unreachable on Linux as well, and Linux is where its
+  coverage is measured.
+
+**Changed**
+- `tools/validate.py --demo` now gives its generated frames explicit MAC
+  addresses, which the `--suite` and benchmark generators already did. Leaving
+  them unset meant writing the capture sent an ARP request for every destination
+  it had not already cached — recoverable everywhere (scapy warns and uses
+  broadcast) but still real traffic from whoever ran the tool, and two warning
+  lines per packet in the output.
+
+**Added**
+- `tests/test_harness_guards.py` — four tests asserting the four conftest guards
+  are still in effect: outbound connections refused, capture sockets refused, the
+  interface table fixed, link-layer resolution answered offline. A guard that
+  quietly stops applying recreates the exact failure it was written to prevent,
+  and does so on the machine least able to notice.
+
+Verified by denying `/dev/bpf*` on this Mac, which reproduces the runner's
+failure exactly: the three tests fail before the change and the whole suite of
+1,749 passes after it. Coverage re-measured at 100.00% on 3.9, 3.11 and 3.12,
+and `mypy` re-run for all three target platforms on both the 1.x and 2.x majors
+the matrix installs.
+
 ### Host-dependent coverage, round three — and what Python 3.9 had been reporting
 
 One line, and the same cause a third time: `net_interfaces._score`'s `bridge`

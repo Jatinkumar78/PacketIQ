@@ -44,8 +44,13 @@ def _mac_capture_ok() -> bool:
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             return True
         import grp
-        gids = set(os.getgroups())
-        for g in grp.getgrall():
+        # `os.getgroups` and `grp.getgrall` are POSIX-only, so typeshed hides them
+        # when mypy targets Windows and the Windows CI leg fails on this helper even
+        # though it only ever runs on macOS. The ignores are the whole fix: guarding
+        # the block on `sys.platform` instead would make mypy treat it as unreachable
+        # on Linux too, and Linux is where its coverage is measured.
+        gids = set(os.getgroups())  # type: ignore[attr-defined]
+        for g in grp.getgrall():  # type: ignore[attr-defined]
             if g.gr_name == "access_bpf" and g.gr_gid in gids:
                 # group membership AND a readable bpf device
                 for i in range(4):

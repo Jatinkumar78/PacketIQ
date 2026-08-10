@@ -198,14 +198,16 @@ def _build_demo(tmp: Path) -> dict:
 
     random.seed(11)
 
+    eth = {"src": "00:11:22:33:44:55", "dst": "66:77:88:99:aa:bb"}  # explicit → no MAC lookup
+
     # Benign: normal browsing-ish traffic
     benign = []
     t = 1700000000.0
     for d in ("google.com", "github.com", "cloudflare.com", "wikipedia.org"):
-        benign.append(Ether() / IP(src="192.168.1.10", dst="8.8.8.8") /
+        benign.append(Ether(**eth) / IP(src="192.168.1.10", dst="8.8.8.8") /
                       UDP(sport=33000, dport=53) / DNS(rd=1, qd=DNSQR(qname=d)))
     for i in range(20):
-        benign.append(Ether() / IP(src="192.168.1.10", dst="93.184.216.34") /
+        benign.append(Ether(**eth) / IP(src="192.168.1.10", dst="93.184.216.34") /
                       TCP(sport=40000 + i, dport=443, flags="S"))
     for i, p in enumerate(benign):
         p.time = t + i
@@ -215,11 +217,11 @@ def _build_demo(tmp: Path) -> dict:
     mal = []
     t = 1700001000.0
     for i in range(40):
-        mal.append(Ether() / IP(src="45.33.32.156", dst="192.168.1.50") /
+        mal.append(Ether(**eth) / IP(src="45.33.32.156", dst="192.168.1.50") /
                    TCP(sport=50000 + i, dport=22, flags="S"))
-    mal.append(Ether() / IP(src="192.168.1.50", dst="193.122.6.168") /
+    mal.append(Ether(**eth) / IP(src="192.168.1.50", dst="193.122.6.168") /
                TCP(sport=53500, dport=21, flags="PA") / Raw(load=b"USER admin\r\n"))
-    mal.append(Ether() / IP(src="192.168.1.50", dst="193.122.6.168") /
+    mal.append(Ether(**eth) / IP(src="192.168.1.50", dst="193.122.6.168") /
                TCP(sport=53500, dport=21, flags="PA") / Raw(load=b"PASS s3cr3t\r\n"))
     for i, p in enumerate(mal):
         p.time = t + i
