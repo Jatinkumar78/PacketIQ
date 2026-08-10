@@ -89,14 +89,24 @@ def test_an_upload_of_the_wrong_kind_is_refused_with_the_accepted_list(client):
 
 def test_an_upload_too_small_to_be_a_capture_is_refused_and_cleaned_up(client, tmp_path):
     """A pcap file header alone is 24 bytes; anything shorter is a truncated or
-    empty upload, and the partial file must not be left on disk."""
+    empty upload, and the partial file must not be left on disk.
+
+    Assert on what *this* request left behind rather than on the state of the whole
+    upload directory. `UPLOAD_DIR` is a single shared path under the system temp
+    dir, so the old "no small pcap exists anywhere" form was really a claim about
+    every other test, and about anything left there by a previous run or by the
+    user's own web app. It failed the moment a live-capture test wrote a recording
+    that never received a packet — a file this test had nothing to do with.
+    """
+    before = set(webapp.UPLOAD_DIR.glob("*.pcap"))
+
     r = client.post("/api/upload",
                     files={"file": ("tiny.pcap", io.BytesIO(b"\xd4\xc3\xb2\xa1"),
                                     "application/octet-stream")})
 
     assert r.status_code == 400
-    leftover = list(webapp.UPLOAD_DIR.glob("*.pcap"))
-    assert not any(p.stat().st_size < 24 for p in leftover)
+    leftover = set(webapp.UPLOAD_DIR.glob("*.pcap")) - before
+    assert not leftover, f"the refused upload left {leftover} on disk"
 
 
 def test_fusing_fewer_than_two_captures_is_refused(client, tmp_path):

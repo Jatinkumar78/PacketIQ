@@ -387,12 +387,34 @@ def test_live_can_list_interfaces(run):
     assert result.output.strip()
 
 
-def test_chat_reports_when_no_ai_provider_is_configured(run, attack_pcap, monkeypatch):
-    for var in ("GROQ_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY",
-                "ANTHROPIC_API_KEY", "OLLAMA_HOST"):
-        monkeypatch.delenv(var, raising=False)
-    result = run("chat", attack_pcap, input="\n")
-    assert result.output.strip()
+def test_chat_opens_a_session_once_a_provider_is_available(run, attack_pcap, monkeypatch):
+    """Clearing the API-key variables does not leave the copilot unconfigured.
+
+    `MultiProviderClient.available()` also reads `.env` and probes a local Ollama
+    daemon on loopback, so this test used to run whichever branch the machine
+    happened to offer. On a workstation with a key in `.env` (or `ollama serve`
+    running) the whole session block executed; a CI runner has neither, exited at
+    the "no AI provider" guard, and left those 16 statements uncovered — the same
+    gap in reverse, hidden because both outcomes printed *something*.
+
+    State which branch is under test instead of letting the host pick. The
+    unconfigured case has its own test in test_cli_command_paths.py.
+    """
+    from packetiq.copilot import chat as chat_mod
+    from packetiq.copilot.multi_provider import MultiProviderClient
+
+    monkeypatch.setattr(MultiProviderClient, "available", lambda self: True)
+    monkeypatch.setattr(MultiProviderClient, "load_context", lambda self, ctx: None)
+    monkeypatch.setattr(MultiProviderClient, "model_label", "stub-model")
+    opened = []
+    monkeypatch.setattr(chat_mod.InteractiveChat, "run",
+                        lambda self: opened.append(self.pcap_name))
+
+    out = _ok(run("chat", attack_pcap))
+
+    assert opened == ["attack.pcap"], "the session must be handed the analysed capture"
+    assert "Context built" in out
+    assert "stub-model" in out
 
 
 # --------------------------------------------------------------------------- #

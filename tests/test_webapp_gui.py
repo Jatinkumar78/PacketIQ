@@ -1,6 +1,7 @@
 """End-to-end tests for the GUI-backing web endpoints (feeds, evidence, MISP, Zeek, history)."""
 
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -237,44 +238,119 @@ def test_the_live_callback_writes_to_the_recording_and_handles_ipv6():
     assert "::1" in str(summary), f"IPv6 endpoints should appear in the summary: {summary}"
 
 
-def test_live_packets_and_pcap(client):
-    ifs = client.get("/api/live/interfaces").json()["interfaces"]
-    # Loopback only. The previous fallback to `ifs[0]` meant that on a host without a
-    # loopback entry the suite would start a real capture on a physical NIC and write
-    # the developer's own network traffic into an upload-directory pcap.
-    iface = next((n for n in ("lo0", "lo") if n in ifs), None)
-    if iface is None:
-        pytest.skip("no loopback interface to capture on")
-    r = client.post("/api/live/start", json={"interface": iface, "threshold": "LOW"})
-    if r.status_code != 200:
-        return  # capture not permitted in this environment
-    sid = r.json()["session_id"]
-    pk = client.get(f"/api/live/{sid}/packets").json()
-    assert "packets" in pk and "total" in pk
-    dl = client.get(f"/api/live/{sid}/pcap")
-    assert dl.status_code == 200
-    client.post(f"/api/live/{sid}/stop")
-
-
 def test_live_interfaces_endpoint(client):
     j = client.get("/api/live/interfaces").json()
     assert "interfaces" in j and isinstance(j["interfaces"], list)
     assert "elevated" in j
 
 
-def test_live_session_lifecycle(client):
-    """Start may succeed (200) or be blocked by privileges (403); both are valid.
-    If it starts, poll + stop must work."""
-    ifs = client.get("/api/live/interfaces").json()["interfaces"]
-    iface = "lo0" if "lo0" in ifs else ("lo" if "lo" in ifs else (ifs[0] if ifs else "lo"))
-    r = client.post("/api/live/start", json={"interface": iface, "threshold": "LOW"})
-    assert r.status_code in (200, 403, 500)
-    if r.status_code == 200:
-        sid = r.json()["session_id"]
-        p = client.get(f"/api/live/{sid}").json()
-        assert p["status"] == "running" and "packets" in p
-        assert client.post(f"/api/live/{sid}/stop").json()["status"] == "stopped"
-    # unknown session → 404
+# ── Live capture sessions ────────────────────────────────────────────────────
+#
+# Nothing below opens a real capture. Whether the machine running the suite is
+# allowed to capture is not supposed to decide what gets tested, and for a while
+# it did: this developer's Mac has been through `setup-capture`, so the lifecycle
+# ran here for real, while on the CI runner `/api/live/start` returned 403 and the
+# old tests answered that with `pytest.skip` and a bare `return`. Twenty-two
+# statements read as covered on a workstation and were never executed in CI, which
+# is exactly the shortfall the coverage gate reported.
+#
+# conftest denies the capture socket outright now, so a live-session test has to
+# bring its own sniffer. That is what makes its coverage mean the same thing on
+# every host.
+
+class _FakeThread:
+    def __init__(self, alive=True):
+        self._alive = alive
+
+    def is_alive(self):
+        return self._alive
+
+
+class _FakeSniffer:
+    """Stands in for scapy's AsyncSniffer: a healthy thread, no interface."""
+
+    def __init__(self, *a, **kw):
+        self.thread = _FakeThread()
+
+    def start(self):
+        pass
+
+    def stop(self):
+        self.thread._alive = False
+
+
+@pytest.fixture()
+def stub_sniffer(monkeypatch):
+    """Make `/api/live/start` succeed without capture privileges."""
+    import scapy.all as scapy_all
+
+    monkeypatch.setattr(scapy_all, "AsyncSniffer", _FakeSniffer)
+
+
+def test_a_live_session_polls_streams_and_downloads(client, stub_sniffer):
+    """The full lifecycle a user drives from the Live panel: start it, watch the
+    packet list fill, download what has been recorded so far, stop it."""
+    from packetiq.webapp import app as webapp
+
+    r = client.post("/api/live/start", json={"interface": "lo0", "threshold": "LOW"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["interface"] == "lo0" and body["status"] == "running"
+
+    sid = body["session_id"]
+    session = webapp._live_sessions[sid]
+    try:
+        session._cb(Ether() / IP(src="45.33.32.156", dst="192.168.1.50")
+                    / TCP(sport=40000, dport=22, flags="S"))
+
+        poll = client.get(f"/api/live/{sid}").json()
+        assert poll["status"] == "running" and poll["alive"] is True
+        assert poll["packets"] == 1
+        assert poll["hint"] == "", "a live capture that is seeing traffic needs no hint"
+
+        pk = client.get(f"/api/live/{sid}/packets").json()
+        assert pk["total"] == 1
+        assert pk["last"] == pk["packets"][-1]["no"], "the cursor is the last packet seen"
+
+        dl = client.get(f"/api/live/{sid}/pcap")
+        assert dl.status_code == 200
+        assert len(dl.content) >= 24, "a pcap is at least its 24-byte file header"
+        assert dl.headers["content-disposition"].endswith(f'live_lo0_{sid[:8]}.pcap"')
+
+        stopped = client.post(f"/api/live/{sid}/stop").json()
+        assert stopped == {"status": "stopped", "total": 0, "packets": 1}
+    finally:
+        Path(session.pcap_path).unlink(missing_ok=True)
+        webapp._live_sessions.pop(sid, None)
+
+
+def test_a_capture_that_dies_immediately_is_reported_as_a_privilege_problem(client, monkeypatch):
+    """What an unprivileged host actually does. scapy opens the capture socket
+    *inside* the sniffer thread, so `start()` returns cleanly and the thread is
+    gone a moment later — the endpoint has to turn that into the one instruction
+    that fixes it rather than hand back a session that will never see a packet.
+    """
+    import scapy.all as scapy_all
+
+    from packetiq.webapp import app as webapp
+
+    class _DeadOnArrival(_FakeSniffer):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.thread = _FakeThread(alive=False)
+
+    monkeypatch.setattr(scapy_all, "AsyncSniffer", _DeadOnArrival)
+    before = set(webapp.UPLOAD_DIR.glob("live_*.pcap"))
+
+    r = client.post("/api/live/start", json={"interface": "lo0", "threshold": "LOW"})
+
+    assert r.status_code == 403
+    assert "setup-capture" in r.json()["detail"]
+    assert not set(webapp.UPLOAD_DIR.glob("live_*.pcap")) - before, \
+        "a capture that never started must not leave an empty recording behind"
+
+
+def test_polling_an_unknown_live_session_is_a_not_found(client):
     assert client.get("/api/live/nope").status_code == 404
 
 

@@ -23,3 +23,40 @@ diskcache 5.6.3   PYSEC-2026-2447
 Name     Skip Reason
 -------- -----------------------------------------------------------------------
 packetiq Dependency not found on PyPI and could not be audited: packetiq (1.0.0)
+
+=====================================================================
+Re-verified 2026-08-10 — audited as two separate closures
+---------------------------------------------------------------------
+The distinction that matters is what a user installs versus what a
+contributor installs, so CI now audits them as two steps.
+
+1. Runtime closure ("pip install -e ." — what "pip install packetiq"
+   produces).  Blocking gate.
+
+       No known vulnerabilities found
+
+2. Development closure ("pip install .[dev]").  Advisory only.
+
+       Found 1 known vulnerability in 1 package
+       Name      Version ID              Fix Versions
+       --------- ------- --------------- ------------
+       diskcache 5.6.3   PYSEC-2026-2447
+
+Status of that finding, checked against PyPI and OSV on 2026-08-10:
+
+  - diskcache 5.6.3 is simultaneously the newest release in existence
+    and the affected one; the advisory range is "introduced: 0,
+    last_affected: 5.6.3" with no fixed version.  There is nothing to
+    upgrade to.
+  - pySigma 1.5.0 (latest) still declares diskcache>=5.6.3,<6.0.0, so
+    the pin cannot be relaxed from our side either.
+  - Aliases: CVE-2025-69872, GHSA-w8v5-vhqr-4h9v.  Unsafe pickle
+    deserialisation; CVSS 4.0 AV:L/AC:L/PR:L/UI:A — it requires an
+    attacker who already has write access to the cache directory.
+  - PacketIQ imports neither diskcache nor pySigma anywhere in
+    packetiq/ (grep: no matches).  pySigma is used only by
+    tests/test_sigma_pysigma.py, to confirm the rules PacketIQ writes
+    parse under a real Sigma implementation.
+
+Conclusion unchanged: not exploitable through PacketIQ, and not present
+in any user's install.  Reported on every run rather than suppressed.

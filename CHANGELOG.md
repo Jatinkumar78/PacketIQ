@@ -5,6 +5,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Host-dependent coverage, round two: tests that asked the host and took either answer
+
+The same gate failed again on the same three legs, in a different module. The
+first round was the platform switches, and the fix for those held. This round was
+harder to see, because the tests involved looked careful rather than careless:
+each one asked the machine a question and accepted whichever answer it got.
+`/api/live/start` was allowed to return 403 and the test simply `return`ed;
+`packetiq chat` was handed no API keys and trusted that to mean no provider. Both
+read as defensive. On a Mac that has been through `setup-capture`, with
+`ollama serve` listening on loopback, both take the long branch — and 34
+statements that are covered on this workstation are never executed on a runner.
+
+Measured, not inferred: GitHub's logs need admin auth this project does not have,
+so the suite was run under four simulated runner environments (Linux dispatch,
+denied capture socket, no local model, no external tools resolvable) against a
+clean `git worktree` checkout with a `.[dev]`-only virtualenv and an empty `HOME`.
+All four agreed on the same 34 lines — `cli.py` 720-735 and 27 in
+`webapp/app.py` — on both 3.11 and 3.12.
+
+**Fixed**
+- **The live-capture lifecycle was covered by capture privileges, not by tests.**
+  Start, poll, the rolling packet list, the pcap download and stop are now driven
+  through a stand-in sniffer, so the whole `/api/live/*` block is exercised on a
+  host that cannot capture at all. The two tests it replaces started genuine
+  loopback captures and wrote the developer's own traffic to a pcap.
+- **`packetiq chat` was covered by whatever provider the machine happened to
+  offer.** Clearing the API-key variables does not leave the copilot
+  unconfigured: `MultiProviderClient.available()` also reads `.env` and probes a
+  local Ollama daemon. The test now states which branch it is testing; the
+  unconfigured case keeps its own separate test.
+- **The model warm-up was only ever executed against a real daemon.** The unit
+  test replaced `threading.Thread` and never ran the target, so the request body
+  ran only where `ollama serve` was listening. It now runs against a stubbed
+  transport and asserts the payload — the keep-alive and `num_predict: 1` that
+  are the entire point of preloading.
+- **A refused live capture left an empty pcap behind every time.** The recording
+  file is created before it is known whether the capture will work, so each
+  failed "Start capture" left a zero-byte file in the shared upload directory.
+  They accumulate, and an empty recording is not something a user can analyse or
+  download. A session that captured nothing now removes its own file.
+- **An upload test asserted over a directory it did not own.** "No small pcap
+  exists anywhere in `UPLOAD_DIR`" is a claim about every other test, about
+  previous runs, and about the user's own web app. It now compares the directory
+  before and after, so it tests the refused upload and nothing else.
+
+**Added — two standing guards in `tests/conftest.py`**
+- No test may open a socket. The previous guard allowed loopback, which is
+  precisely how the local model went unnoticed; nothing under test legitimately
+  needs a listening service.
+- No test may open a real packet-capture device. A path that depends on capture
+  privileges now has to supply its own sniffer, which is the only way its coverage
+  can mean the same thing on every host. Only the *listening* sockets are denied:
+  scapy reaches for the sending pair while merely building a packet, since a BSD
+  route lookup for an IPv6 destination asks the kernel which interface it would
+  use.
+
+**Verified** — 1,729 tests. 100.00% of 9,882 statements under every one of the
+four simulated environments on 3.11 and 3.12; 99.88% on real CPython 3.9, whose
+12 remaining lines are all `continue`/`break` (3.9 also parses to 5 fewer
+statements than 3.11/3.12, which is why its total differs). Detection is
+unchanged: 90.0% precision, 100% recall on the real CTU-13 corpus.
+
+### Security — the dependency audit now distinguishes what ships from what does not
+
+`pip-audit` over the closure a user actually installs is **blocking**, and clean:
+"No known vulnerabilities found", verified 2026-08-10. The dev extra is audited as
+a separate, advisory step. It reports one finding — pySigma pins
+`diskcache>=5.6.3,<6.0.0`, and 5.6.3 is simultaneously the newest release in
+existence and the one carrying PYSEC-2026-2447 / CVE-2025-69872 (pickle
+deserialisation; CVSS 4.0 `AV:L`, requiring an attacker who can already write to
+the cache directory). There is no version to upgrade to, PacketIQ imports neither
+package, and neither reaches a user's install — so it is reported rather than
+allowed to wedge the pipeline. Previously a single non-blocking step covered both,
+which meant a genuine regression in a shipped dependency would have scrolled past
+in a green log.
+
 ### Coverage made a property of the suite rather than of the machine
 
 The 100% gate passed on the workstation it was written on and failed on all three

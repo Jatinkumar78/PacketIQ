@@ -70,12 +70,23 @@ jobs:
       # `raise NotImplementedError` and `__main__` guards (see pyproject).
       #
       # Coverage has to be a property of the *suite*, not of the machine running
-      # it. It briefly was not: three lines were reachable only through the macOS
-      # branch of the platform switches, one only on a host that already had
-      # capture privileges, and two only where the `tomli` backport happened to
-      # be installed. All six read as covered on a developer Mac and failed this
-      # gate here. Every OS-specific and host-specific path is now driven with a
-      # stub, so a line is covered on all four legs or on none.
+      # it, and it twice was not. The first round was the platform switches (the
+      # macOS branches, a host that already had capture privileges, the `tomli`
+      # backport). The second was subtler, because the tests in question looked
+      # deliberate: they asked the host a question and accepted either answer.
+      # `/api/live/start` was allowed to return 403 and the test simply returned;
+      # `packetiq chat` was handed no API keys and trusted that to mean no
+      # provider. On this developer's Mac capture works and `ollama serve` is
+      # listening, so both took the long branch and covered 34 statements that a
+      # runner never reaches.
+      #
+      # Two guards in tests/conftest.py now make that impossible rather than
+      # merely fixed: no test may open a socket, and none may open a real capture
+      # device. A path that depends on either has to be driven with a stub, which
+      # is the only way its coverage means the same thing on every host. Verified
+      # by measuring the suite under four simulated runner environments (Linux
+      # dispatch, denied capture socket, no Ollama, no external tools) on 3.11 and
+      # 3.12: 100.00% in every one.
       #
       # The floor is 99 on 3.9 for one measurement reason, not a test gap:
       # CPython 3.9 emits no trace event for `continue`/`break` — 12 such lines
@@ -119,13 +130,29 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: pip-audit (dependency CVE scan)
-        # Reports known-vulnerable dependencies. Non-blocking so an unfixable
-        # transitive advisory cannot wedge the pipeline, but surfaced on every run.
-        continue-on-error: true
+      # Blocking, because this is the closure `pip install packetiq` actually
+      # produces — anything found here reaches every user. It is clean as of
+      # 2026-08-10 ("No known vulnerabilities found"), so a finding is a real
+      # regression rather than pre-existing debt, and it should fail the build
+      # instead of scrolling past in a green log.
+      - name: pip-audit (the dependencies users install)
         run: |
           python -m pip install --upgrade pip pip-audit
           pip install -e .
+          pip-audit
+
+      # Advisory only, and deliberately a separate step so it cannot be confused
+      # with the one above. The dev extra pulls pySigma, which pins
+      # diskcache>=5.6.3,<6.0.0; 5.6.3 is simultaneously the newest release that
+      # exists and the one carrying PYSEC-2026-2447 / CVE-2025-69872 (pickle
+      # deserialisation, CVSS 4.0 AV:L — it needs an attacker who can already
+      # write to the cache directory). There is no version to upgrade to,
+      # PacketIQ imports neither package, and neither ships to a user, so an
+      # unfixable test-tooling advisory must not be able to wedge the pipeline.
+      - name: pip-audit (development tooling)
+        continue-on-error: true
+        run: |
+          pip install ".[dev]"
           pip-audit
 
       # Blocking. Our own code currently scans clean at every severity, so any

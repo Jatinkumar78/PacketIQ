@@ -44,8 +44,8 @@ def isolate_analysis_history(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def no_outbound_network(monkeypatch):
-    """Turn any escape to the internet into a failed test.
+def no_network(monkeypatch):
+    """Turn any use of a network service into a failed test.
 
     Deleting ``TELEGRAM_BOT_TOKEN`` from the environment does not unconfigure
     alerting: ``telegram.load_credentials`` also scans ``./.env`` and ``../.env``,
@@ -55,25 +55,65 @@ def no_outbound_network(monkeypatch):
     machine-dependent — that request was the only thing exercising the alert
     formatter's MITRE block, which is why CI came up short.
 
+    Loopback was originally left open, and that turned out to be the same trap one
+    layer down. ``MultiProviderClient.available()`` and ``_ollama_probe()`` ask
+    127.0.0.1:11434 whether a model is there, so on a workstation running
+    ``ollama serve`` the suite silently took the *provider is available* branch of
+    `packetiq chat` and really fired the web app's model warm-up. A CI runner has
+    nothing listening, took the other branch, and came up 16 statements short.
+    Nothing under test legitimately needs a listening service, so loopback is now
+    blocked too and each of those paths is driven with a stub.
+
     Blocking at ``connect`` rather than at ``requests`` catches every client
-    (requests, httpx, urllib, raw sockets) and every credential source. Loopback
-    stays open for the local Ollama endpoint, and AF_UNIX for anything that talks
-    to a socket file; a test that wants a remote call still stubs it and never
-    gets here.
+    (requests, httpx, urllib, raw sockets) and every credential source. AF_UNIX
+    stays open for anything that talks to a socket file.
     """
     real_connect = socket.socket.connect
 
     def guarded_connect(self, address, *args, **kwargs):
         if self.family != getattr(socket, "AF_UNIX", object()):
             host = address[0] if isinstance(address, tuple) else address
-            if host not in ("127.0.0.1", "::1", "localhost", "0.0.0.0", ""):
-                raise AssertionError(
-                    f"test attempted an outbound connection to {host!r}; stub the "
-                    "client at its boundary instead"
-                )
+            raise AssertionError(
+                f"test attempted a network connection to {host!r}; stub the client "
+                "at its boundary instead"
+            )
         return real_connect(self, address, *args, **kwargs)
 
     monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+
+
+@pytest.fixture(autouse=True)
+def no_real_packet_capture(monkeypatch):
+    """Make opening a real capture socket a failed test.
+
+    Whether a line is covered must not depend on whether the machine running the
+    suite is allowed to capture. It did: this developer's Mac has been through
+    ``packetiq setup-capture``, so the live-session tests started genuine loopback
+    captures and covered the whole ``/api/live/*`` lifecycle for free. The Linux
+    runner has no CAP_NET_RAW, the sniffer thread dies on the first read, and 20
+    statements that look tested here were never executed there.
+
+    Denying the socket makes that impossible to reintroduce: a live-capture test
+    now has to supply its own sniffer, which is the only way its coverage can mean
+    the same thing on every host. Everything else in the suite reads packets from
+    a file and never comes near this.
+
+    Only the *listening* sockets are denied. ``conf.L2socket``/``L3socket`` are the
+    sending pair, and scapy reaches for them while merely building a packet — a BSD
+    route lookup for an IPv6 destination opens one to ask the kernel which interface
+    it would use — so blocking those breaks ordinary offline packet construction
+    rather than any capture.
+    """
+    from scapy.config import conf
+
+    def denied(*args, **kwargs):
+        raise AssertionError(
+            "test attempted to open a real packet-capture socket; supply a fake "
+            "sniffer instead so the result does not depend on capture privileges"
+        )
+
+    for attr in ("L2listen", "L3listen"):
+        monkeypatch.setattr(conf, attr, denied, raising=False)
 
 
 def _build_attack_pcap(path: str):

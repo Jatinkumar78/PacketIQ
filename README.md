@@ -14,7 +14,7 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3b82f6?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![Scapy](https://img.shields.io/badge/Scapy-packet%20engine-ef4444?style=for-the-badge&logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-1723%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-1729%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![Coverage](https://img.shields.io/badge/coverage-100%25-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![GUI](https://img.shields.io/badge/100%25-GUI%20web%20app-3b82f6?style=for-the-badge&logo=googlechrome&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff%20clean-000000?style=for-the-badge&logo=ruff&logoColor=white)
@@ -45,7 +45,7 @@
 
 <br/><br/>
 
-**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`15`** detection types · **`7,600+`** live threat-intel indicators · **`1,723`** tests · **`ruff`-clean**
+**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`15`** detection types · **`7,600+`** live threat-intel indicators · **`1,729`** tests · **`ruff`-clean**
 
 </div>
 
@@ -137,7 +137,7 @@
 | Output | a wall of text | SIGMA (pySigma-valid), STIX, MISP, HTML report, evidence PCAP |
 | Inputs | PCAP only | **PCAP · Zeek conn.log · NetFlow/IPFIX · live capture** |
 | Detections | a few heuristics | **15 detection types** incl. JA4, TLS certs, YARA, file carving |
-| Trust | unverifiable claims | **1,723 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
+| Trust | unverifiable claims | **1,729 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
 | Interface | terminal | **100% GUI web app — double-click to launch** |
 
 ---
@@ -179,12 +179,16 @@ Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` (crea
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev,yara,geoip]"                   # everything (tests, YARA, GeoIP)
-pytest                                                # run the 1,723-test suite
+pytest                                                # run the 1,729-test suite
 pytest --cov=packetiq --cov-report=term-missing      # with line-coverage report
 ```
 The CLI (`packetiq …`) is the same engine the web app uses — handy for scripting/CI, but not required.
 
-**Test coverage: 100%** — every one of the 9,879 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for Python 3.10–3.12, so a line can never ship untested. Coverage is also a property of the *suite*, not of the machine: every OS-specific and host-specific path — the macOS/Linux/Windows capture-privilege checks, the interface-enumeration helpers, the `tomllib`/`tomli` split — is driven with a stub rather than left to whatever the runner happens to be, so a line is covered on all four matrix legs or on none. The 3.9 leg is held at 99% (measured 99.88%) for one reason, and it is not a test gap: CPython 3.9 emits no trace event for `continue`/`break`, 12 such lines at last count. That is a measurement limit of the interpreter — verified by running the affected paths directly on 3.9 and watching them execute while coverage still called them unhit.
+**Test coverage: 100%** — every one of the 9,882 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for Python 3.10–3.12, so a line can never ship untested.
+
+Coverage here is a property of the *suite*, not of the machine that runs it, and that distinction is enforced rather than assumed. A test may not open a socket and may not open a real capture device — both are denied outright in `tests/conftest.py`. Without those guards a workstation quietly flatters the number: a developer Mac with capture privileges really does start a live capture, a machine running `ollama serve` really does find an AI provider, and the statements behind both read as covered here and are never reached on a runner that has neither. Every OS-specific and host-specific path — the macOS/Linux/Windows capture-privilege checks, the interface-enumeration helpers, the `tomllib`/`tomli` split, the whole `/api/live/*` lifecycle — is therefore driven with a stub, so a line is covered on all four matrix legs or on none. Verified by measuring the suite under four simulated runner environments (Linux dispatch, denied capture socket, no local model, no external tools) on both 3.11 and 3.12: 100.00% in every one.
+
+The 3.9 leg is held at 99% (measured 99.88%) for one reason, and it is not a test gap: CPython 3.9 emits no trace event for `continue`/`break`, 12 such lines at last count. That is a measurement limit of the interpreter — verified by running the affected paths directly on 3.9 and watching them execute while coverage still called them unhit. (3.9 also parses to 5 fewer statements than 3.11/3.12, which is why its total differs.)
 </details>
 
 ---
@@ -452,7 +456,7 @@ dga_entropy_threshold = 3.8   # bits/char to suspect a DGA
 
 ```bash
 pip install -e ".[dev]"
-pytest                 # 1,723 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
+pytest                 # 1,729 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
 ruff check packetiq tools tests
 ```
 
@@ -548,7 +552,7 @@ PacketIQ/
 │   ├── screenshots/               # README UI screenshots — real running web app
 │   └── assets/                    # images (bot avatar)
 ├── samples/generate_sample.py     # build a demo PCAP
-├── tests/                         # 1,723 pytest tests
+├── tests/                         # 1,729 pytest tests
 ├── .github/workflows/ci.yml       # CI (pytest + ruff + mypy)
 ├── PacketIQ.command · PacketIQ.bat · quickstart.sh   # double-click / one-command launchers
 ├── Dockerfile · docker-compose.yml

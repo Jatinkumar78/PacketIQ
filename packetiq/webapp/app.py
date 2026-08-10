@@ -659,6 +659,15 @@ class _LiveSession:
                 if self._writer is not None:
                     self._writer.close()
             self._writer = None
+            # The recording file is created when the session starts, before we know
+            # whether the capture will work. A start that is refused for want of
+            # privileges therefore left an empty pcap behind on every attempt, and
+            # they accumulate in a directory shared by every session. An empty
+            # recording is also nothing a user can analyse or download, so there is
+            # no case for keeping one.
+            if self.packets == 0:
+                with contextlib.suppress(Exception):
+                    Path(self.pcap_path).unlink()
 
 
 # ── Shared result builder (used by single-capture AND campaign/fuse) ──────────
