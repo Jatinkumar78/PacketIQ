@@ -84,6 +84,11 @@ and none of them is in shipped code.
   own, which wrapped `PROTOCOL MISUSE` across two lines and failed the two CLI
   tests that look for it. 80x25 is now pinned before anything can construct a
   console — the width the Linux and macOS legs had been rendering at all along.
+  `COLUMNS` alone did not settle it: rich deducts the legacy-Windows column
+  *twice*, once building the console and again reading its size, so that runner
+  rendered at 78 while every other host rendered at 80 — and drew its boxes in
+  ASCII besides. The legacy detection is pinned off with the width, which is what
+  makes rendered output one thing rather than two.
 - **A capture-privilege test asked the runner whether it was an administrator.**
   It is, so `_windows_capture_ok()` returned True whatever the Npcap probe said —
   and that probe was the entire point of the test. Stubbing the elevation check

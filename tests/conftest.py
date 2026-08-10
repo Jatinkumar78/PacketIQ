@@ -21,6 +21,18 @@ import threading
 os.environ["COLUMNS"] = "80"
 os.environ["LINES"] = "25"
 
+# `COLUMNS` alone is not enough to make that width the same everywhere: rich
+# deducts the legacy-Windows column twice, once building the console
+# (`_width = COLUMNS - legacy_windows`) and again reading its size
+# (`size = _width - legacy_windows`), so the GitHub Windows runner — which rich
+# detects as a legacy console — rendered at 78 where every other host rendered at
+# 80, and `PROTOCOL MISUSE` wrapped. Legacy mode also swaps the box characters
+# for ASCII. Turning the detection off is what makes rendered output one thing
+# rather than two.
+import rich.console as _rich_console  # noqa: E402
+
+_rich_console.detect_legacy_windows = lambda: False
+
 import pytest  # noqa: E402
 from scapy.all import ICMP, IP, TCP, UDP, Ether, Raw, wrpcap  # noqa: E402
 from scapy.config import conf as _scapy_conf  # noqa: E402
@@ -221,7 +233,12 @@ def fixed_terminal_width(monkeypatch):
     reports its own, which wrapped `PROTOCOL MISUSE` across two lines and failed
     two CLI tests that look for it. 80x25 is what the Linux and macOS legs have
     been rendering at all along, so pinning it changes nothing except who agrees.
+
+    The width itself is set at import, together with rich's legacy-Windows
+    detection — see the top of this file for why neither can wait for a fixture.
+    This keeps both pinned for any console built later in a test.
     """
+    monkeypatch.setattr(_rich_console, "detect_legacy_windows", lambda: False)
     monkeypatch.setenv("COLUMNS", "80")
     monkeypatch.setenv("LINES", "25")
 

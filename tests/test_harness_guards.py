@@ -97,8 +97,11 @@ def test_tables_render_at_a_fixed_width():
 
     The width is frozen when `rich` builds a console, which the display module
     does at import, so this asserts the console the CLI actually renders through
-    rather than one built here.
+    rather than one built here. Legacy-Windows mode is asserted with it: rich
+    deducts that column twice, so a console detected as legacy is 78 wide where
+    every other host is 80 — and draws its boxes in ASCII besides.
     """
     from packetiq.display import terminal
 
+    assert terminal.console.legacy_windows is False
     assert terminal.console.size.width == 80
