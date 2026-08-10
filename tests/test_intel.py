@@ -33,7 +33,7 @@ def test_ja3_blocklist_is_real_data():
 def test_ja3_no_feed_means_no_findings(tmp_path):
     """With an empty feed, the detector must produce nothing (never fabricate)."""
     empty = tmp_path / "empty.csv"
-    empty.write_text("# no entries\n")
+    empty.write_text("# no entries\n", encoding="utf-8")
     ja3.load_blocklist.cache_clear()
     bl = ja3.load_blocklist(str(empty))
     assert bl == {}

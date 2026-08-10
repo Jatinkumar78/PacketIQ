@@ -19,7 +19,7 @@ def test_zeek_conn_log_detects_scan_and_brute(tmp_path):
     for i in range(40):
         lines.append(f"{t+100+i:.3f}\t45.33.32.156\t{50000+i}\t192.168.1.50\t22\ttcp\t0.2\t200\t100\t2\t1")
     log = tmp_path / "conn.log"
-    log.write_text("\n".join(lines) + "\n")
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     result = load_conn_log(str(log))
     assert len(result.flows) > 50
@@ -37,7 +37,7 @@ def test_zeek_json_lines(tmp_path):
          "duration": 0.0, "orig_bytes": 40, "resp_bytes": 80, "orig_pkts": 1, "resp_pkts": 1},
     ]
     log = tmp_path / "conn.json"
-    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
     result = load_conn_log(str(log))
     assert result.total_packets > 0
     assert "8.8.8.8" in result.external_ips

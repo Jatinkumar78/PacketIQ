@@ -221,6 +221,41 @@ def test_an_address_less_host_with_no_dhcp_is_labelled_as_having_no_ip():
     assert any("(no IP)" in lbl for lbl in labels)
 
 
+def test_a_device_with_an_address_that_missed_the_node_budget_is_not_redrawn():
+    """A device that holds an IP is an IP node or it is nothing.
+
+    Only the busiest hosts get drawn, so a quiet machine with an address can fall
+    outside that set. Redrawing it as a MAC-only node in the L2 segment would put
+    the same machine on the map twice under two identities.
+    """
+    graph = _graph([{"id": "192.168.1.77", "mac": "aa:bb:cc:dd:ee:05",
+                     "ips": ["192.168.1.77"], "kind": "host", "protocols": [],
+                     "packets": 0}])
+
+    assert not [n for n in graph["nodes"] if n["id"] == "192.168.1.77"]
+    assert not [n for n in graph["nodes"] if n.get("mac") == "aa:bb:cc:dd:ee:05"]
+
+
+def test_an_attacker_that_never_transmitted_is_not_drawn():
+    """A scan can be attributed to an address that sent no frame of its own — a
+    spoofed source, or one seen only inside someone else's payload.
+
+    Drawing it would invent a host, so the event is dropped: no attacker node and
+    no attack edge.
+    """
+    r = ExtractionResult()
+    r.ip_src_counts = {"192.168.1.50": 100, "192.168.1.51": 80}
+    r.ip_dst_counts = {}
+    r.transmitted_ips = set(r.ip_src_counts)
+    r.flows = {}
+    r.devices = []
+
+    graph = webapp._build_graph(r, [_event(src="203.0.113.9", dst="192.168.1.50")])
+
+    assert not [n for n in graph["nodes"] if n["id"] == "203.0.113.9"]
+    assert not [e for e in graph["edges"] if "203.0.113.9" in (e["source"], e["target"])]
+
+
 def test_the_node_budget_keeps_the_flagged_hosts(monkeypatch):
     """The cap fills by priority, so a quiet attacker is never the one dropped."""
     r = ExtractionResult()

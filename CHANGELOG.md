@@ -5,6 +5,102 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Windows and macOS are supported in fact, not in principle
+
+The package metadata said `Operating System :: OS Independent` and the repository
+shipped a `PacketIQ.bat`, but every test had only ever run on Linux and on one
+Mac. Auditing the OS-dependent surface found real defects on both of the
+platforms that were never exercised, so CI now runs the whole suite on
+`ubuntu-latest` (all four interpreters), `macos-latest` and `windows-latest`. The
+coverage gate stays on the Linux legs: coverage of the platform branches is
+necessarily different on each OS, and one number measured three ways would be
+three different claims.
+
+**Fixed**
+- **The CLI crashed instead of printing whenever stdout was not UTF-8.** The
+  tables are drawn with box characters no legacy 8-bit code page can encode, so
+  `packetiq analyze capture.pcap > report.txt` died part-way through the first
+  table with a `UnicodeEncodeError` — the default for redirected output on
+  Windows, and reproducible on macOS and Linux under `LC_ALL=C`. The streams are
+  now switched to UTF-8 with `errors="replace"`, so the report completes either
+  way. Reproduced before the fix and re-run after it.
+- **Fourteen places left the text codec to the platform.** `.env` scanning in four
+  modules, the web app's key persistence, the validation report writer and four
+  subprocess calls all took whatever the locale offered, which is UTF-8 on macOS
+  and Linux and the ANSI code page on Windows. A capture from a machine with a
+  non-ASCII hostname was enough to raise `UnicodeDecodeError` while merely
+  looking for an API key. All are now explicit.
+- **`tools/benchmark.py` could not start on Windows.** It imported `resource`,
+  which is POSIX-only, at module scope — so the benchmark CI step would have
+  failed on import. Peak memory now comes from `GetProcessMemoryInfo` there
+  rather than being reported as zero.
+- **Four tests could not run on Windows at all.** They monkeypatched
+  `os.geteuid` / `os.getgroups` and imported `grp`, none of which exist there.
+  They now supply the POSIX identity as a fixture, which keeps the macOS
+  privilege branch measured on every platform instead of skipped wherever it is
+  not the host OS.
+- **Line endings are pinned.** A `.gitattributes` normalises text to LF and marks
+  the captures and images binary. Without it a clone with `core.autocrlf` on
+  hands back `PacketIQ.command` with CRLF, which then fails on a Mac with `bad
+  interpreter: /bin/bash^M`, and could rewrite bytes inside a fixture PCAP.
+  `PacketIQ.bat` is the one file kept at CRLF, because `cmd.exe` mis-parses a
+  LF-only batch file.
+- **The Windows launcher installed differently from the macOS one.**
+  `PacketIQ.bat` used `pip install -e .`; `PacketIQ.command` deliberately does
+  not, because editable installs are silently skipped by some Python 3.12+ builds
+  and the `packetiq` command then breaks outside the repository folder.
+
+Verified by simulating a Windows host on this workstation — `sys.platform` set to
+`win32`, `os.geteuid`/`getgroups` removed, `grp`/`pwd`/`resource`/`fcntl` made
+unimportable, and the Unix tools unresolvable. The suite passes under it apart
+from four e-mail tests, whose failure is the simulation itself: CPython's `ssl`
+module imports `enum_certificates` only when `sys.platform == "win32"` at import
+time, and that symbol exists only in a Windows build of `_ssl`.
+
+### Host-dependent coverage, round three — and what Python 3.9 had been reporting
+
+One line, and the same cause a third time: `net_interfaces._score`'s `bridge`
+arm. This developer's Mac has four bridge-kind adapters (`bridge0` plus the
+Thunderbolt members), a Linux runner has none, so the branch ran on every local
+run and never in CI. `tests/conftest.py` now pins the interface list to a fixed
+table with one adapter of every kind it can classify — a third guard alongside
+the socket and capture-device ones — and the ranking weights have direct unit
+tests, since driving them through `list_interfaces` only ever proved the ordering
+of whatever adapters that host happened to have.
+
+**The 3.9 leg was not a measurement limitation, and the previous entry in this
+file was wrong to call it one.** The twelve `continue`/`break` lines it reported
+as unhit were twelve real gaps. CPython 3.9 threads the conditional jump for each
+operand of a short-circuit guard directly to the loop header, past the `continue`
+that follows it, so the line is recorded only when the *last* operand is the one
+that fires — verified from the bytecode, where `POP_JUMP_IF_FALSE` targets the
+loop head at offset 62 rather than the `continue` at 116. Each unhit line
+therefore named a guard whose second half nothing exercised; 3.10 and later
+record the line whichever operand fired and reported all twelve as covered.
+
+**The gaps that were hiding behind it**
+- A Zeek `conn.log` record with an originator but no responder (the suite tested
+  a record missing both).
+- A `Server:` banner naming a product with no version — the case where a keyword
+  search would return CVEs for releases the host may never have run.
+- A commented-out assignment in `.env`, which is how a stale Telegram chat id is
+  usually parked.
+- A NetFlow v9 flowset with a reserved id (2–255) and a perfectly legal length.
+- A NetFlow template whose fields declare zero width, which consumes no bytes and
+  would otherwise re-read the same record for as long as the process lived.
+- Four graph cases across the web app and the HTML report: an attacker address
+  that never transmitted a frame, and a device holding an IP that did not make
+  the node budget.
+
+Two small product changes came out of it. `parse_netflow`'s version dispatch now
+reads `if parsed_any: break` before the `raise` instead of after it — the `break`
+was previously reachable only by a jump, so on 3.9 it could never be recorded at
+all. And the DNS multicast guard collapses its four `startswith` calls into one:
+`ff0`/`ff2` was an incomplete spelling of `ff00::/8` (it missed `ff1e::`/`ff3e::`)
+and `ff2` is not a flag combination RFC 4291 permits.
+
+The floor is now **100 on every interpreter, 3.9 included**.
+
 ### Host-dependent coverage, round two: tests that asked the host and took either answer
 
 The same gate failed again on the same three legs, in a different module. The

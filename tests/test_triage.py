@@ -48,7 +48,8 @@ def test_allowlist_suppression(tmp_path, monkeypatch):
     cfg.write_text(
         "[allowlist]\n"
         'ips = ["203.0.113.7"]\n'
-        'cidrs = ["198.51.100.0/24"]\n'
+        'cidrs = ["198.51.100.0/24"]\n',
+        encoding="utf-8",
     )
     monkeypatch.setenv("PACKETIQ_CONFIG", str(cfg))
     config.reload()

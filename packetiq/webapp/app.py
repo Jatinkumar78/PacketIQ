@@ -1245,7 +1245,7 @@ def _read_env() -> dict:
     for path in (".", ".."):
         env_file = Path(path) / ".env"
         if env_file.is_file():
-            for line in env_file.read_text().splitlines():
+            for line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     k, _, v = line.partition("=")
@@ -1259,7 +1259,8 @@ def _env_upsert(key: str, value: str) -> None:
     other content and comments are preserved. Lets a key entered in the web UI
     survive a restart. Best-effort; the caller ignores OSError."""
     env_path = Path(".env")
-    lines = env_path.read_text().splitlines() if env_path.is_file() else []
+    lines = (env_path.read_text(encoding="utf-8", errors="replace").splitlines()
+             if env_path.is_file() else [])
     pre, epre = f"{key}=", f"export {key}="
     for i, ln in enumerate(lines):
         s = ln.strip()
@@ -1268,7 +1269,7 @@ def _env_upsert(key: str, value: str) -> None:
             break
     else:
         lines.append(f"{key}={value}")
-    env_path.write_text("\n".join(lines) + "\n")
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _env_remove(key: str) -> None:
@@ -1277,9 +1278,9 @@ def _env_remove(key: str) -> None:
     if not env_path.is_file():
         return
     pre, epre = f"{key}=", f"export {key}="
-    kept = [ln for ln in env_path.read_text().splitlines()
+    kept = [ln for ln in env_path.read_text(encoding="utf-8", errors="replace").splitlines()
             if not (ln.strip().startswith(pre) or ln.strip().startswith(epre))]
-    env_path.write_text("\n".join(kept) + ("\n" if kept else ""))
+    env_path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
 
 
 # Provider priority + their env var and default model. `ollama` is the local,

@@ -508,6 +508,57 @@ def test_machine_output_is_detected_from_the_invocation():
     assert m([]) is False
 
 
+class _RecordingStream:
+    """A text stream that remembers how it was reconfigured."""
+
+    def __init__(self, encoding):
+        self.encoding = encoding
+        self.reconfigured = None
+
+    def reconfigure(self, **kwargs):
+        self.reconfigured = kwargs
+        self.encoding = kwargs.get("encoding", self.encoding)
+
+
+def test_output_on_a_non_utf8_stream_is_switched_rather_than_crashing():
+    """`packetiq analyze x.pcap > report.txt` on Windows redirects stdout to the
+    ANSI code page, which cannot encode the box characters the tables are drawn
+    with — the run died mid-table with a UnicodeEncodeError. Reproduces on Linux
+    and macOS too under `LC_ALL=C`, so the fix is not platform-specific.
+    """
+    from packetiq.cli import _force_utf8_output
+
+    out, err = _RecordingStream("cp1252"), _RecordingStream("ascii")
+    _force_utf8_output([out, err])
+
+    assert out.reconfigured == {"encoding": "utf-8", "errors": "replace"}
+    assert err.reconfigured == {"encoding": "utf-8", "errors": "replace"}
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "UTF8", "utf8"])
+def test_a_stream_that_is_already_utf8_is_left_alone(encoding):
+    """Reconfiguring it would discard whatever error handler the caller chose."""
+    from packetiq.cli import _force_utf8_output
+
+    stream = _RecordingStream(encoding)
+    _force_utf8_output([stream])
+
+    assert stream.reconfigured is None
+
+
+def test_a_stream_that_cannot_be_reconfigured_is_not_fatal():
+    """`sys.stdout` may be any file-like object a caller substituted."""
+    from packetiq.cli import _force_utf8_output
+
+    class _Rigid:
+        encoding = "ascii"
+
+        def reconfigure(self, **kwargs):
+            raise AttributeError("not a TextIOWrapper")
+
+    _force_utf8_output([_Rigid(), object()])   # must not raise
+
+
 def test_the_banner_version_tracks_the_package(capsys):
     """A hardcoded version in the banner silently drifts from the real one."""
     from packetiq import __version__

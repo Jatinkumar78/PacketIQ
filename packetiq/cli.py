@@ -129,6 +129,28 @@ def _machine_output_requested(argv=None) -> bool:
     return False
 
 
+def _force_utf8_output(streams=None) -> None:
+    """Keep PacketIQ's output printable on a stream that is not UTF-8.
+
+    The rules, arrows and box characters the tables are drawn with sit outside
+    every legacy 8-bit code page, so a non-UTF-8 stdout does not print them oddly
+    — it raises. `packetiq analyze capture.pcap > report.txt` on Windows redirects
+    to the ANSI code page and died part-way through the first table with a
+    UnicodeEncodeError; `LC_ALL=C packetiq analyze` fails identically on Linux and
+    macOS, so this is not a Windows special case.
+
+    Switching the stream to UTF-8 fixes the redirected case outright.
+    `errors="replace"` covers what is left: a console that genuinely cannot
+    render a character now shows a placeholder instead of aborting the analysis,
+    which is the right trade when the alternative is losing the whole report.
+    """
+    targets: tuple = tuple(streams) if streams is not None else (sys.stdout, sys.stderr)
+    for stream in targets:
+        with contextlib.suppress(Exception):
+            if (getattr(stream, "encoding", "") or "").lower().replace("-", "") != "utf8":
+                stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Root group
 # ──────────────────────────────────────────────────────────────────────────────
@@ -141,6 +163,7 @@ def main(ctx):
     PacketIQ — AI PCAP Forensics & SOC Copilot
     Defensive network intelligence for SOC analysts.
     """
+    _force_utf8_output()
     if _machine_output_requested():
         ui.route_chrome_to_stderr()
     ui.print_banner()

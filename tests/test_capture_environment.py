@@ -9,6 +9,7 @@ machine happens to have that OS, and missing on the other.
 """
 
 import io
+import sys
 import types
 
 import pytest
@@ -190,8 +191,24 @@ def test_a_host_with_only_loopback_still_recommends_something(monkeypatch):
 
 # ── Capture privileges ───────────────────────────────────────────────────────
 
+def _posix_identity(monkeypatch, uid, groups, bpf_gid=4242):
+    """Give `_mac_capture_ok` a POSIX identity to read, whatever the host OS is.
+
+    `os.geteuid`, `os.getgroups` and the `grp` module are all POSIX-only: on
+    Windows there is no attribute to replace and no module to import. Supplying
+    all three keeps the macOS branch measured on every platform instead of
+    skipped wherever it is not the host OS, which is the same reason the rest of
+    this file stubs the OS rather than branching on it. `_mac_capture_ok` imports
+    `grp` inside the function, so seeding `sys.modules` is enough.
+    """
+    monkeypatch.setitem(sys.modules, "grp", types.SimpleNamespace(
+        getgrall=lambda: [types.SimpleNamespace(gr_name="access_bpf", gr_gid=bpf_gid)]))
+    monkeypatch.setattr(capture_setup.os, "geteuid", lambda: uid, raising=False)
+    monkeypatch.setattr(capture_setup.os, "getgroups", lambda: groups, raising=False)
+
+
 def test_root_can_always_capture_on_macos(monkeypatch):
-    monkeypatch.setattr(capture_setup.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(capture_setup.os, "geteuid", lambda: 0, raising=False)
     assert capture_setup._mac_capture_ok() is True
 
 
@@ -200,12 +217,7 @@ def test_access_bpf_membership_grants_capture_before_a_device_exists(monkeypatch
     are only applied when the next device is opened. Reporting 'not ready' there
     would send the user round the setup loop a second time.
     """
-    import grp
-
-    monkeypatch.setattr(capture_setup.os, "geteuid", lambda: 501)
-    monkeypatch.setattr(capture_setup.os, "getgroups", lambda: [501, 20, 4242])
-    monkeypatch.setattr(grp, "getgrall",
-                        lambda: [type("G", (), {"gr_name": "access_bpf", "gr_gid": 4242})()])
+    _posix_identity(monkeypatch, uid=501, groups=[501, 20, 4242])
     monkeypatch.setattr(capture_setup.os.path, "exists", lambda p: False)
 
     assert capture_setup._mac_capture_ok() is True
@@ -217,12 +229,7 @@ def test_a_readable_bpf_device_confirms_capture_is_already_live(monkeypatch):
     reached the early return — it was covered here purely because the developer's
     own machine had already been through `setup-capture`.
     """
-    import grp
-
-    monkeypatch.setattr(capture_setup.os, "geteuid", lambda: 501)
-    monkeypatch.setattr(capture_setup.os, "getgroups", lambda: [501, 20, 4242])
-    monkeypatch.setattr(grp, "getgrall",
-                        lambda: [type("G", (), {"gr_name": "access_bpf", "gr_gid": 4242})()])
+    _posix_identity(monkeypatch, uid=501, groups=[501, 20, 4242])
     monkeypatch.setattr(capture_setup.os.path, "exists", lambda p: p == "/dev/bpf0")
     monkeypatch.setattr(capture_setup.os, "access", lambda p, mode: True)
 
@@ -230,12 +237,7 @@ def test_a_readable_bpf_device_confirms_capture_is_already_live(monkeypatch):
 
 
 def test_no_bpf_group_membership_means_no_capture(monkeypatch):
-    import grp
-
-    monkeypatch.setattr(capture_setup.os, "geteuid", lambda: 501)
-    monkeypatch.setattr(capture_setup.os, "getgroups", lambda: [501, 20])
-    monkeypatch.setattr(grp, "getgrall",
-                        lambda: [type("G", (), {"gr_name": "access_bpf", "gr_gid": 4242})()])
+    _posix_identity(monkeypatch, uid=501, groups=[501, 20])
 
     assert capture_setup._mac_capture_ok() is False
 
@@ -438,12 +440,23 @@ def test_tsv_comment_and_blank_lines_are_skipped(tmp_path):
     assert next(iter(result.flows.values())).protocol == "UDP"
 
 
-def test_a_record_missing_an_endpoint_is_skipped(tmp_path):
+def test_a_record_missing_either_endpoint_is_skipped(tmp_path):
+    """Both halves of the guard, not just the first.
+
+    A conn.log truncated mid-write loses the responder while keeping the
+    originator at least as often as it loses both, and only that case reaches the
+    second half of `if not src or not dst`. The suite tested a record with
+    neither address and left the other half unexercised.
+    """
     log = tmp_path / "conn.log"
     log.write_text(
         '{"ts":1700000000.0,"id.orig_p":51000,"id.resp_p":443,"proto":"tcp"}\n'
-        '{"ts":1700000001.0,"id.orig_h":"10.0.0.5","id.orig_p":51001,'
+        '{"ts":1700000001.0,"id.orig_h":"10.0.0.9","id.orig_p":51002,'
+        '"id.resp_p":80,"proto":"tcp"}\n'
+        '{"ts":1700000002.0,"id.orig_h":"10.0.0.5","id.orig_p":51001,'
         '"id.resp_h":"1.1.1.1","id.resp_p":53,"proto":"udp"}\n',
         encoding="utf-8")
 
-    assert len(zeek.load_conn_log(str(log)).flows) == 1
+    flows = zeek.load_conn_log(str(log)).flows
+    assert len(flows) == 1
+    assert "10.0.0.9" not in {f.src_ip for f in flows.values()}

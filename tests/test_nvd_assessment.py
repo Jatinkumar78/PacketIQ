@@ -283,11 +283,19 @@ def test_an_nvd_failure_partway_through_keeps_what_was_already_found(monkeypatch
 
 def test_a_capture_with_no_version_bearing_banners_says_so(monkeypatch):
     """The honest answer for an all-HTTPS capture: nothing was observed, so
-    nothing is claimed."""
+    nothing is claimed.
+
+    Both ways a banner can fail to identify software count. A browser user-agent
+    yields no product at all; a hardened `Server: nginx` names the product and
+    deliberately withholds the version, and that one has to be dropped too — a
+    keyword search on the bare name would return CVEs for releases the host may
+    never have run.
+    """
     _no_kev(monkeypatch)
     _routes(monkeypatch)
 
-    out = nvd.assess_vulnerabilities([_banner(value="Mozilla/5.0 (X11; Linux)")])
+    out = nvd.assess_vulnerabilities([_banner(value="Mozilla/5.0 (X11; Linux)"),
+                                      _banner(value="nginx")])
 
     assert out["products"] == [] and out["hosts"] == []
     assert out["risk"]["tier"] == "NONE" and out["risk"]["score"] == 0

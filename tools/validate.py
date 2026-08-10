@@ -141,7 +141,7 @@ def run(manifest: dict, base_dir: Path, md_out: str = None, gates: dict = None) 
         "dataset": manifest.get("dataset_name", ""),
     }
     if md_out:
-        Path(md_out).write_text(_to_markdown(metrics))
+        Path(md_out).write_text(_to_markdown(metrics), encoding="utf-8")
         print(f"\nMarkdown report written to {md_out}")
 
     # Optional CI gate: exit non-zero if metrics fall below required floors. This

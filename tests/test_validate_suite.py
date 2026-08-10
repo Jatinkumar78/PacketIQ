@@ -39,5 +39,5 @@ def test_markdown_report_is_written():
     md = tmp / "report.md"
     rc = v.run(manifest, tmp, md_out=str(md))
     assert rc == 0
-    text = md.read_text()
+    text = md.read_text(encoding="utf-8")
     assert "Precision" in text and "Recall" in text and "Per-detector recall" in text

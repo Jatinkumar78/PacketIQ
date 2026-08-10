@@ -202,7 +202,7 @@ def load_credentials() -> tuple[Optional[str], Optional[str]]:
         env_file = os.path.join(path, ".env")
         if not os.path.isfile(env_file):
             continue
-        with open(env_file) as f:
+        with open(env_file, encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if "=" not in line or line.startswith("#"):

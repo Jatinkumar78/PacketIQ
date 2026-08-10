@@ -9,8 +9,16 @@ exercised identically on macOS, Linux and CI.
 from packetiq import net_interfaces as ni
 
 
-def test_list_interfaces_real_host_shape():
-    """On the real host it must always return well-formed records (best-effort)."""
+def test_every_interface_kind_is_enumerated_and_well_formed():
+    """Well-formed records for one adapter of every kind we can classify.
+
+    The list comes from `conftest.FIXED_INTERFACES` rather than the host, so this
+    runs the real enumeration end to end — metadata lookup, platform dispatch,
+    labelling, ranking — against the same input on every machine. Reading the
+    machine's own NICs made it a different test on each one: this Mac has four
+    bridge adapters and covered the bridge arm of `_score` for free, a Linux
+    runner has none and did not.
+    """
     recs = ni.list_interfaces()
     assert isinstance(recs, list)
     for r in recs:
@@ -20,6 +28,63 @@ def test_list_interfaces_real_host_shape():
         assert r["up"] in (True, False, None)
     # At most one interface is flagged recommended.
     assert sum(1 for r in recs if r["recommended"]) <= 1
+    assert {r["kind"] for r in recs} == {
+        "loopback", "ethernet", "wifi", "wwan", "vpn",
+        "bridge", "system", "virtual", "other",
+    }
+
+
+def test_a_description_that_only_repeats_the_device_name_is_not_a_label(monkeypatch):
+    """scapy fills `description` with the device name itself on several platforms.
+
+    Treating that as a friendly name would put "lo0" in the picker where the
+    readable "Loopback" belongs, so a description equal to the name counts as no
+    description at all.
+    """
+    monkeypatch.setattr(ni.sys, "platform", "linux")
+    monkeypatch.setattr(ni, "_scapy_metadata", lambda: (
+        {"lo0": {"ip": "", "mac": "", "flags": "", "description": "lo0"}},
+        ["lo0"], None))
+    monkeypatch.setattr(ni, "_linux_link_up", lambda dev: None)
+
+    rec = ni.list_interfaces()[0]
+    assert rec["kind"] == "loopback"
+    assert rec["label"] == "Loopback"
+
+
+def _rec(name="en0", kind="ethernet", up=None, ip="", is_default=False):
+    return {"name": name, "kind": kind, "up": up, "ip": ip, "is_default": is_default}
+
+
+def test_the_ranking_weights_order_the_kinds_a_user_expects():
+    """`_score` sorts ascending, so a *lower* key is a better capture candidate.
+
+    Asserted directly because these weights decide what the live-capture picker
+    puts at the top, and driving them through `list_interfaces` only proves the
+    ordering of whichever adapters that host happens to have.
+    """
+    order = ["ethernet", "wifi", "bridge", "other", "wwan",
+             "vpn", "loopback", "system", "virtual"]
+    keys = [ni._score(_rec(kind=k)) for k in order]
+    assert keys == sorted(keys), f"kind ranking is out of order: {list(zip(order, keys))}"
+    assert keys[0] == keys[1], "ethernet and wifi are equally good capture targets"
+    assert keys[-2] == keys[-1], "system and virtual plumbing rank equally last"
+
+
+def test_a_live_addressed_default_interface_outranks_a_bare_one():
+    better = ni._score(_rec(name="a", up=True, ip="10.0.0.5", is_default=True))
+    worse = ni._score(_rec(name="a", up=False))
+    assert better < worse
+    # Each signal counts on its own, too.
+    bare = ni._score(_rec(name="a"))
+    assert ni._score(_rec(name="a", up=True)) < bare
+    assert ni._score(_rec(name="a", ip="10.0.0.5")) < bare
+    assert ni._score(_rec(name="a", is_default=True)) < bare
+    assert ni._score(_rec(name="a", up=False)) > bare
+
+
+def test_interfaces_that_tie_are_ordered_by_name():
+    assert ni._score(_rec(name="en1")) < ni._score(_rec(name="en2"))
 
 
 def test_kind_classification():

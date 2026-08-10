@@ -229,6 +229,35 @@ def test_an_ipfix_set_with_an_impossible_length_stops_the_walk():
     assert parse_netflow(hdr + body) == []
 
 
+def test_a_v9_flowset_with_a_reserved_id_stops_the_walk():
+    """v9 flowset ids are 0 (template), 1 (options) or 256 and up (data).
+
+    2..255 is reserved, so reading one means the walk has left the datagram —
+    usually into the header of the next one, whose first field is a version
+    number. Length alone does not catch that: this set declares a perfectly
+    legal length.
+    """
+    hdr = struct.pack("!HHIIII", 9, 1, UPTIME, UNIX, 0, 1)
+    assert parse_netflow(hdr + struct.pack("!HH", 2, 8) + b"\x00" * 4) == []
+
+
+def test_a_template_whose_fields_have_no_width_cannot_spin_forever():
+    """A declared field length of 0 consumes nothing.
+
+    A record built only from such fields would leave the read position exactly
+    where it started, and the enclosing `while p < len(payload)` would then read
+    the same bytes for as long as the process lived. The decoder stops on a
+    record that made no progress, which is the guard's second half — the first
+    only fires on a record that ran off the end.
+    """
+    tmpl = struct.pack("!HH", 256, 1) + struct.pack("!HH", 8, 0)   # srcaddr, 0 bytes
+    tmpl_fs = struct.pack("!HH", 0, 4 + len(tmpl)) + tmpl
+    data_fs = struct.pack("!HH", 256, 8) + b"\x00" * 4
+    hdr = struct.pack("!HHIIII", 9, 1, UPTIME, UNIX, 0, 1)
+
+    assert parse_netflow(hdr + tmpl_fs + data_fs) == []
+
+
 def test_a_template_terminated_by_a_zero_id_stops_parsing_it():
     tmpl = struct.pack("!HH", 0, 0)                            # tid 0 ends the set
     tmpl_fs = struct.pack("!HH", 0, 4 + len(tmpl)) + tmpl

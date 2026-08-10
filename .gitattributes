@@ -1,0 +1,28 @@
+# Normalise line endings so a clone on Windows and a clone on macOS/Linux hold
+# byte-identical text. Without this, Git's autocrlf can hand a Windows user CRLF
+# copies of the shell entry points; carried back to a Mac, `PacketIQ.command` and
+# `quickstart.sh` then fail with "bad interpreter: /bin/bash^M".
+* text=auto eol=lf
+
+# The Windows launcher is the one file that must keep CRLF — cmd.exe mis-parses a
+# LF-only batch file at label and multi-line boundaries.
+*.bat text eol=crlf
+
+# Binary: never touched, never diffed as text. A capture that had 0x0A rewritten
+# to 0x0D0A is a corrupt capture, and the sample/dataset PCAPs are fixtures the
+# test suite reads byte for byte.
+*.pcap  binary
+*.pcapng binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.docx  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.zip   binary
+*.gz    binary
+*.db    binary

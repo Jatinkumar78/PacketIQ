@@ -38,7 +38,7 @@ def get_api_key() -> str | None:
     for path in (".", ".."):
         env_file = Path(path) / ".env"
         if env_file.is_file():
-            for line in env_file.read_text().splitlines():
+            for line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
                 line = line.strip()
                 if line.startswith("NVD_API_KEY") and "=" in line:
                     v = line.partition("=")[2].strip().strip('"').strip("'")

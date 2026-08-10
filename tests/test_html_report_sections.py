@@ -136,6 +136,36 @@ def test_a_device_that_already_has_an_ip_is_not_drawn_twice():
     assert svg.count("192.168.1.50") == 1
 
 
+def test_a_device_with_an_address_that_missed_the_node_budget_is_not_redrawn():
+    """A device that holds an IP is an IP node or it is nothing.
+
+    The graph only draws the busiest hosts, so a quiet machine with an address
+    can fall outside that set. It must not then reappear as a MAC-only box in the
+    L2 segment — that would show one machine twice under two identities.
+    """
+    devices = [{"id": "192.168.1.77", "mac": "aa:bb:cc:dd:ee:05",
+                "ips": ["192.168.1.77"], "kind": "host", "protocols": [],
+                "packets": 0}]
+    svg = hr._network_svg(_graph_result(devices=devices), [])
+
+    assert "192.168.1.77" not in svg
+    assert "dd:ee:05" not in svg
+
+
+def test_an_attacker_that_never_transmitted_is_not_drawn():
+    """A scan can be attributed to an address that sent no frame of its own —
+    a spoofed source, or one seen only in the payload of someone else's packet.
+
+    Drawing it would invent a host on the map, so the event is dropped entirely:
+    no attacker node, and no attack edge either.
+    """
+    events = [_event(EventType.PORT_SCAN, src="203.0.113.9", dst="192.168.1.50")]
+    svg = hr._network_svg(_graph_result(), events)
+
+    assert "203.0.113.9" not in svg
+    assert "<svg" in svg, "the rest of the graph still renders"
+
+
 def test_an_arp_sweep_annotates_how_many_hosts_answered():
     """`scanned N · M live` is the honest summary: probing 254 addresses and
     finding 3 devices is a very different finding from 254 live hosts."""

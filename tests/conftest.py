@@ -116,6 +116,47 @@ def no_real_packet_capture(monkeypatch):
         monkeypatch.setattr(conf, attr, denied, raising=False)
 
 
+# The interface list every test sees, in place of whatever NICs this machine has.
+# One name per classification `_kind_for` can return, all suffixed `99` so none of
+# them can collide with a real adapter (and therefore with scapy's `conf.iface`,
+# which decides the `is_default` flag).
+FIXED_INTERFACES = (
+    "lo99",       # loopback
+    "eth99",      # ethernet
+    "wl99",       # wifi
+    "ww99",       # wwan
+    "utun99",     # vpn
+    "bridge99",   # bridge
+    "awdl99",     # system
+    "docker99",   # virtual
+    "zzz99",      # other — matches no prefix
+)
+
+
+@pytest.fixture(autouse=True)
+def fixed_interface_table(monkeypatch):
+    """Enumerate a fixed interface list instead of the machine's real NICs.
+
+    `net_interfaces.list_interfaces()` ranks whatever the OS reports, so which of
+    its branches run is decided by the hardware. This Mac has four bridge-kind
+    adapters (bridge0 plus the Thunderbolt members), so the `bridge` arm of
+    `_score` ran on every local run; a Linux runner has `lo` and `eth0` and never
+    reached it. The suite looked complete and CI stopped one statement short.
+
+    Pinning the list keeps every ranking, labelling and classification branch
+    reachable on any host, and keeps it reachable for the same reason everywhere.
+    Only the *names* are fixed: the metadata lookup, the macOS `networksetup` /
+    `ifconfig` helpers and the Linux `sysfs` read still run for real and simply
+    find nothing for these names, which is itself the same on every machine.
+
+    Tests that need a particular table still stub `_scapy_metadata` (or
+    `list_interfaces`) directly; monkeypatch applies theirs after this one.
+    """
+    import scapy.all as scapy_all
+
+    monkeypatch.setattr(scapy_all, "get_if_list", lambda: list(FIXED_INTERFACES))
+
+
 def _build_attack_pcap(path: str):
     random.seed(7)
     pkts = []

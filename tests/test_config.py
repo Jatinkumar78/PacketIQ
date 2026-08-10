@@ -14,7 +14,8 @@ def test_defaults_when_no_file(monkeypatch):
 def test_user_config_overrides_defaults(tmp_path, monkeypatch):
     cfg = tmp_path / "packetiq.toml"
     cfg.write_text(
-        "[brute_force]\nssh_threshold = 3\n\n[dns]\ndga_entropy_threshold = 2.5\n"
+        "[brute_force]\nssh_threshold = 3\n\n[dns]\ndga_entropy_threshold = 2.5\n",
+        encoding="utf-8",
     )
     monkeypatch.setenv("PACKETIQ_CONFIG", str(cfg))
     config.reload()
@@ -45,7 +46,7 @@ def test_config_changes_detector_behavior(tmp_path, monkeypatch):
 
     # lowered threshold (3) → detection fires
     cfg = tmp_path / "packetiq.toml"
-    cfg.write_text("[brute_force]\nssh_threshold = 3\n")
+    cfg.write_text("[brute_force]\nssh_threshold = 3\n", encoding="utf-8")
     monkeypatch.setenv("PACKETIQ_CONFIG", str(cfg))
     config.reload()
     try:

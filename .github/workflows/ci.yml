@@ -21,13 +21,33 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    # Whole matrix leg finishes in ~5 min; anything past 20 is wedged, not slow.
-    timeout-minutes: 20
+    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    # A Linux leg finishes in ~5 min; Windows is roughly twice that, so anything
+    # past 25 is wedged rather than slow.
+    timeout-minutes: 25
+    defaults:
+      run:
+        # GitHub's Windows images ship bash, and using it everywhere keeps one
+        # copy of each step instead of a PowerShell fork that then drifts.
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
+        # Every supported interpreter, on the OS that carries the coverage gate.
+        os: [ubuntu-latest]
         python-version: ["3.9", "3.10", "3.11", "3.12"]
+        # PacketIQ is installed and run on all three desktop platforms, and the
+        # parts that differ between them are exactly the parts that break: the
+        # capture-privilege model, the interface enumerator, path handling and
+        # the console encoding. Claiming Windows and macOS support without ever
+        # running there is a claim, not a fact — one interpreter each is enough
+        # to keep it a fact, since nothing platform-specific is version-specific.
+        include:
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
 
     steps:
       - uses: actions/checkout@v5
@@ -70,36 +90,43 @@ jobs:
       # `raise NotImplementedError` and `__main__` guards (see pyproject).
       #
       # Coverage has to be a property of the *suite*, not of the machine running
-      # it, and it twice was not. The first round was the platform switches (the
-      # macOS branches, a host that already had capture privileges, the `tomli`
-      # backport). The second was subtler, because the tests in question looked
-      # deliberate: they asked the host a question and accepted either answer.
-      # `/api/live/start` was allowed to return 403 and the test simply returned;
-      # `packetiq chat` was handed no API keys and trusted that to mean no
-      # provider. On this developer's Mac capture works and `ollama serve` is
-      # listening, so both took the long branch and covered 34 statements that a
-      # runner never reaches.
+      # it, and three times it was not. First the platform switches (the macOS
+      # branches, a host that already had capture privileges, the `tomli`
+      # backport). Then tests that looked deliberate but asked the host a question
+      # and accepted either answer: `/api/live/start` was allowed to return 403
+      # and the test simply returned, and `packetiq chat` was handed no API keys
+      # and trusted that to mean no provider — on a Mac with capture rights and
+      # `ollama serve` running, both took the long branch. Then the interface
+      # ranker, whose `bridge` arm ran only because this developer's Mac has four
+      # bridge adapters and a Linux runner has none.
       #
-      # Two guards in tests/conftest.py now make that impossible rather than
-      # merely fixed: no test may open a socket, and none may open a real capture
-      # device. A path that depends on either has to be driven with a stub, which
-      # is the only way its coverage means the same thing on every host. Verified
-      # by measuring the suite under four simulated runner environments (Linux
-      # dispatch, denied capture socket, no Ollama, no external tools) on 3.11 and
-      # 3.12: 100.00% in every one.
+      # Three guards in tests/conftest.py make that class impossible rather than
+      # merely fixed: no test may open a socket, none may open a real capture
+      # device, and none sees the machine's own interface list. A path that
+      # depends on any of them has to be driven with a fixture, which is the only
+      # way its coverage means the same thing on every host.
       #
-      # The floor is 99 on 3.9 for one measurement reason, not a test gap:
-      # CPython 3.9 emits no trace event for `continue`/`break` — 12 such lines
-      # at last measurement (99.88% overall). Verified directly rather than
-      # assumed: the zeek endpoint guard demonstrably skips the record on 3.9
-      # (1 of 2 flows kept, test green) while coverage still reports the line
-      # unhit. The headroom below 100 is deliberate, because every new
-      # `continue` in a loop costs that leg one more line for no real reason.
-      # 3.10-3.12 measure faithfully and are held at exactly 100.
+      # 3.9 is held at 100 like every other leg, and it is the strictest of them.
+      # CPython 3.9 threads the conditional jump for each operand of a
+      # short-circuit guard straight past the `continue` that follows it, so the
+      # line is only recorded when the *last* operand is the one that fires. That
+      # is not a measurement artifact to be worked around: it named twelve real
+      # gaps, each a guard whose second half no test exercised — a Zeek record
+      # with an originator but no responder, a banner naming a product with no
+      # version, a commented-out `.env` assignment, a NetFlow template whose
+      # fields have no width. 3.10+ record the line whichever operand fired and
+      # reported all twelve as covered.
       - name: Unit + integration tests (with coverage gate)
         run: |
-          if [ "${{ matrix.python-version }}" = "3.9" ]; then FLOOR=99; else FLOOR=100; fi
-          pytest -q --cov=packetiq --cov-report=term-missing --cov-fail-under=$FLOOR
+          # The gate belongs to the Linux matrix. Coverage of the platform
+          # branches is necessarily different on macOS and Windows — the point of
+          # those legs is that the suite passes there, and a 100% claim measured
+          # on three different platforms would be three different claims.
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            pytest -q --cov=packetiq --cov-report=term-missing --cov-fail-under=100
+          else
+            pytest -q
+          fi
 
       # Standing guarantee: the deterministic grounding guardrail redacts every
       # ungrounded IP / MITRE technique / CVE / domain / file-hash. These tests use

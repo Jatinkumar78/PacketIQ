@@ -71,19 +71,20 @@ def test_set_key_applies_immediately_without_persist(client):
 def test_persist_writes_and_delete_removes_from_dotenv(tmp_path, client):
     r = client.post("/api/ai/key", json={"provider": "gemini", "key": "AIzaKEY", "persist": True})
     assert r.status_code == 200
-    env = (tmp_path / ".env").read_text()
+    env = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "GEMINI_API_KEY=AIzaKEY" in env
 
     r = client.delete("/api/ai/key/gemini")
     assert r.status_code == 200
     assert not any(p["name"] == "gemini" and p["configured"] for p in r.json()["providers"])
-    assert "GEMINI_API_KEY" not in (tmp_path / ".env").read_text()
+    assert "GEMINI_API_KEY" not in (tmp_path / ".env").read_text(encoding="utf-8")
 
 
 def test_persist_preserves_other_env_lines(tmp_path, client):
-    (tmp_path / ".env").write_text("# my config\nOLLAMA_HOST=http://x:11434\n")
+    (tmp_path / ".env").write_text("# my config\nOLLAMA_HOST=http://x:11434\n",
+                                   encoding="utf-8")
     client.post("/api/ai/key", json={"provider": "anthropic", "key": "sk-ant-KEY", "persist": True})
-    env = (tmp_path / ".env").read_text()
+    env = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "# my config" in env and "OLLAMA_HOST=http://x:11434" in env
     assert "ANTHROPIC_API_KEY=sk-ant-KEY" in env
 
@@ -115,14 +116,14 @@ def test_telegram_save_applies_and_persists(tmp_path, client):
     assert body["configured"] and body["chat_id"] == "987654321" and body["token_hint"].startswith("…")
     assert os.environ["TELEGRAM_BOT_TOKEN"] == _TG_TOKEN      # live this session
     assert os.environ["TELEGRAM_CHAT_ID"] == "987654321"
-    env = (tmp_path / ".env").read_text()
+    env = (tmp_path / ".env").read_text(encoding="utf-8")
     assert f"TELEGRAM_BOT_TOKEN={_TG_TOKEN}" in env and "TELEGRAM_CHAT_ID=987654321" in env
 
     assert client.get("/api/notify/telegram").json()["configured"] is True
 
     # Delete removes it from the process and .env.
     assert client.delete("/api/notify/telegram").status_code == 200
-    assert "TELEGRAM_BOT_TOKEN" not in (tmp_path / ".env").read_text()
+    assert "TELEGRAM_BOT_TOKEN" not in (tmp_path / ".env").read_text(encoding="utf-8")
     assert client.get("/api/notify/telegram").json()["configured"] is False
 
 

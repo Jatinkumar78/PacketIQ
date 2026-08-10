@@ -359,7 +359,7 @@ def test_zeek_conn_log_upload(client, tmp_path):
     for i, port in enumerate(range(1, 60)):
         lines.append(f"{1700000000 + i*0.1:.3f}\t45.33.32.156\t{40000+i}\t192.168.1.50\t{port}\ttcp\t0\t40\t0\t1\t0")
     log = tmp_path / "conn.log"
-    log.write_text("\n".join(lines) + "\n")
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
     job = _analyze(client, log, "conn.log")
     res = client.get(f"/api/results/{job}").json()
     assert res["meta"]["unique_flows"] >= 50

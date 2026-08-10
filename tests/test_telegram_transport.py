@@ -99,6 +99,22 @@ def test_credentials_fall_back_to_a_dotenv_file(tmp_path):
     assert tg.load_credentials() == ("file-token", "-1001234567890")
 
 
+def test_a_commented_out_setting_in_dotenv_is_not_read(tmp_path):
+    """A `#`-prefixed assignment is a disabled setting, not a value.
+
+    Commenting a line out is how people park an old chat id, so the parser has to
+    reject a line that *does* look like an assignment — the case a bare `#`
+    comment or a line with no `=` at all never reaches.
+    """
+    (tmp_path / ".env").write_text(
+        "#TELEGRAM_BOT_TOKEN=disabled-token\n"
+        "# TELEGRAM_CHAT_ID=-1009999999999\n"
+        "TELEGRAM_BOT_TOKEN=live-token\n",
+        encoding="utf-8",
+    )
+    assert tg.load_credentials() == ("live-token", None)
+
+
 def test_missing_credentials_are_reported_as_none():
     assert tg.load_credentials() == (None, None)
 

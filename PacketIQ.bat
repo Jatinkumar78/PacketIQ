@@ -43,7 +43,11 @@ REM 3) Install on first run
 if errorlevel 1 (
   echo Installing PacketIQ and dependencies ^(one-time, ~1-2 minutes^)...
   "%VENV_PY%" -m pip install -q --upgrade pip
-  "%VENV_PY%" -m pip install -q -e .
+  REM Regular (non-editable) install, matching PacketIQ.command: it copies the
+  REM package into site-packages so the `packetiq` console script resolves from
+  REM any working directory. Editable (.pth) installs are silently skipped by
+  REM some Python 3.12+ builds, which breaks the command outside this folder.
+  "%VENV_PY%" -m pip install -q .
   if errorlevel 1 (
     echo Install failed. Check your internet connection and try again.
     pause

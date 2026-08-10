@@ -127,7 +127,7 @@ def load_api_key() -> Optional[str]:
     for path in (".", ".."):
         env_file = os.path.join(path, ".env")
         if os.path.isfile(env_file):
-            with open(env_file) as f:
+            with open(env_file, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     line = line.strip()
                     if line.startswith("ANTHROPIC_API_KEY"):

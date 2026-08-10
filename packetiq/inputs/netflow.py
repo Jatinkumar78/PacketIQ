@@ -251,9 +251,11 @@ def parse_netflow(data: bytes) -> list:
         elif version == 10:
             off = dec.parse_ipfix(data, off)
         else:
-            if not parsed_any:
-                raise NetFlowError(f"unrecognised export version {version}")
-            break
+            # Anything else is either padding a collector appended after a good
+            # datagram, or a file that was never an export in the first place.
+            if parsed_any:
+                break
+            raise NetFlowError(f"unrecognised export version {version}")
         parsed_any = True
     return dec.records
 

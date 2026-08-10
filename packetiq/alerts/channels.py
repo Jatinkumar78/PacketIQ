@@ -32,7 +32,7 @@ def _env(name: str) -> Optional[str]:
     for path in (".", ".."):
         p = os.path.join(path, ".env")
         if os.path.isfile(p):
-            with open(p) as fh:
+            with open(p, encoding="utf-8", errors="replace") as fh:
                 for line in fh:
                     line = line.strip()
                     if line.startswith("#") or "=" not in line:

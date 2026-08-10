@@ -335,9 +335,11 @@ def _non_standard_resolver(result: ExtractionResult) -> list[DetectionEvent]:
         dst_host = dst_host.strip("[]")
         if dst_host in MDNS_MULTICAST:
             continue
-        # Any multicast address (224.x.x.x or ff00::/8) is link-local protocol traffic
-        if dst_host.startswith("224.") or dst_host.startswith("239.") \
-                or dst_host.lower().startswith("ff0") or dst_host.lower().startswith("ff2"):
+        # Any multicast address is link-local protocol traffic, never a resolver.
+        # A leading "ff" is the whole of IPv6 ff00::/8; the previous "ff0"/"ff2"
+        # pair missed the transient and source-specific groups (ff1e::, ff3e::)
+        # and "ff2" is not a flag combination RFC 4291 allows in the first place.
+        if dst_host.lower().startswith(("224.", "239.", "ff")):
             continue
         if is_private_ip(dst_host):
             continue

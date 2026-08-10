@@ -55,7 +55,11 @@ def _run(cmd: list, timeout: float = 4.0) -> str:
         return ""
     try:
         out = subprocess.run(  # nosec B603 # resolved absolute path, constant args, no shell, no user input
-            [exe, *cmd[1:]], capture_output=True, text=True, timeout=timeout
+            # Decoding is pinned rather than left to the locale: `text=True` alone
+            # reads the console code page on Windows, and an interface described
+            # with a non-ASCII character would then raise instead of listing.
+            [exe, *cmd[1:]], capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8", errors="replace",
         )
         return out.stdout or ""
     except Exception:

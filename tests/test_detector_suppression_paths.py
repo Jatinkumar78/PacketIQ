@@ -202,7 +202,7 @@ def test_cleartext_ftp_to_the_internet_is_reported_once_per_server():
 def _beacon_cfg(tmp_path, monkeypatch, body: str):
     from packetiq import config
     cfg = tmp_path / "packetiq.toml"
-    cfg.write_text(body)
+    cfg.write_text(body, encoding="utf-8")
     monkeypatch.setenv("PACKETIQ_CONFIG", str(cfg))
     config.reload()
     return config

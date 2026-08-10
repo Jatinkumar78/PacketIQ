@@ -11,6 +11,7 @@ Every test points the modules at a temp location; none touches the user's real
 `~/.packetiq/history.db` or the repository's `packetiq.toml`.
 """
 
+import os
 import sqlite3
 
 import pytest
@@ -109,8 +110,14 @@ def test_history_failures_never_propagate(monkeypatch, db):
     assert storage.delete(1) is False
 
 
+@pytest.mark.skipif(os.name == "nt", reason="NTFS has no POSIX mode bits to read")
 def test_the_history_directory_is_private_to_the_user(db):
-    """History references capture paths, which are sensitive."""
+    """History references capture paths, which are sensitive.
+
+    Windows reports a synthetic 0o777 for every directory regardless of its ACL,
+    so this asserts nothing there — the private-directory guarantee is a POSIX
+    one, and claiming to have checked it on Windows would be false.
+    """
     storage.record("x.pcap", 1, 1, "LOW", 0, 0)
     assert (db.parent.stat().st_mode & 0o077) == 0
 

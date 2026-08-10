@@ -21,12 +21,17 @@ validation harness (PCAPParser → DataExtractor → DetectionEngine).
 from __future__ import annotations
 
 import argparse
+import ctypes
 import gc
 import os
-import resource
 import sys
 import time
 from pathlib import Path
+
+try:
+    import resource  # POSIX only — Windows has no getrusage(2)
+except ImportError:
+    resource = None            # type: ignore[assignment]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -35,10 +40,36 @@ from packetiq.extractor.data_extractor import DataExtractor  # noqa: E402
 from packetiq.parser.pcap_parser import PCAPParser  # noqa: E402
 
 
+class _PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+    """psapi.h — only the PeakWorkingSetSize field is read."""
+    _fields_ = [("cb", ctypes.c_uint32), ("PageFaultCount", ctypes.c_uint32),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t)]
+
+
 def _peak_rss_mb() -> float:
-    """Peak resident set size. ru_maxrss is bytes on macOS, kilobytes on Linux."""
-    ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return ru / (1024 * 1024) if sys.platform == "darwin" else ru / 1024
+    """Peak resident set size in MB, on every platform PacketIQ supports.
+
+    `resource.getrusage` is POSIX-only and does not exist on Windows, where the
+    equivalent is GetProcessMemoryInfo's PeakWorkingSetSize. Reporting 0 there
+    instead would put a made-up number in the benchmark table.
+    """
+    if resource is not None:
+        ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # ru_maxrss is bytes on macOS, kilobytes on Linux.
+        return ru / (1024 * 1024) if sys.platform == "darwin" else ru / 1024
+    counters = _PROCESS_MEMORY_COUNTERS()
+    counters.cb = ctypes.sizeof(counters)
+    handle = ctypes.windll.kernel32.GetCurrentProcess()      # type: ignore[attr-defined]
+    ctypes.windll.psapi.GetProcessMemoryInfo(                # type: ignore[attr-defined]
+        handle, ctypes.byref(counters), counters.cb)
+    return counters.PeakWorkingSetSize / (1024 * 1024)
 
 
 def bench_one(path: str) -> dict:
