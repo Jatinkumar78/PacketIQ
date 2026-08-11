@@ -26,9 +26,37 @@ pytest -q                                          # full suite
 python tools/validate.py --suite --min-recall 1.0 --min-precision 1.0
 ```
 
-CI (`.github/workflows/ci.yml`) runs the test suite, the deterministic guardrail
-invariant, the detection regression gate, a throughput smoke test, and a `pip-audit`
-dependency-CVE scan on Python 3.9–3.12.
+## What CI actually gates
+
+`.github/workflows/ci.yml` has two jobs. The **test** job runs on a matrix of
+Python 3.9, 3.10, 3.11 and 3.12 on Linux, plus 3.12 on macOS and 3.12 on Windows —
+six legs, because the parts that differ between platforms (capture privileges,
+interface enumeration, path handling, console encoding) are exactly the parts that
+break. Each leg runs, in order:
+
+| Step | Blocking? |
+|---|---|
+| `packetiq --help` + `import packetiq` from an unrelated directory | yes |
+| `ruff check packetiq tools tests` | yes |
+| `mypy packetiq` | yes |
+| `pytest` — **with `--cov-fail-under=100` on the Linux legs only** | yes |
+| Guardrail invariant (`test_grounding_guard.py`, `test_grounding.py`) | yes |
+| Detection regression gate (`tools/validate.py --suite`, 100% recall + precision) | yes |
+| Throughput benchmark smoke (`tools/benchmark.py --demo`) | yes |
+
+The coverage gate is deliberately Linux-only: coverage of the platform branches is
+necessarily different on each OS, so one "100%" measured three ways would be three
+different claims. The macOS and Windows legs prove the suite *passes* there.
+
+The **security** job runs four scans, and their blocking status is not uniform —
+see *Dependency security* below for why:
+
+| Scan | Interpreter | Blocking? |
+|---|---|---|
+| `pip-audit` on `pip install -e .` (what users get) | 3.12 | **yes** |
+| `pip-audit` on `pip install ".[dev]"` (contributor tooling) | 3.12 | advisory |
+| `bandit -r packetiq` at low severity + low confidence | 3.12 | **yes** |
+| `pip-audit` on `pip install .` (oldest supported interpreter) | 3.9 | advisory |
 
 ## Cut the release (repository owner)
 
@@ -65,11 +93,25 @@ security-patched floors that exist on PyPI**:
 Do not lower these. Re-check with `pip-audit` (run automatically in CI).
 
 On **Python 3.10+** these floors resolve to the fully-patched upstream releases with
-no code change. On **Python 3.9** (still supported, but end-of-life since October
-2025) each package installs at the newest 3.9-compatible version; a handful of
-upstream advisories are only fixed in releases that require Python 3.10+, so **3.10+
-is recommended** for the fullest patch set. The full analysis is in
-[docs/reports/PacketIQ_Security_Audit_Report.pdf](reports/PacketIQ_Security_Audit_Report.pdf).
+no code change — the 3.12 audit in CI is clean, which is why it is allowed to block.
+
+On **Python 3.9** (still supported, but end-of-life since October 2025) each package
+installs at the newest 3.9-compatible version, and three of them carry published
+advisories whose *only* fixes ship in releases that require 3.10+:
+
+| Package | Resolves to on 3.9 | Resolves to on 3.12 |
+|---|---|---|
+| `pillow` | 11.3.0 (PYSEC-2026-3493) | 12.3.0 — clean |
+| `python-dotenv` | 1.2.1 (PYSEC-2026-2270) | 1.2.2 — clean |
+| `python-multipart` | 0.0.20 (six advisories) | 0.0.32 — clean |
+
+There is nothing to bump: on 3.9 those *are* the newest installable versions. Raising
+the floors would break installability on 3.9, and raising `requires-python` would drop
+3.9 support, so the residual is reported rather than papered over — the 3.9 `pip-audit`
+step is advisory and prints it in every CI log. **Run on 3.10+ for the fullest patch
+set.** The full analysis is in
+[docs/reports/PacketIQ_Security_Audit_Report.pdf](reports/PacketIQ_Security_Audit_Report.pdf)
+and the policy is stated in [SECURITY.md](../SECURITY.md).
 
 ### Upgrading a local dev machine to Python 3.10+ (done on the reference env)
 
@@ -81,7 +123,8 @@ is recommended** for the fullest patch set. The full analysis is in
 
 No code change is needed — `requires-python` stays `>=3.9`, so 3.9 keeps working.
 This just rebuilds your local `.venv` on a newer interpreter so `pip` resolves the
-security floors to their fully-patched releases. CI already validates 3.9–3.12.
+security floors to their fully-patched releases. CI already validates 3.9–3.12 on
+Linux, plus 3.12 on macOS and Windows.
 
 ```bash
 # 1. Install a newer Python (macOS — pick one):
@@ -95,7 +138,7 @@ python3.12 -m venv .venv          # or: ./quickstart.sh  (auto-selects the newes
 # Regular (non-editable) install so the `packetiq` command works from any directory.
 ./.venv/bin/pip install ".[dev,yara,geoip]"
 # 3. Verify — everything should stay green:
-./.venv/bin/python -m pytest -q --cov=packetiq --cov-fail-under=65
+./.venv/bin/python -m pytest -q --cov=packetiq --cov-fail-under=100
 ./.venv/bin/python -m pip_audit          # advisories now resolve to patched releases
 ```
 
@@ -136,8 +179,10 @@ if os.path.isdir(os.path.join(_repo, "packetiq")) and _repo not in sys.path:
 robust with no babysitting. Verify with:
 
 ```bash
-cd /tmp && /path/to/PacketIQ/.venv/bin/packetiq --version   # resolves from anywhere
+cd /tmp && /path/to/PacketIQ/.venv/bin/packetiq version   # resolves from anywhere
 ```
+
+(The version subcommand is `packetiq version`; there is no `--version` flag.)
 
 > **Zero-config alternative:** running from the repo root always picks up live
 > source edits (the source tree shadows the install), with no `.pth` involved —

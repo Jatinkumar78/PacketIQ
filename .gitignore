@@ -46,9 +46,11 @@ report_*.md
 # ...but keep the curated results reports the README/docs link to (small, no PCAP
 # data — just the numbers/tables). Delete locally if you'd rather not track them.
 !reports/detection_real.md
+!reports/detection_synthetic.md
 !reports/performance.md
 !reports/faithfulness_ablation.md
 !reports/copilot_faithfulness_comparison.md
+!reports/ollama_tuning.md
 
 # PCAP samples (can be large)
 samples/*.pcap

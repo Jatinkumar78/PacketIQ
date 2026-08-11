@@ -1,3 +1,7 @@
+pip-audit — PacketIQ dependency audit log (append-only; newest block last)
+Latest verification: 2026-08-11 — see the final section.
+
+---------------------------------------------------------------------
 pip-audit — PacketIQ reference venv (Python 3.12.13) — 2026-07-15
 
 The dev/reference environment was migrated from Python 3.9.6 to a standalone
@@ -60,3 +64,52 @@ Status of that finding, checked against PyPI and OSV on 2026-08-10:
 
 Conclusion unchanged: not exploitable through PacketIQ, and not present
 in any user's install.  Reported on every run rather than suppressed.
+
+=====================================================================
+Re-verified 2026-08-11 — both closures re-audited from scratch
+---------------------------------------------------------------------
+Each closure was built in a *fresh* virtualenv on CPython 3.12.13 and
+audited, rather than reusing the developer venv (see the note below on
+why that distinction turned out to matter).
+
+1. Runtime closure ("pip install ." — what "pip install packetiq"
+   produces).  Blocking gate.
+
+       No known vulnerabilities found
+
+   Resolved runtime versions: anthropic 0.121.0, click 8.4.2,
+   cryptography 50.0.0, fastapi 0.141.1, google-genai 2.17.0,
+   groq 1.6.0, pillow 12.3.0, python-dotenv 1.2.2,
+   python-multipart 0.0.32, reportlab 5.0.0, requests 2.34.2,
+   scapy 2.7.0, starlette 1.6.0, urllib3 2.7.0, uvicorn 0.52.1.
+
+2. Development closure ("pip install .[dev]").  Advisory only.
+
+       Found 1 known vulnerability in 1 package
+       Name      Version ID              Fix Versions
+       --------- ------- --------------- ------------
+       diskcache 5.6.3   PYSEC-2026-2447
+
+   Still the same single unfixable finding analysed above; nothing new
+   has appeared in the dev closure.
+
+Why a fresh venv, not the developer venv
+---------------------------------------------------------------------
+Running pip-audit inside the long-lived developer venv on this date
+reported 7 vulnerabilities across 4 packages (aiohttp, cryptography,
+diskcache, pypdf).  That is a property of *that venv*, not of PacketIQ:
+its packages had drifted behind the current releases, and three of the
+four are not in either closure this project ships or declares.
+
+  - cryptography 49.0.0 (PYSEC-2026-3552) — the only declared runtime
+    dependency among them.  The floor "cryptography>=44.0.1" resolves to
+    50.0.0 on a clean install, which is the fixed version, so a user's
+    install is unaffected.  The developer venv simply had not been
+    upgraded.
+  - aiohttp 3.14.1 and pypdf 6.14.2 — absent from both the runtime and
+    the dev closure (verified: neither appears in a clean "pip install
+    .[dev]").  They are incidental tooling installed into that venv.
+
+Takeaway for anyone re-running this: audit a freshly built closure.  An
+audit of a developer venv measures the developer's machine, and will
+over-report against what users actually install.

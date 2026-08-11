@@ -45,7 +45,7 @@
 
 <br/><br/>
 
-**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`7,600+`** live threat-intel indicators · **`1,754`** tests · **`ruff`-clean**
+**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`8,300+`** threat-intel indicators · **`1,754`** tests · **`ruff`-clean**
 
 </div>
 
@@ -102,7 +102,7 @@
 <td width="50%" valign="top">
 <img src="docs/screenshots/07-threat-intel.png" alt="Real OSINT threat-intelligence feeds panel"/>
 <b>📡 Real OSINT Threat Intel</b><br/>
-<sub><b>7,600+ live indicators</b> from abuse.ch, Spamhaus & Tor — cross-referenced against every capture, refreshable from source. <b>Nothing fabricated.</b></sub>
+<sub><b>8,300+ indicators</b> from abuse.ch, Spamhaus & Tor ship in the box — cross-referenced against every capture, and refreshable from source with <code>packetiq feeds update</code>. <b>Nothing fabricated.</b></sub>
 </td>
 <td width="50%" valign="top">
 <img src="docs/screenshots/09-attribution.png" alt="Threat-actor TTP overlap panel with disclaimers"/>
@@ -230,7 +230,7 @@ PacketIQ is measured against the **Stratosphere CTU-13 / Malware Capture Facilit
 
 | Metric | Score | What it actually means |
 |---|:--:|---|
-| **Recall** | **100%** | every one of **9 real malware captures** (6 families, ~1.7 M packets) was caught — **zero misses** |
+| **Recall** | **100%** | every one of **9 real malware captures** (6 families, ~1.64 M packets) was caught — **zero misses** |
 | **Precision** | **90%** | there is **1** "false positive" — and it is itself a *correct* detection of real inbound internet scanning, on a host the dataset labels host-benign |
 | **F1** | **94.7%** | balanced score across the confusion matrix |
 | **Per-detector recall** | transparent | every decision traces to a specific, inspectable detector carrying its own evidence — the opposite of a black box |
@@ -498,20 +498,27 @@ python tools/benchmark.py --dir datasets/real/pcaps --markdown reports/performan
 Real, measured numbers from `tools/benchmark.py` over the full parse→extract→detect
 pipeline (the same one the CLI and web app use). Reproduce on any machine with
 `python tools/benchmark.py --demo` (no download) or `--dir <pcaps>`. Figures below
-are single-threaded on an Apple-silicon Mac (macOS, Python 3.9); throughput is
-CPU-bound in parsing + detection, and **memory stays roughly flat (~100–150 MB)
-regardless of capture size** because parsing is streaming — it never loads the
-whole PCAP into RAM.
+were measured **2026-08-11**, single-threaded, on an Apple-silicon Mac
+(macOS 26.6.1, Python 3.12.13, PacketIQ v1.0.0); throughput is CPU-bound in
+parsing + detection.
 
-| Capture (real, CTU-13) | Packets | Size | Time | Packets/s | Peak RSS |
-|---|--:|--:|--:|--:|--:|
-| sogou.pcap    | 20,663 | 18 MB | 10.4 s | ~1,990 | 151 MB |
-| donbot.pcap   | 24,764 |  5 MB | 11.6 s | ~2,140 | 107 MB |
-| qvod.pcap     | 85,735 | 20 MB | 49.9 s | ~1,720 | 117 MB |
-| **aggregate** | **188 K** | **76 MB** | **113 s** | **~1,660** | **151 MB** |
+Because parsing is streaming — it never loads the whole PCAP into RAM — **memory
+grows far more slowly than capture size**: benchmarked on its own, the smallest
+capture here (5.0 MB) peaks at **112 MB** RSS and the largest (122.6 MB, 495,056
+packets) at **226 MB**, so a 24× bigger capture costs about 2× the memory.
 
-Detection dominates the wall time (~3× parsing); the streaming reader keeps the
-memory envelope constant. Full report: [`reports/performance.md`](reports/performance.md).
+| Capture (real, CTU-13) | Packets | Size | Time | Packets/s |
+|---|--:|--:|--:|--:|
+| sogou.pcap        |    20,663 |  18.0 MB |   4.80 s | 4,303 |
+| donbot.pcap       |    24,764 |   5.0 MB |   4.91 s | 5,039 |
+| qvod.pcap         |    85,735 |  20.4 MB |  22.57 s | 3,799 |
+| neris-42.pcap     |   323,154 |  55.6 MB |  99.23 s | 3,256 |
+| rbot-44.pcap      |   495,056 | 122.6 MB | 112.56 s | 4,398 |
+| **aggregate (12)** | **1,668,975** | **427.7 MB** | **416.77 s** | **4,005** |
+
+Detection dominates the wall time (~1.7× parsing). Full report, including all
+twelve captures and the per-stage split:
+[`reports/performance.md`](reports/performance.md).
 
 > File carving and TLS inspection do extra full passes, so very large captures (multi-GB) run slower — acceptable for forensics.
 

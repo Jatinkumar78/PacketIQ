@@ -131,6 +131,9 @@ def _print_table(rows: list) -> None:
 
 def _to_markdown(rows: list) -> str:
     import platform
+    from datetime import date
+
+    from packetiq import __version__
     tot_p = sum(r["packets"] for r in rows)
     tot_mb = sum(r["size_mb"] for r in rows)
     tot_t = sum(r["t_total"] for r in rows)
@@ -138,7 +141,10 @@ def _to_markdown(rows: list) -> str:
     agg_mbps = tot_mb / tot_t if tot_t else 0.0
     out = [
         "# PacketIQ Performance — Pipeline Throughput", "",
-        f"Measured on **{platform.platform()}**, Python {platform.python_version()}. "
+        # Throughput is meaningless without the date and the build it was taken on —
+        # both the hardware and the detectors move.
+        f"Measured **{date.today().isoformat()}** on **{platform.platform()}**, "
+        f"Python {platform.python_version()}, PacketIQ v{__version__}. "
         "The timed pipeline (parse → extract → detect) is the same one used by the "
         "CLI, web app and validation harness. Numbers are real measurements on this "
         "machine, single-threaded.", "",
@@ -158,9 +164,14 @@ def _to_markdown(rows: list) -> str:
         "",
         "*Parse* streams packets through the scapy-based reader and the feature "
         "extractor; *detect* runs every detector over the extracted session state. "
-        "Peak RSS is the whole-process high-water mark. Because parsing is streaming, "
-        "memory stays roughly flat with capture size rather than loading the whole "
-        "PCAP into RAM.", "",
+        "Because parsing is streaming, memory grows far more slowly than capture "
+        "size rather than loading the whole PCAP into RAM.", "",
+        "**Reading the RSS column.** It is `getrusage`'s *peak* for the whole "
+        "process, which never decreases, so when several captures are benchmarked "
+        "in one run each row inherits the high-water mark of every row above it. "
+        "Read the column as the running maximum up to that point, not as the cost "
+        "of that capture alone. For a per-capture figure, benchmark that capture on "
+        "its own (`--pcap`), which starts a fresh process.", "",
     ]
     return "\n".join(out)
 

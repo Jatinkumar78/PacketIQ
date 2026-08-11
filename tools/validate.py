@@ -160,12 +160,26 @@ def run(manifest: dict, base_dir: Path, md_out: str = None, gates: dict = None) 
     return 0
 
 
+def _provenance() -> str:
+    """One line saying when, on what, and against which build this was measured."""
+    import platform
+    from datetime import date
+
+    from packetiq import __version__
+    return (f"*Measured {date.today().isoformat()} · PacketIQ v{__version__} · "
+            f"{platform.platform()} · Python {platform.python_version()}.*")
+
+
 def _to_markdown(m: dict) -> str:
     name = m.get("dataset") or "labeled dataset"
     out = [f"# PacketIQ Detection Accuracy — {name}", "",
            f"Binary classification (malicious vs benign) at severity threshold "
            f"**{m['threshold']}+**. Metrics computed by running the real detection "
            f"pipeline over each labeled capture.", "",
+           # A results table with no date is unreadable six months later: there is no
+           # way to tell whether it still describes the detectors. Stamp every
+           # regeneration with when and against which build it was measured.
+           _provenance(), "",
            "| Metric | Value |", "|---|---|",
            f"| True positives | {m['tp']} |",
            f"| False positives | {m['fp']} |",

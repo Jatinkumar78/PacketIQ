@@ -1,31 +1,71 @@
+bandit — PacketIQ first-party code (packetiq/) — 2026-08-11
 
---------------------------------------------------
->> Issue: [B110:try_except_pass] Try, Except, Pass detected.
-   Severity: Low   Confidence: High
-   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
-   More Info: https://bandit.readthedocs.io/en/1.8.6/plugins/b110_try_except_pass.html
-   Location: packetiq/capture_setup.py:55:4
-54	                return True   # in group; perms applied on next bpf device
-55	    except Exception:
-56	        pass
-57	    return False
+Command (identical to the blocking CI step in .github/workflows/ci.yml):
 
---------------------------------------------------
+    bandit -r packetiq --severity-level low --confidence-level low
+
+Run on Python 3.12.13, bandit reading every file under packetiq/. The severity
+and confidence floors are both set to "low", i.e. nothing is filtered out — this
+is the strictest setting bandit offers, not the default medium/medium.
+
+---------------------------------------------------------------------
+Run started:2026-08-11 14:11:37.417245+00:00
+
+Test results:
+	No issues identified.
 
 Code scanned:
-	Total lines of code: 15718
+	Total lines of code: 16862
 	Total lines skipped (#nosec): 0
-	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 6
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 14
 
 Run metrics:
 	Total issues (by severity):
 		Undefined: 0
-		Low: 53
+		Low: 0
 		Medium: 0
 		High: 0
 	Total issues (by confidence):
 		Undefined: 0
 		Low: 0
 		Medium: 0
-		High: 53
+		High: 0
 Files skipped (0):
+
+Exit status: 0
+---------------------------------------------------------------------
+
+On the 14 suppressions
+----------------------
+"Skipped due to specifically being disabled" counts lines carrying a targeted
+`# nosec BXXX` with a written justification. They are targeted by rule ID, never
+a blanket `# nosec`, and "Total lines skipped (#nosec): 0" above confirms no line
+is exempted from scanning wholesale. They sit on 12 lines (two lines carry two
+rule IDs each, hence 14), and each is a case where the pattern bandit flags is
+the correct code:
+
+  - B404 ×2, B603 ×4, B607 ×2 (subprocess) — net_interfaces.py and
+    capture_setup.py. Every call is list-form with a fixed argv and no shell;
+    where a user-derived value is involved at all ($USER in the capture-privilege
+    setup) it is validated against a strict charset before use.
+  - B112 ×4 (try/except/continue) — webapp/app.py, enrichment/update.py,
+    export/pcap_slicer.py, detection/yara_scan.py. Each skips one malformed
+    item (an unreadable capture, a bad feed line, a corrupt packet, a broken YARA
+    rule) and carries on with the rest, which is the intended behaviour.
+  - B104 ×2 (hardcoded bind-all address) — utils/helpers.py and
+    net_interfaces.py. Both are the literal "0.0.0.0" used as a sentinel to
+    compare against and filter out, never as a bind target.
+
+Because the scan is clean at every severity, the CI step is blocking: a new
+finding is a genuine regression rather than pre-existing debt, and it fails the
+build instead of scrolling past in a green log.
+
+Previous state
+--------------
+An earlier scan of this same command reported 53 Low-severity findings, all at
+High confidence; the sample recorded in the previous version of this file was a
+B110 try/except/pass in capture_setup.py. Those were worked through one at a
+time — real ones fixed in code, correct-by-design ones annotated with the
+targeted `# nosec BXXX` justifications above — which is why the count is now 0
+rather than merely suppressed. Total lines of code grew from 15,718 to 16,862
+over the same period, so the drop is not an artifact of code being deleted.

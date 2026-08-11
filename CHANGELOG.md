@@ -5,6 +5,117 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Documentation re-measured against the code, not re-read
+
+Every document in the repository checked claim by claim against what the code and
+the captures actually do. Where a number could be re-measured, it was.
+
+**Fixed**
+- **A documented command that does not exist.** `docs/RELEASE.md` told the reader to
+  verify an install with `packetiq --version`, which exits 2 with
+  `Error: No such option '--version'`. The subcommand is `packetiq version`.
+- **The paper contradicted itself and the implementation.** `docs/paper/` totalled
+  the ablation's hallucinated entities as **95** in its conclusion and **47** in its
+  abstract, table and source data (9 + 17 + 21 = 47). It also described redaction as
+  replacing an ungrounded entity "with a redaction marker", while `_GroundingFilter`
+  deletes it and substitutes nothing — the opposite of what the soundness argument in
+  §4 needs. Its limitations section still called a cloud-model contrast "future
+  work" after that contrast had been measured.
+- **Six stale line-number citations.** `docs/ollama_integration.md` pinned the three
+  LLM call sites and the three outbound HTTP calls to `app.py` line numbers; all six
+  had drifted by 300–450 lines. They now cite function names, which do not drift.
+- **An offline claim that was too strong to be true.** The same document stated the
+  web app "makes exactly three outbound HTTP calls in its entire codebase, and all
+  three target `_ollama_host()`". The cloud providers reach the network too — through
+  their vendor SDKs, when a key is set. The claim now says what is actually true and
+  is the stronger point anyway: with no cloud key configured, the copilot's only
+  network destination is loopback.
+- **`SECURITY.md` understated the upload cap by 5×** (2 GB; the code defaults to
+  10240 MB) and summarised outbound traffic as three feeds. It now carries the
+  complete destination table — feeds, NVD/KEV, all four alert channels, MISP, AI
+  providers — and states that nothing is contacted unless invoked.
+- **A stale coverage gate in the release guide** (`--cov-fail-under=65`; the gate has
+  been 100 for some time), and a CI description that predated the macOS and Windows
+  legs, the ruff/mypy gates and the four-way split of the security job.
+- **`reports/detection_real.md` had drifted in its detail while its headline held.**
+  Re-measuring all 12 CTU-13 captures reproduces 9 TP / 1 FP / 2 TN / 0 FN —
+  precision 90.0%, recall 100.0%, F1 94.7% — exactly. But the per-capture table was
+  written before DOS_FLOOD and ARP_SCAN existed (donbot 31 → 100 risk, 4 → 47
+  events; qvod 50 → 78), the C2_BEACON heuristic's own recall has fallen from 6/8 to
+  **5/8** because `rbot-44` no longer trips it, and the error analysis described a
+  C2_BEACON finding on the false-positive capture that **no longer fires**. That
+  false positive is now two stealth SYN sweeps and nothing else — `70.37.110.238`
+  across 10 hosts on port 3128 and `60.174.174.107` across the same 10 on 1433 — at
+  an overall risk of 4/100. All of it is now stated as measured.
+- **A dangling documentation link.** `reports/*` is git-ignored with per-file
+  exceptions, and `reports/ollama_tuning.md` had none — so a document cited by
+  `docs/ollama_integration.md` was absent from every clone. Un-ignored, along with
+  `copilot_faithfulness_comparison.md`, which was tracked only by the accident of
+  predating the ignore rule.
+- **The README understated its own threat-intel corpus.** "7,600+ indicators" against
+  a measured **8,398** shipped (8,301 feed entries + 97 JA3 fingerprints); the floor
+  now reads 8,300+. Its description of them as "live" is now accurate about being a
+  bundled snapshot that `packetiq feeds update` refreshes.
+- **A footgun in the dataset guide.** `datasets/README.md` told users to point their
+  own validation run at `reports/detection_real.md`, which `--markdown` overwrites
+  wholesale. It also never said that a manifest's `base_dir` resolves relative to the
+  manifest file rather than the shell's working directory.
+- **The shipped bandit output contradicted the security policy.**
+  `docs/security_audit/bandit.txt` still recorded **53 Low-severity findings** over
+  15,718 lines — the state before those findings were worked through — while
+  `SECURITY.md` and the CI comment both describe the scan as clean. Re-running the
+  exact blocking CI command reports **no issues at any severity** over 16,862 lines.
+  The file now carries that dated output, an itemised account of all fourteen
+  `# nosec BXXX` suppressions (B404 ×2, B603 ×4, B607 ×2, B112 ×4, B104 ×2) and the
+  confirmation that no line is exempted from scanning wholesale.
+- **A performance table measured on an interpreter the project no longer uses.** The
+  README quoted **~1,660 packets/s** over three captures on Python 3.9. Re-measured
+  on the current reference build over all twelve, throughput is **4,005 packets/s**
+  aggregate (1,668,975 packets, 427.7 MB, 416.77 s) — the old figure understated it
+  by 2.4×.
+- **A memory claim the numbers do not support.** "Memory stays roughly flat
+  (~100–150 MB) regardless of capture size" was written before the large captures
+  were added. Benchmarked alone in its own process, the largest (122.6 MB, 495,056
+  packets) peaks at **226 MB** against the smallest's 112 MB. Streaming still makes
+  growth strongly sublinear — 24× the capture for ~2× the memory — so the README now
+  says that instead, with both measured endpoints.
+- **Four overstated dataset figures.** `virut-fastflux.pcap` was quoted as "~430,000"
+  packets (actually **440,625**); the nine malicious captures as "~1.7 million"
+  (actually **1,640,740** — the benign three were being counted in); and the CTU-13
+  download as "~435 MB" in three places (actually **~428 MB**).
+- **A misreadable column in every multi-capture benchmark.** `Peak RSS` is
+  `getrusage`'s process high-water mark, which never decreases, so in a 12-capture
+  run each row silently inherits the maximum of every row above it — the last row's
+  243 MB is not what that capture cost. `tools/benchmark.py` now says so in the
+  report it generates, and points at `--pcap` for a per-capture figure.
+
+**Added**
+- **Provenance on every generated report.** `tools/validate.py` and
+  `tools/benchmark.py` now stamp each Markdown report with the date, PacketIQ
+  version, platform and interpreter it was measured on. A results table with no date
+  cannot be told apart from a current one six months later.
+- **`datasets/README.md` now documents the CTU-13 path that already shipped** —
+  `fetch_ctu.sh` and `ctu13_manifest.json` were sitting in that folder while the
+  document told the reader to go and source real captures themselves.
+
+**Changed**
+- `reports/detection_synthetic.md` and `reports/performance.md` regenerated from real
+  runs. The synthetic suite still measures 100% precision and recall over its 9
+  fixtures; one row (`ssh_brute`) had drifted to a second event and a risk of 26.
+  `detection_synthetic.md` is now tracked alongside `detection_real.md` rather than
+  git-ignored, so the file the changelog and README refer to is actually in the repo.
+- **Both dependency closures re-audited from freshly built virtualenvs**, and the
+  result recorded in `docs/security_audit/pip_audit.txt`: the runtime closure reports
+  **no known vulnerabilities**, the dev closure the same single unfixable `diskcache`
+  advisory. Worth writing down because auditing the *developer's* venv on the same
+  day reported 7 findings across 4 packages — that venv had drifted behind current
+  releases, and three of the four packages are in neither closure. An audit of a
+  developer machine is not an audit of what users install; the file now says so.
+- **`SECURITY.md` now dates its own claims** and marks the one figure in the
+  2026-07-15 audit PDF that has been superseded (its `Low: 53` bandit line), rather
+  than leaving a reader to assume a point-in-time report is current. The PDF itself is
+  left as written on its date.
+
 ### Full-project audit: the claims, the container, and the code nothing calls
 
 A sweep over every feature, file and stated number, checking each against what
@@ -1142,7 +1253,7 @@ throughput unchanged (4,301 vs 4,314 pkts/s on `neris-43.pcap`).
   runs on flow telemetry at collector scale with no raw capture. Eight new tests
   cover v5, v9, IPFIX, multi-datagram streams and graceful degradation.
 - **Real-world detection accuracy re-measured and enlarged.** The CTU-13 harness
-  now spans **six malware families** across nine real infected captures (~1.7 M
+  now spans **six malware families** across nine real infected captures (~1.64 M
   packets — Donbot, Sogou, Qvod, Rbot ×2, Virut + a second fast-flux, Neris ×2)
   plus benign captures: **100% recall · 90.0% precision · 94.7% F1** (up from 57%
   precision; the lift from 83.3% comes from correctly detecting four more real

@@ -7,7 +7,7 @@
 #   * normal-capture-* / *-only-dns : real benign traffic  (label: BENIGN)
 #
 # They are downloaded into datasets/real/pcaps/ (gitignored — never committed).
-# Total ~435 MB (12 captures, 6 malware families). Re-runnable: skips files already
+# Total ~428 MB (12 captures, 6 malware families). Re-runnable: skips files already
 # present (curl -C - resume).
 set -euo pipefail
 BASE="https://mcfp.felk.cvut.cz/publicDatasets"

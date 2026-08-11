@@ -76,15 +76,19 @@ all copilot text flows (chat, explain, reports, CLI), so coverage is uniform.
    gets an answer about it.
 2. **Streaming redaction.** As tokens arrive, each candidate entity is matched
    against its class's allowed set. A grounded entity passes through byte-for-byte;
-   an ungrounded one is replaced with a redaction marker.
+   an ungrounded one is **deleted**, and the surrounding text is tidied of the
+   artefacts deletion leaves (a doubled space, an emptied parenthesis, a space
+   before punctuation). Nothing is substituted in its place: the filter's only
+   primitive is removal, which is what makes the soundness argument in §4 hold.
 3. **Domain nuance.** Domains are matched behind a real-TLD gate, so code-like
    tokens (`app.py`, `tcp.port`, version strings) are never treated as domains, and
    naming the *registrable parent* of an observed FQDN is permitted while an invented
    sibling subdomain is not.
-4. **List-item rule.** A list item whose entire salient content is a single
-   ungrounded entity is dropped rather than emitted as a dangling marker — this
-   prevents a model from padding an enumerated answer ("the techniques are …") with
-   invented members.
+4. **List-item rule.** A list item is dropped when *every* specific claim in it was
+   ungrounded, rather than emitted as a stripped, contentless bullet — this prevents
+   a model from padding an enumerated answer ("the techniques are …") with invented
+   members. An item in which any grounded entity survives is kept, so the rule can
+   never suppress real evidence in order to remove an invented neighbour.
 
 Because `R` only ever *removes* entities from a closed set, a fully grounded answer
 is a fixed point (`R(A) = A`).
@@ -177,9 +181,12 @@ The method is deliberately narrow, and we state its boundaries plainly.
   false redactions.
 - It assumes the **context `C` is itself trustworthy** — which holds here because `C`
   is built from deterministic detectors, not from another model.
-- The current evaluation uses three *local* models; a cloud-model contrast is
-  straightforward future work (the method is model-independent by construction, so no
-  different result is expected, but it should be measured rather than assumed).
+- The ablation is over three *local* models. A cloud generator has been measured
+  separately on the same capture and battery — Gemini, guardrail on, reaching 100%
+  faithfulness with 0 hallucinated entities
+  ([`reports/copilot_faithfulness_comparison.md`](../../reports/copilot_faithfulness_comparison.md))
+  — but that is a single cloud configuration rather than a cloud-side ablation, so
+  the *breadth* of the model-independence claim still rests on the local sweep.
 
 ## 8. Conclusion
 
@@ -187,7 +194,7 @@ For LLM security copilots, the dangerous failure mode — inventing an actionabl
 indicator — is exactly the part that is *enumerable and checkable*. Deterministic
 output grounding exploits this: by redacting, on the streaming path, every entity of
 a closed set that is absent from the evidence, it converts a statistical hope into a
-structural guarantee. Measured across three local models that alone produced 95
+structural guarantee. Measured across three local models that alone produced 47
 hallucinated entities, the guarded path produced none, deterministically and without
 per-model tuning. The technique is small, model-agnostic, and cheap, and it lets a
 copilot built on a modest local model be *safe to act on* in a way prompt engineering

@@ -5,6 +5,10 @@ computed by running the **real** PacketIQ detection pipeline (parse → extract 
 detect) over each labeled capture. Unlike the synthetic fixture suite, these are
 genuine packet captures with authoritative third-party ground-truth labels.
 
+*Measured 2026-08-11 · PacketIQ v1.0.0 · macOS-26.6.1-arm64-arm-64bit · Python
+3.12.13. The headline figures below are unchanged from the previous run; the
+per-capture and per-detector detail was re-measured and is stated as found.*
+
 ## Dataset
 
 Captures from the **Stratosphere IPS Malware Capture Facility Project / CTU-13**
@@ -13,7 +17,7 @@ dataset's own: `botnet-capture-*` = a host infected with real malware;
 `normal-capture-*` / `*-only-dns` = real benign traffic. Reproduce with:
 
 ```bash
-bash datasets/fetch_ctu.sh                 # downloads 12 captures (~435 MB, gitignored)
+bash datasets/fetch_ctu.sh                 # downloads 12 captures (~428 MB, gitignored)
 python tools/validate.py --manifest datasets/ctu13_manifest.json \
                          --markdown reports/detection_real.md
 ```
@@ -24,7 +28,7 @@ python tools/validate.py --manifest datasets/ctu13_manifest.json \
 | 2 | sogou.pcap         | Sogou botnet                        | malicious | 20,663 |
 | 3 | qvod.pcap          | Qvod botnet                         | malicious | 85,735 |
 | 4 | rbot-dos-icmp.pcap | Rbot DDoS bot (IRC C2)              | malicious | 28,826 |
-| 5 | virut-fastflux.pcap| Virut botnet (fast-flux / DGA DNS)  | malicious | ~430,000 |
+| 5 | virut-fastflux.pcap| Virut botnet (fast-flux / DGA DNS)  | malicious | 440,625 |
 | 6 | neris-42.pcap      | Neris HTTP spam/click-fraud bot (CTU-13 sc. 1) | malicious | 323,154 |
 | 7 | neris-43.pcap      | Neris HTTP spam/click-fraud bot (CTU-13 sc. 2) | malicious | 176,064 |
 | 8 | rbot-44.pcap       | Rbot IRC bot — scan + DoS (CTU-13 sc. 3) | malicious | 495,056 |
@@ -37,7 +41,7 @@ Six malware families spanning three behaviour classes — IRC-controlled botnets
 (Donbot, Rbot ×2), HTTP-C2 / spam-and-click-fraud botnets (Sogou, Qvod, Neris ×2),
 and **fast-flux / DGA** DNS families (Virut, plus a second fast-flux capture) —
 alongside three benign captures (one general host capture, two DNS-heavy). Nine
-real malware captures totalling **~1.7 million packets** exercise every detector
+real malware captures totalling **1,640,740 packets** exercise every detector
 class; the fast-flux and Neris captures in particular stress the DNS/DGA and
 HTTP-C2 paths on genuinely different families.
 
@@ -86,36 +90,54 @@ than against five, but honesty requires stating it is still there.
 
 ## Per-capture results
 
+Counts in the last column are MEDIUM+ events per detector; the *Events* column is
+the total the capture produced at every severity.
+
 | Capture | Label | Flagged | Outcome | Risk | Events | Detectors that fired (MEDIUM+) |
 |---|---|---|---|--:|--:|---|
-| donbot.pcap        | malicious | yes | **TP** | 31/100  | 4  | HOST_SCAN, PORT_SCAN, C2_BEACON (external) |
-| sogou.pcap         | malicious | yes | **TP** | 35/100  | 2  | HTTP_ATTACK (crit), CREDENTIAL_EXPOSURE |
-| qvod.pcap          | malicious | yes | **TP** | 50/100  | 8  | HOST_SCAN, C2_BEACON (external), PORT_SCAN, MALICIOUS_FILE |
-| rbot-dos-icmp.pcap | malicious | yes | **TP** | 57/100  | 5  | CREDENTIAL_EXPOSURE (crit), ICMP_TUNNELING, PROTOCOL_MISUSE (external Telnet), PORT_SCAN |
-| virut-fastflux.pcap| malicious | yes | **TP** | 100/100 | 288 | C2_BEACON (crit), IOC_MATCH, HTTP_ATTACK (crit), CREDENTIAL_EXPOSURE, HOST_SCAN, MALICIOUS_FILE |
-| neris-42.pcap      | malicious | yes | **TP** | 100/100 | 4752 | C2_BEACON, IOC_MATCH, DNS_ANOMALY, CREDENTIAL_EXPOSURE (crit), BRUTE_FORCE, HOST_SCAN, PORT_SCAN |
-| neris-43.pcap      | malicious | yes | **TP** | 100/100 | 66 | C2_BEACON (crit), HTTP_ATTACK (crit), CREDENTIAL_EXPOSURE (crit), IOC_MATCH, DNS_ANOMALY, HOST_SCAN, PORT_SCAN |
-| rbot-44.pcap       | malicious | yes | **TP** | 100/100 | 52 | C2_BEACON (crit), BRUTE_FORCE (crit), CREDENTIAL_EXPOSURE (crit), PROTOCOL_MISUSE, IOC_MATCH, HOST_SCAN, PORT_SCAN |
-| fastflux-46.pcap   | malicious | yes | **TP** | 100/100 | 26 | DNS_ANOMALY, CREDENTIAL_EXPOSURE (crit), HOST_SCAN, PORT_SCAN |
-| normal-20110817.pcap | benign  | yes | **FP** | 17/100  | 5  | PORT_SCAN (real inbound scan), C2_BEACON (external RDP) |
+| donbot.pcap        | malicious | yes | **TP** | 100/100 | 47 | DOS_FLOOD (43), HOST_SCAN (1), PORT_SCAN (1), C2_BEACON (1) |
+| sogou.pcap         | malicious | yes | **TP** | 35/100  | 2  | HTTP_ATTACK (1, crit), CREDENTIAL_EXPOSURE (1) |
+| qvod.pcap          | malicious | yes | **TP** | 78/100  | 18 | DOS_FLOOD (6), C2_BEACON (3), HOST_SCAN (2), PORT_SCAN (2), MALICIOUS_FILE (1), ARP_SCAN (1) |
+| rbot-dos-icmp.pcap | malicious | yes | **TP** | 57/100  | 5  | PORT_SCAN (2), CREDENTIAL_EXPOSURE (1, crit), ICMP_TUNNELING (1), PROTOCOL_MISUSE (1) |
+| virut-fastflux.pcap| malicious | yes | **TP** | 100/100 | 392 | CREDENTIAL_EXPOSURE (119, crit), DOS_FLOOD (104), C2_BEACON (21), DNS_ANOMALY (12), HTTP_ATTACK (4, crit), HOST_SCAN (4), IOC_MATCH (3), MALICIOUS_FILE (2), BRUTE_FORCE (1), PORT_SCAN (1) |
+| neris-42.pcap      | malicious | yes | **TP** | 100/100 | 4853 | DNS_ANOMALY (4275), DOS_FLOOD (101), CREDENTIAL_EXPOSURE (51, crit), C2_BEACON (6), HOST_SCAN (5), IOC_MATCH (3), BRUTE_FORCE (1), PORT_SCAN (1) |
+| neris-43.pcap      | malicious | yes | **TP** | 100/100 | 127 | DOS_FLOOD (61), CREDENTIAL_EXPOSURE (28, crit), DNS_ANOMALY (6), HTTP_ATTACK (5, crit), C2_BEACON (4, crit), HOST_SCAN (4), IOC_MATCH (1), PORT_SCAN (1) |
+| rbot-44.pcap       | malicious | yes | **TP** | 100/100 | 51 | IOC_MATCH (39), PORT_SCAN (3), CREDENTIAL_EXPOSURE (2, crit), BRUTE_FORCE (2, crit), HOST_SCAN (2), PROTOCOL_MISUSE (2), DOS_FLOOD (1) |
+| fastflux-46.pcap   | malicious | yes | **TP** | 100/100 | 27 | CREDENTIAL_EXPOSURE (17, crit), DNS_ANOMALY (5), HOST_SCAN (2), DOS_FLOOD (1), PORT_SCAN (1) |
+| normal-20110817.pcap | benign  | yes | **FP** | 4/100   | 4  | PORT_SCAN (2) |
 | normal-dns-2015.pcap | benign  | no  | **TN** | 9/100   | 17 | *(all LOW / informational — no MEDIUM+)* |
 | normal-dns-2013.pcap | benign  | no  | **TN** | 3/100   | 5  | *(all LOW / informational — no MEDIUM+)* |
+
+Two detectors added after the original measurement — **DOS_FLOOD** and **ARP_SCAN** —
+now contribute to most malicious captures and raise several risk scores (donbot
+31 → 100, qvod 50 → 78). They fire on **none** of the three benign captures, so the
+extra sensitivity cost no precision: the binary outcome of every capture is
+unchanged, and the headline is identical to the previous run.
 
 ## Per-detector recall (where ground-truth event types were declared)
 
 | Detector (ground-truth expectation) | Detected | Recall |
 |---|--:|--:|
-| C2_BEACON (8 botnets declare C2 as ground-truth behaviour) | 6/8 | 75% |
+| C2_BEACON (8 botnets declare C2 as ground-truth behaviour) | 5/8 | 62% |
 | DNS_ANOMALY (Virut + second fast-flux DGA DNS) | 2/2 | 100% |
 | IOC_MATCH (Virut contacts known-bad hosts) | 1/1 | 100% |
 
-Six of the eight C2-declaring botnets trip the fixed-interval C2_BEACON heuristic
-directly — the three added Neris/Rbot captures all did — up from 3/5 on the smaller
-set. The two that do not are still correctly classified malicious via *other*
-detectors (HTTP_ATTACK, CREDENTIAL_EXPOSURE, IOC_MATCH). The remaining misses are
-the 2011-era IRC botnets with irregular C2 cadence — the beacon detector is tuned
-for the regular callbacks of modern implants — so this single heuristic's recall
-(75%) is honestly below the 100% *binary* recall.
+Five of the eight C2-declaring botnets trip the fixed-interval C2_BEACON heuristic
+directly: donbot, qvod, virut-fastflux, neris-42 and neris-43. The three that do not
+— sogou, rbot-dos-icmp and rbot-44 — are still correctly classified malicious via
+*other* detectors (HTTP_ATTACK and CREDENTIAL_EXPOSURE on sogou; CREDENTIAL_EXPOSURE,
+ICMP_TUNNELING and PROTOCOL_MISUSE on rbot-dos-icmp; IOC_MATCH, BRUTE_FORCE and
+CREDENTIAL_EXPOSURE on rbot-44). They are the 2011-era IRC botnets with irregular C2
+cadence, and the beacon detector is tuned for the regular callbacks of modern
+implants.
+
+**This figure moved, and downwards: it was 6/8 (75%) at the previous measurement.**
+`rbot-44` no longer trips the beacon heuristic — the same-org and interval
+constraints tightened since then push its IRC callbacks below the bar. It is still
+detected as malicious, by seven other detectors including 39 IOC_MATCH hits, so the
+binary recall is unaffected. Reporting one heuristic's recall separately is the point
+of this table: a single detector's coverage is honestly below the 100% *binary*
+recall, and it is allowed to move without the headline moving.
 
 ## Principled fixes applied (and why they are not overfitting)
 
@@ -150,20 +172,29 @@ tests pass — the changes remove false alarms without weakening true detection.
 ## Error analysis — the one remaining false positive
 
 `normal-20110817.pcap` is still flagged, and this is **defensible rather than a
-detector error**. Its two MEDIUM+ findings are:
+detector error**. It now produces exactly two MEDIUM+ findings, both the same
+detector, both stealth SYN sweeps from the internet:
 
-- **PORT_SCAN (stealth SYN)** — external hosts `70.37.110.238` and `60.174.174.107`
-  sweep many internal hosts on ports 3128 (proxy) and 1433 (MSSQL). This is real
-  inbound internet scanning captured on CTU's public network.
-- **C2_BEACON** — an external host (`82.162.140.147`) with beacon-like regularity to
-  an internal RDP server (`147.32.84.192:3389`). Inbound RDP from the internet is a
-  top ransomware entry vector and is worth surfacing for triage.
+- `70.37.110.238` — 10 half-open connections across **10 distinct internal hosts on
+  a single port, 3128** (`147.32.84.165`, `.191`–`.193`, `.204`–`.209`). A horizontal
+  sweep for open web proxies.
+- `60.174.174.107` — the same shape against the same 10 hosts on **port 1433**
+  (MSSQL).
 
-The capture's "benign" label means the *monitored host was not infected*; it does
-not mean the capture is free of hostile traffic. A triage tool *should* raise these
-— counting it as a false positive is an artifact of the coarse binary label, not a
-heuristic mistake. Every alert carries the evidence (scanning source IPs, target
-ports, beacon interval) an analyst needs to make that call in seconds.
+Both are real inbound internet scanning, captured because CTU's monitored range sits
+on a public /16. The capture's "benign" label means the *monitored host was not
+infected*; it does not mean the capture is free of hostile traffic. A triage tool
+*should* raise these — counting it as a false positive is an artifact of the coarse
+binary label, not a heuristic mistake. Every alert carries its evidence (source,
+target list, port, half-open count) so an analyst can make that call in seconds.
+
+Two things are worth noting about how mild this alarm is. The capture's overall risk
+score is **4/100 (LOW tier)** — the two scans are surfaced for triage without the
+capture being presented as compromised — and the earlier C2_BEACON finding on this
+capture (inbound RDP to `147.32.84.192:3389`) **no longer fires at all**, so the only
+remaining false positive is this pair of genuine scans. Its other two events are LOW
+informational DNS notes (`wpad`, `time.windows.com` re-queried), below the MEDIUM
+threshold and not counted.
 
 ## Bug found and fixed during this evaluation
 
@@ -181,10 +212,10 @@ positive independent of this dataset.
 
 PacketIQ is a **recall-oriented forensic-triage tool**: on real malware spanning
 six families and three behaviour classes it missed nothing (**100% recall across
-nine infected captures, ~1.7 M packets**), each malicious capture tripping multiple
+nine infected captures, ~1.64 M packets**), each malicious capture tripping multiple
 independent detectors. Precision is **90.0%**, and the single remaining "false
-positive" is itself a correct detection of real inbound scanning + external RDP on a
-public-facing host. Every alert is attributable to a specific, inspectable detector
+positive" is itself a correct detection of two real inbound port sweeps against a
+public-facing range. Every alert is attributable to a specific, inspectable detector
 and carries its own evidence — the opposite of a black-box classifier. Honest
 headline for the write-up: **100% recall on real-world malware captures at 90%
 precision, with a transparent, per-detector account of every decision.**

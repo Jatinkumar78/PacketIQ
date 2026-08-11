@@ -4,7 +4,9 @@ How PacketIQ runs an AI SOC copilot with **no API key, no cloud provider and no
 network egress** — and why its output can be trusted even though the local model
 is small.
 
-Every claim below is traceable to a file and line in this repository.
+Every claim below is traceable to a named function in this repository. Functions are
+cited by name rather than by line number so the references stay correct as the file
+changes — `grep -n "def _stream_ai_raw" packetiq/webapp/app.py` locates any of them.
 
 ---
 
@@ -48,13 +50,15 @@ snapshot lookups, JA3 fingerprints, YARA rules. The LLM is never consulted when
 deciding *what was found*. It receives the finished evidence as read-only context
 and produces natural language.
 
-The whole language-model surface is three call sites:
+The whole language-model surface is three request handlers, all in
+`packetiq/webapp/app.py` and all reaching the model through the single
+`_stream_ai()` choke point:
 
-| Feature | Call site |
+| Feature | Handler |
 |---|---|
-| Explain a single packet | `packetiq/webapp/app.py:2125` |
-| AI-written incident report | `packetiq/webapp/app.py:2456` |
-| Interactive chat (streamed) | `packetiq/webapp/app.py:2789` |
+| Explain a single packet | `packet_explain()` |
+| AI-written incident report | `ai_report()` |
+| Interactive chat (streamed) | `chat_endpoint()` |
 
 Nothing in `packetiq/detection/`, `packetiq/correlation/` or the risk scorer
 imports the copilot. **Removing the LLM entirely would not change a single
@@ -130,24 +134,30 @@ sequenceDiagram
     P-->>P: text reaches the analyst
 ```
 
-**The offline guarantee, stated precisely.** The web application makes exactly
-three outbound HTTP calls in its entire codebase, and all three target
-`_ollama_host()`:
+**The offline guarantee, stated precisely.** The web application constructs HTTP
+requests itself in exactly three places, and all three target `_ollama_host()`:
 
-| Line | Call | Purpose |
+| Function | Call | Purpose |
 |---|---|---|
-| `app.py:1054` | `httpx.get(host + "/api/tags")` | reachability + model list |
-| `app.py:1139` | `httpx.post(host + "/api/chat")` | background warm-up |
-| `app.py:1605` | `hc.stream("POST", host + "/api/chat")` | the actual completion |
+| `_ollama_probe()` | `httpx.get(host + "/api/tags")` | reachability + model list |
+| `_ollama_warm()` | `httpx.post(host + "/api/chat")` | background warm-up |
+| `_stream_ai_raw()` | `hc.stream("POST", host + "/api/chat")` | the actual completion |
 
 `_ollama_host()` defaults to `http://localhost:11434`. The rest of the analysis
 path is offline by construction: threat-intelligence feeds are **bundled dated
 snapshots** (`packetiq/enrichment/data/`), and Chart.js and marked are **vendored**
 into `packetiq/webapp/static/vendor/` rather than pulled from a CDN.
 
+To be exact about what that does *not* say: the three cloud providers obviously do
+reach the internet, but they never do so through hand-written HTTP — `_stream_ai_raw()`
+hands off to the vendor SDKs (`google-genai`, `groq`, `anthropic`), and each branch is
+reachable only when that provider's API key is configured. **With no cloud key set,
+the copilot's only network destination is loopback.** That is the property worth
+claiming, and it is the default state of a fresh install.
+
 *(Optional integrations — Telegram alerts, MISP push, an NVD lookup that requires
 its own API key — do reach the network, but only when you explicitly configure and
-invoke them. The analysis and copilot path never does.)*
+invoke them. The analysis pipeline itself never does.)*
 
 ---
 
