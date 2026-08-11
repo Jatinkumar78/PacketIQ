@@ -353,7 +353,11 @@ class DataExtractor:
                 self._fin_map.add(key)
 
         # ── DNS ──────────────────────────────────────────────
-        if record.has_dns and record.dns_qname:
+        # Queries only. A reply carries the question section back verbatim, so
+        # counting replies here would credit the *resolver* with every name its
+        # clients looked up — enough to report 8.8.8.8 as the source of a DNS
+        # tunnel, and enough to double every query count in the capture.
+        if record.has_dns and record.dns_qname and not record.dns_is_response:
             r.dns_queries.append({
                 "ts":  ts,
                 "src": record.src_ip,

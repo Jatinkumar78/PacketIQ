@@ -43,6 +43,47 @@ Every document in the repository checked claim by claim against what the code an
 the captures actually do. Where a number could be re-measured, it was.
 
 **Fixed**
+- **The "synthetic" demo capture carried a real hardware address and only ever
+  spoke in one direction.** `samples/generate_sample.py` built every frame as a
+  bare `Ether()`, which scapy fills from the *generating machine's* NIC and
+  default gateway — so a file whose docstring promises nothing real embedded the
+  author's own MAC and their router's, and `random.seed(1337)  # deterministic
+  output` was untrue: the file differed on every machine, and on macOS between
+  runs as the private Wi-Fi address rotated. Every host also shared that one
+  address, so the device inventory correctly collapsed all 301 packets to a
+  single NIC and the connection graph drew **one node and no edges** — the panel
+  working exactly as designed and looking broken. The capture is now addressed
+  the way its own vantage point implies: locally administered MACs (the range
+  the IEEE guarantees is never assigned to a manufacturer, so no real vendor's
+  hardware is implied and PacketIQ's OUI lookup honestly declines to name one),
+  one NIC per host on the monitored segment, and every off-LAN address behind
+  the router's MAC — which PacketIQ then classifies as a Gateway/Router from the
+  six addresses fronting it, unprompted. Both directions of every conversation
+  are present, because a capture where 40 SSH SYNs draw no reply and 130 ICMP
+  echo requests draw no echo is not a capture of anything real. It is now
+  byte-identical on every machine and every run. **The headline figures did not
+  move** — 39 events, 5 chains, risk 100/100 — and the two that did are both
+  corrections: the half-open count fell from 94 to 23 (only genuinely unanswered
+  SYNs are half-open now that 69 ports and 2 hosts answer), and the forecast rose
+  from 4 predictions to 7, because SSH, FTP and SMB can finally be *proven*
+  listening rather than merely probed. `quickstart.sh` only writes the file when
+  it is missing, so an existing checkout keeps the old one until
+  `samples/demo_attack.pcap` is deleted or `samples/generate_sample.py` re-run.
+- **Two detector defects that only bidirectional traffic could expose.** Making
+  the demo capture realistic immediately surfaced both. First, the parser read a
+  qname off *every* DNS packet without checking the QR bit — but a reply echoes
+  the question section verbatim, so every response was recorded as a query made
+  by the *resolver*. That doubled every query count in any real capture and
+  handed the tunnelling, DGA and suspicious-TLD detectors a second source to
+  accuse: `8.8.8.8` reported as the origin of a DNS tunnel it had merely
+  resolved. Queries are now counted as queries. Second, the graph sized a
+  scanner's fan-out badge from `sample_targets` alone — a list the detectors
+  deliberately truncate — and never read `sample_hosts` at all, so a horizontal
+  sweep contributed *nothing* to its own scanner's badge and the count was capped
+  at the sample length: a 40-host sweep reported as 10. The badge now takes the
+  larger of the hosts it can name and the number the detector actually counted,
+  and stays a floor by construction — it may sit under the truth when the sample
+  is short, never above it. Both have regression tests that fail on the old code.
 - **The README's screenshots were a month behind the app, and two of its
   descriptions had become false.** Every image was recaptured from the running web
   app at the release commit. The drift they were hiding was not cosmetic: the whole
@@ -54,10 +95,13 @@ the captures actually do. Where a number could be re-measured, it was.
   **device-level** graph — one node per NIC that actually transmitted, coloured
   attacker / target / internal / gateway — and never mentioned the Assets panel at
   all. Both are now documented, and the tour covers twelve panels instead of eight.
-  The device-level views are shot on `donbot.pcap`, a real Stratosphere CTU-13 botnet
-  capture, and labelled as such: the bundled synthetic demo capture emits every host
-  from one hardware address, so a device graph of it correctly collapses to a single
-  node and would have shown the panel doing its job while looking broken.
+  Eleven tiles are the bundled demo capture; the device *inventory* is shot on
+  `donbot.pcap`, a real Stratosphere CTU-13 botnet capture, and labelled as such,
+  because OUI vendor lookup can only be demonstrated on real hardware addresses —
+  the demo capture's MACs are locally administered precisely so that they name no
+  manufacturer. One further claim was simply untrue: the README told Docker users
+  the demo capture is "created for you on first launch", but only `quickstart.sh`
+  ever writes it and the image does not ship it.
 - **A documented command that did not exist — resolved in the code, not the prose.**
   `docs/RELEASE.md` told the reader to verify an install with `packetiq --version`,
   which exited with `Error: No such option '--version'`. The first pass corrected the

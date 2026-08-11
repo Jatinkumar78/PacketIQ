@@ -41,7 +41,7 @@
 
 <img src="docs/screenshots/01-dashboard.png" alt="PacketIQ analyst dashboard — risk score, kill-chain coverage, protocol and severity breakdowns" width="100%"/>
 
-<sub>⬆︎ <i>The live web app on the bundled <code>samples/demo_attack.pcap</code>: risk 100/100, 39 threat events, 5 correlated attack chains, 4 predicted follow-on attacks. <b>Every screenshot in this README is the real running app</b> — nothing mocked, nothing staged.</i></sub>
+<sub>⬆︎ <i>The live web app on the bundled <code>samples/demo_attack.pcap</code>: risk 100/100, 39 threat events, 5 correlated attack chains, 7 predicted follow-on attacks. <b>Every screenshot in this README is the real running app</b> — nothing mocked, nothing staged.</i></sub>
 
 <br/><br/>
 
@@ -69,7 +69,7 @@
 
 ## 🎬 See It In Action
 
-<div align="center"><sub>A guided tour of the browser app. Every image is the <b>real running app</b> — nothing mocked, nothing staged. Most panels analyse the bundled <code>samples/demo_attack.pcap</code>; the two marked <b>CTU-13</b> analyse <code>donbot.pcap</code>, a genuine Stratosphere botnet capture, because a device-level view only means something on traffic carrying real hardware addresses.</sub></div>
+<div align="center"><sub>A guided tour of the browser app. Every image is the <b>real running app</b> — nothing mocked, nothing staged. All but one panel analyse the bundled <code>samples/demo_attack.pcap</code>; the tile marked <b>CTU-13</b> analyses <code>donbot.pcap</code>, a genuine Stratosphere botnet capture, because vendor lookup can only be shown on real hardware addresses — the demo capture's MACs are locally administered precisely so they name no real manufacturer.</sub></div>
 
 <br/>
 
@@ -93,16 +93,16 @@
 <sub>What this capture is <i>exposed to</i>, inferred from the services and behaviour actually observed — each with <b>the evidence that produced it</b> and why it follows. Labelled a prediction, not an event; when a scan found nothing open, it says so.</sub>
 </td>
 <td width="50%" valign="top">
-<img src="docs/screenshots/05-network-graph.png" alt="Device-level network connection graph on a real CTU-13 botnet capture"/>
-<b>🌐 Network Connection Graph <sup>CTU-13</sup></b><br/>
-<sub>Device-level topology built from <b>link-layer evidence</b> — attacker, target, internal hosts, gateway/infra. Only NICs that actually transmitted are drawn; probed-but-silent addresses are excluded rather than invented.</sub>
+<img src="docs/screenshots/05-network-graph.png" alt="Device-level network connection graph showing nine real hosts and the attacker's scan fan-out"/>
+<b>🌐 Network Connection Graph</b><br/>
+<sub>Device-level topology built from <b>link-layer evidence</b> — attacker, target, internal hosts, gateway/infra. Only NICs that actually transmitted are drawn: the sweep touched 25 addresses and 23 of them never answered, so they are counted on the attacker rather than invented as hosts.</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 <img src="docs/screenshots/06-device-inventory.png" alt="Device inventory with MAC, OUI vendor, role and passive OS fingerprints"/>
 <b>🖧 Device Inventory & OS Fingerprints <sup>CTU-13</sup></b><br/>
-<sub>Every physical device that transmitted, keyed by <b>MAC</b> with OUI vendor, inferred role (host / gateway) and protocols — beside passive <b>TTL-based OS inference</b> and hop distance.</sub>
+<sub>Every physical device that transmitted, keyed by <b>MAC</b> with OUI vendor, inferred role (host / gateway) and protocols — beside passive <b>TTL-based OS inference</b> and hop distance. On real hardware the vendor resolves: a Dell NIC and a VirtualBox NIC, and one MAC fronting eight addresses that is therefore the router.</sub>
 </td>
 <td width="50%" valign="top">
 <img src="docs/screenshots/07-packet-inspector.png" alt="Wireshark-style packet inspector with layer tree and hex"/>
@@ -190,7 +190,7 @@ cd PacketIQ
 docker compose up --build       # → http://localhost:8080
 ```
 
-Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` (created for you on first launch).
+Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` — `./quickstart.sh` writes it for you, and `python samples/generate_sample.py` rebuilds it byte-for-byte at any time (the Docker image does not ship it).
 
 > The core analysis needs **no API keys** and runs **fully offline** (the web UI bundles its own JS — no CDN). Keys are only for the optional AI copilot: click **⚙ Keys** in the copilot panel and paste a free `GEMINI_API_KEY` or `GROQ_API_KEY` right in the app — it applies **instantly, no restart** (or add it to `.env`). Prefer zero keys? Run a **local model with Ollama** — offline and private.
 

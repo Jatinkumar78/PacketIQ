@@ -393,7 +393,18 @@ def _build_graph(result, events) -> dict:
     # are counted for the fan-out badge, never drawn as phantom dots.
     attackers: set = set()
     targets: set = set()
-    scan_stats: dict = {}      # attacker node → {"scanned": set, "alive": set}
+    # attacker node → {"scanned": set, "alive": set, "breadth": int}. The sets
+    # hold the hosts we can NAME; "breadth" is how many the detector actually
+    # counted. They differ because evidence samples are deliberately truncated,
+    # and sizing a scan by its sample under-reports it several-fold.
+    scan_stats: dict = {}
+    # Host lists the scan detectors publish. `sample_hosts` belongs to HOST_SCAN
+    # and `sample_targets` to PORT_SCAN; reading only one of them left every
+    # horizontal sweep contributing nothing at all to its scanner's fan-out.
+    _SAMPLE_KEYS = ("sample_targets", "sample_hosts")
+    # Counts of *hosts* reached. Deliberately excludes ports_probed and
+    # distinct_ports — those count ports on one host, not hosts.
+    _BREADTH_KEYS = ("hosts_probed", "distinct_targets")
     for e in events:
         is_attack = e.event_type.value in _ATTACKER_EVENT_TYPES
         if is_attack and e.src_ip and exists(e.src_ip):
@@ -402,16 +413,20 @@ def _build_graph(result, events) -> dict:
             probed: set = set()
             if e.dst_ip and _is_graphable_host(e.dst_ip):
                 probed.add(e.dst_ip)
-            for t in (e.evidence or {}).get("sample_targets", []) or []:
-                host = str(t).split(":")[0]
-                if _is_graphable_host(host):
-                    probed.add(host)
-            st = scan_stats.setdefault(a, {"scanned": set(), "alive": set()})
+            for key in _SAMPLE_KEYS:
+                for t in (e.evidence or {}).get(key, []) or []:
+                    host = str(t).split(":")[0]
+                    if _is_graphable_host(host):
+                        probed.add(host)
+            st = scan_stats.setdefault(a, {"scanned": set(), "alive": set(), "breadth": 0})
             for host in probed:
                 st["scanned"].add(node_of(host))
                 if exists(host):
                     st["alive"].add(node_of(host))
                     targets.add(node_of(host))
+            for key in _BREADTH_KEYS:
+                with contextlib.suppress(TypeError, ValueError):
+                    st["breadth"] = max(st["breadth"], int((e.evidence or {}).get(key) or 0))
         # Any detection's destination that really exists is a host of interest
         # (e.g. a C2 server flagged by an IOC match) — mark it as a target too.
         if e.dst_ip and exists(e.dst_ip):
@@ -420,7 +435,7 @@ def _build_graph(result, events) -> dict:
     for sender, tgts in (getattr(result, "arp_request_targets", {}) or {}).items():
         a = node_of(sender)
         if a in attackers:
-            st = scan_stats.setdefault(a, {"scanned": set(), "alive": set()})
+            st = scan_stats.setdefault(a, {"scanned": set(), "alive": set(), "breadth": 0})
             for t in tgts:
                 st["scanned"].add(node_of(t))
                 if exists(t):
@@ -483,8 +498,10 @@ def _build_graph(result, events) -> dict:
             "kind": dev.get("kind", "endpoint"),
             "mac": mac,
             "vendor": oui_vendor(mac),
-            # scanner fan-out shown ON the attacker, not as phantom target dots
-            "scanned": len(st["scanned"]) if st else 0,
+            # Scanner fan-out shown ON the attacker, not as phantom target dots.
+            # Both are floors: the named hosts, or the detector's own count when
+            # it saw more than the evidence sample kept. Never above the truth.
+            "scanned": max(len(st["scanned"]), st["breadth"]) if st else 0,
             "alive": len(st["alive"]) if st else 0,
         })
 

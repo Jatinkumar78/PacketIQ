@@ -69,6 +69,10 @@ class RawPacketRecord:
     has_dns: bool = False
     has_http: bool = False
     dns_qname: Optional[str] = None
+    # A DNS reply echoes the question it answers, so the qname alone cannot say
+    # who asked. This flag is what keeps a resolver's replies from being counted
+    # as queries the resolver made.
+    dns_is_response: bool = False
     http_method: Optional[str] = None
     http_host: Optional[str] = None
     http_path: Optional[str] = None
@@ -226,6 +230,7 @@ class PCAPParser:
             if pkt.haslayer(DNS):
                 record.has_dns = True
                 dns = pkt[DNS]
+                record.dns_is_response = bool(getattr(dns, "qr", 0))
                 q = dns_first_question(dns)
                 if q is not None:
                     with contextlib.suppress(Exception):

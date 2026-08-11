@@ -108,6 +108,48 @@ def test_attacker_fanout_is_a_count_not_phantom_nodes(tmp_path):
     assert len(g["nodes"]) == 2
 
 
+def test_horizontal_sweep_breadth_is_not_read_off_the_evidence_sample(tmp_path):
+    """A scanner's fan-out must come from the detector's count, not its sample.
+
+    HOST_SCAN publishes its target list under `sample_hosts` and PORT_SCAN under
+    `sample_targets`, and both lists are truncated to keep the event payload
+    small. Reading only `sample_targets` meant a horizontal sweep added nothing
+    at all to its scanner's badge, and sizing the sweep by whichever sample was
+    read capped it at the sample length — a 40-host sweep reported as 10.
+
+    The badge is a floor by construction: the hosts we can name, or the number
+    the detector counted, whichever is larger. It may sit under the truth when
+    the sample is short; it must never sit above it.
+    """
+    from scapy.all import IP, TCP, Ether, wrpcap
+
+    scanner, scanner_mac = "192.168.1.200", MAC_A
+    pkts, t = [], 1700000000.0
+    # One SYN to 445 on 40 addresses; only .202 is a real host and answers.
+    for i in range(10, 50):
+        target = f"192.168.1.{i}"
+        syn = (Ether(src=scanner_mac, dst="ff:ff:ff:ff:ff:ff")
+               / IP(src=scanner, dst=target) / TCP(sport=40000 + i, dport=445, flags="S"))
+        syn.time = t; t += 0.01
+        pkts.append(syn)
+    live = (Ether(src=MAC_B, dst=scanner_mac) / IP(src="192.168.1.30", dst=scanner)
+            / TCP(sport=445, dport=40030, flags="SA", ack=1))
+    live.time = t
+    pkts.append(live)
+    path = str(tmp_path / "sweep.pcap")
+    wrpcap(path, pkts)
+
+    result, events = _analyze(path)
+    sweep = next(e for e in events if e.event_type.value == "HOST_SCAN")
+    probed = sweep.evidence["hosts_probed"]
+    assert len(sweep.evidence["sample_hosts"]) < probed, "sample must be truncated for this test to mean anything"
+
+    attacker = next(n for n in _build_graph(result, events)["nodes"] if n["role"] == "attacker")
+    assert attacker["scanned"] == probed
+    # A floor, never an overstatement: only hosts proven to exist count as live.
+    assert attacker["alive"] <= attacker["scanned"]
+
+
 def _pcap_with_switch(path: str) -> None:
     """Same lab, plus a Cisco switch broadcasting STP (a real device with no IP)."""
     from scapy.all import ARP, LLC, STP, Dot3, Ether, wrpcap
