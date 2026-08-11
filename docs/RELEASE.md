@@ -20,11 +20,34 @@ virtualenv and running `packetiq analyze` end-to-end.
 
 ```bash
 pip install dist/packetiq-1.0.0-py3-none-any.whl   # into a fresh venv
-packetiq version                                   # → PacketIQ v1.0.0
+packetiq --version                                 # → PacketIQ 1.0.0
 packetiq analyze samples/demo_attack.pcap          # smoke test
 pytest -q                                          # full suite
 python tools/validate.py --suite --min-recall 1.0 --min-precision 1.0
 ```
+
+### Result of that checklist for 1.0.0 (2026-08-11)
+
+Recorded so the next person can tell a regression from the expected baseline, on
+macOS 26.6.1 arm64 / CPython 3.12.13:
+
+| Check | Result |
+|---|---|
+| `ruff check packetiq tools tests` | clean |
+| `mypy packetiq` | clean, 83 source files |
+| `pytest` with `--cov-fail-under=100` | **1,756 passed**, 100.00% of 9,861 statements |
+| `bandit -r packetiq --severity-level low --confidence-level low` | no issues at any severity, 16,864 lines |
+| `pip-audit` (runtime closure, fresh venv) | no known vulnerabilities |
+| `pip-audit` (dev closure, fresh venv) | 1 advisory — `diskcache`, unfixable upstream, advisory-only |
+| Guardrail invariant tests | 26 passed (0 ungrounded entities) |
+| `validate.py --suite` regression gate | GATE PASSED (100% recall, 100% precision) |
+| `benchmark.py --demo --packets 20000` | 4,020 pkts/s, exit 0 |
+| `analyze samples/demo_attack.pcap` | 39 events, 5 chains, risk 100/100 |
+
+Audit dependencies in a **freshly built** virtualenv, never in a long-lived
+developer venv — the latter measures the developer's machine, not what users
+install, and will over-report. See
+[docs/security_audit/pip_audit.txt](security_audit/pip_audit.txt).
 
 ## What CI actually gates
 
@@ -182,7 +205,10 @@ robust with no babysitting. Verify with:
 cd /tmp && /path/to/PacketIQ/.venv/bin/packetiq version   # resolves from anywhere
 ```
 
-(The version subcommand is `packetiq version`; there is no `--version` flag.)
+(Two forms, both valid: `packetiq version` prints the banner and the full build
+block, while `packetiq --version` / `-V` prints the bare `PacketIQ 1.0.0` line that
+scripts and packagers expect. Both read `packetiq.__version__`, so neither can
+drift from the packaged metadata.)
 
 > **Zero-config alternative:** running from the repo root always picks up live
 > source edits (the source tree shadows the install), with no `.pth` involved —

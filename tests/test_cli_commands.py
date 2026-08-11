@@ -16,6 +16,7 @@ import json
 import pytest
 from click.testing import CliRunner
 
+from packetiq import __version__
 from packetiq import cli as cli_mod
 from packetiq.cli import main
 
@@ -58,6 +59,16 @@ def test_help_flag_lists_every_command(run):
 def test_version_reports_1_0_0(run):
     out = _ok(run("version"))
     assert "1.0.0" in out
+
+
+@pytest.mark.parametrize("flag", ["--version", "-V"])
+def test_version_flag_reports_the_package_version(run, flag):
+    """`--version` is the form scripts and packagers reach for first, so it has to
+    answer rather than error. It reports the single source of truth in
+    packetiq.__version__, so a bump can never leave the CLI behind."""
+    out = _ok(run(flag))
+    assert __version__ in out
+    assert out.strip() == f"PacketIQ {__version__}"
 
 
 def test_an_unknown_command_fails_cleanly(run):

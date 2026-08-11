@@ -9,13 +9,13 @@ and confidence floors are both set to "low", i.e. nothing is filtered out — th
 is the strictest setting bandit offers, not the default medium/medium.
 
 ---------------------------------------------------------------------
-Run started:2026-08-11 14:11:37.417245+00:00
+Run started:2026-08-11 18:43:45.080458+00:00
 
 Test results:
 	No issues identified.
 
 Code scanned:
-	Total lines of code: 16862
+	Total lines of code: 16864
 	Total lines skipped (#nosec): 0
 	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 14
 
@@ -67,5 +67,5 @@ High confidence; the sample recorded in the previous version of this file was a
 B110 try/except/pass in capture_setup.py. Those were worked through one at a
 time — real ones fixed in code, correct-by-design ones annotated with the
 targeted `# nosec BXXX` justifications above — which is why the count is now 0
-rather than merely suppressed. Total lines of code grew from 15,718 to 16,862
+rather than merely suppressed. Total lines of code grew from 15,718 to 16,864
 over the same period, so the drop is not an artifact of code being deleted.

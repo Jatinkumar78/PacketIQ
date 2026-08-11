@@ -84,7 +84,7 @@ fullest patch set; 3.9 remains supported and tested, with that caveat stated.
 
 Static analysis uses **bandit**, run over `packetiq/` at its strictest setting
 (`--severity-level low --confidence-level low`, so nothing is filtered out). As of
-**2026-08-11** it reports **no issues at any severity** across 16,862 lines, which
+**2026-08-11** it reports **no issues at any severity** across 16,864 lines, which
 is why that step is **blocking** too. Fourteen findings are suppressed by targeted
 `# nosec BXXX` comments, each with a written justification; there are no blanket
 suppressions, and every one is itemised in

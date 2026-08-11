@@ -165,9 +165,12 @@ jobs:
 
       # Blocking, because this is the closure `pip install packetiq` actually
       # produces — anything found here reaches every user. It is clean as of
-      # 2026-08-10 ("No known vulnerabilities found"), so a finding is a real
-      # regression rather than pre-existing debt, and it should fail the build
-      # instead of scrolling past in a green log.
+      # 2026-08-11 ("No known vulnerabilities found", re-verified that day from a
+      # freshly built virtualenv), so a finding is a real regression rather than
+      # pre-existing debt, and it should fail the build instead of scrolling past
+      # in a green log. Audit a fresh closure, never a developer venv: the same
+      # command inside a long-lived dev venv reports drift in packages this
+      # project neither ships nor declares. See docs/security_audit/pip_audit.txt.
       - name: pip-audit (the dependencies users install)
         run: |
           python -m pip install --upgrade pip pip-audit

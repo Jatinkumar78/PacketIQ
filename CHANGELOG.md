@@ -3,7 +3,39 @@
 All notable changes to PacketIQ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [1.0.0]
+## [1.0.0] — 2026-08-11
+
+First stable release. PacketIQ is a defensive network-forensics platform that turns
+a packet capture, a Zeek `conn.log`, a NetFlow/IPFIX export or a live interface into
+an evidence-backed analysis: 18 detection types across 12 detector modules, real
+threat-intel enrichment, MITRE ATT&CK and kill-chain correlation, deployable SIGMA /
+STIX / MISP output, and an optional AI copilot whose every claim is checked against
+the capture before it reaches the screen. The core pipeline runs fully offline.
+
+**State of the release, as measured on 2026-08-11** (macOS 26.6.1 arm64,
+CPython 3.12.13) rather than asserted:
+
+| | |
+|---|---|
+| Tests | **1,756 passing**, **100.00%** line coverage of **9,861** statements |
+| Coverage gate | 100% floor enforced in CI on **Python 3.9, 3.10, 3.11, 3.12** |
+| Platforms | Linux, macOS and Windows each run the suite in CI |
+| Lint / types | `ruff` clean · `mypy` clean across **83** source files |
+| Static security | `bandit` at its strictest setting: **no issues at any severity** over **16,864** lines |
+| Dependencies | runtime closure: **zero** known advisories (blocking gate) |
+| Detection (real) | **100%** recall · **90.0%** precision · **94.7%** F1 on Stratosphere CTU-13 |
+| Detection (synthetic) | 100% recall · 100% precision, gated on every push |
+| Throughput | **4,005 packets/s** aggregate over 12 captures (1,668,975 packets, 427.7 MB) |
+| Threat intel | **8,398** bundled indicators (8,301 feed entries + 97 JA3 fingerprints) |
+| Interfaces | **24** CLI commands · FastAPI web app · local dashboard |
+
+Precision is an honest **90.0%**, not a rounded-up 100%: one benign-labelled capture
+raises a MEDIUM finding, and that finding is itself a correct detection of real
+inbound internet scanning. It is
+[documented and analysed openly](reports/detection_real.md) rather than suppressed.
+
+Everything below is the development record, newest first — the defects found, what
+each one actually broke, and how it was verified fixed.
 
 ### Documentation re-measured against the code, not re-read
 
@@ -11,9 +43,16 @@ Every document in the repository checked claim by claim against what the code an
 the captures actually do. Where a number could be re-measured, it was.
 
 **Fixed**
-- **A documented command that does not exist.** `docs/RELEASE.md` told the reader to
-  verify an install with `packetiq --version`, which exits 2 with
-  `Error: No such option '--version'`. The subcommand is `packetiq version`.
+- **A documented command that did not exist — resolved in the code, not the prose.**
+  `docs/RELEASE.md` told the reader to verify an install with `packetiq --version`,
+  which exited with `Error: No such option '--version'`. The first pass corrected the
+  document to the real subcommand, `packetiq version`. On review that was the wrong
+  fix: `--version` is the form scripts, packagers and examiners reach for first, and
+  answering "no such option" is a wrong answer rather than a missing feature. The flag
+  now exists (`--version` / `-V`), printing the bare `PacketIQ 1.0.0` line, while
+  `packetiq version` keeps the banner and full build block. Both read the single
+  source of truth in `packetiq.__version__`, so neither can drift from the packaged
+  metadata, and `tests/test_cli_commands.py` asserts both forms.
 - **The paper contradicted itself and the implementation.** `docs/paper/` totalled
   the ablation's hallucinated entities as **95** in its conclusion and **47** in its
   abstract, table and source data (9 + 17 + 21 = 47). It also described redaction as
@@ -64,7 +103,7 @@ the captures actually do. Where a number could be re-measured, it was.
   `docs/security_audit/bandit.txt` still recorded **53 Low-severity findings** over
   15,718 lines — the state before those findings were worked through — while
   `SECURITY.md` and the CI comment both describe the scan as clean. Re-running the
-  exact blocking CI command reports **no issues at any severity** over 16,862 lines.
+  exact blocking CI command reports **no issues at any severity** over 16,864 lines.
   The file now carries that dated output, an itemised account of all fourteen
   `# nosec BXXX` suppressions (B404 ×2, B603 ×4, B607 ×2, B112 ×4, B104 ×2) and the
   confirmation that no line is exempted from scanning wholesale.
@@ -115,6 +154,10 @@ the captures actually do. Where a number could be re-measured, it was.
   2026-07-15 audit PDF that has been superseded (its `Low: 53` bandit line), rather
   than leaving a reader to assume a point-in-time report is current. The PDF itself is
   left as written on its date.
+- **The CI comment justifying the blocking `pip-audit` step** cited 2026-08-10 while
+  the audit log recorded a fresh 2026-08-11 re-verification of that same closure. It
+  now cites the later run, and carries the reason the distinction matters: audit a
+  freshly built closure, never a long-lived developer venv.
 
 ### Full-project audit: the claims, the container, and the code nothing calls
 

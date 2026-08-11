@@ -14,6 +14,7 @@ from pathlib import Path
 
 import click
 
+from packetiq import __version__
 from packetiq.correlation.engine import CorrelationEngine
 from packetiq.detection.engine import DetectionEngine
 from packetiq.detection.models import Severity
@@ -156,6 +157,12 @@ def _force_utf8_output(streams=None) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
+# `packetiq version` prints the banner and the full build/environment block; this
+# is the conventional one-line form that scripts and packagers reach for first,
+# and answering "No such option" to `--version` is a wrong answer, not a missing
+# feature. Eager, so it prints and exits before the banner is drawn.
+@click.version_option(__version__, "-V", "--version", prog_name="PacketIQ",
+                      message="%(prog)s %(version)s")
 @click.pass_context
 def main(ctx):
     """
@@ -1611,7 +1618,6 @@ def setup_capture_cmd():
 @main.command("version")
 def version():
     """Show PacketIQ version."""
-    from packetiq import __version__
     ui.print_status(f"PacketIQ v{__version__}", status="ok")
 
 
