@@ -26,8 +26,11 @@ env/
 .DS_Store
 Thumbs.db
 
-# Claude Code local settings (machine-specific)
-.claude/settings.local.json
+# Claude Code local settings (machine-specific). The glob also catches the
+# "settings.local 2.json" duplicates macOS leaves behind when a sync or a
+# concurrent write collides — same machine-specific content, same reason to
+# stay out of the repo.
+.claude/settings.local*.json
 .claude/launch.json
 
 # Test artifacts
@@ -63,3 +66,4 @@ docs/sandbox_test/pcaps/
 datasets/real/
 datasets/**/*.pcap
 datasets/**/*.pcapng
+.claude/settings.local*.json
