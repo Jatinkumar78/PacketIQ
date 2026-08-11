@@ -28,10 +28,6 @@ def test_parse_banner(banner, expected):
     assert nvd.parse_banner(banner) == expected
 
 
-def test_keyword_for():
-    assert nvd.keyword_for({"value": "Apache/2.4.49 (Unix)"}) == "Apache 2.4.49"
-    assert nvd.keyword_for({"value": "Mozilla/5.0 (X11; Linux)"}) == ""
-
 
 # ── NVD response parsing ─────────────────────────────────────────────────────
 

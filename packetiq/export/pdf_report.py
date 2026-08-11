@@ -672,22 +672,3 @@ def _s_limitations(n, res, S):
         f"{_esc(st.CLASSIFICATION)}.", S["muted"]))
     return out
 
-
-# ── Convenience ───────────────────────────────────────────────────────────────
-
-def build_pdf_bytes(res: dict) -> bytes | None:
-    """Render to a temp file and return the PDF bytes, or None."""
-    import os
-    import tempfile
-    fd, path = tempfile.mkstemp(suffix=".pdf")
-    os.close(fd)
-    try:
-        if not build_pdf(path, res):
-            return None
-        with open(path, "rb") as f:
-            return f.read()
-    finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass

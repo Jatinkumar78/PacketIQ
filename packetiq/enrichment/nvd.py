@@ -71,14 +71,6 @@ def parse_banner(value: str) -> tuple[str, str]:
     return product, version
 
 
-def keyword_for(banner: dict) -> str:
-    """Build the NVD keyword search string for an observed banner."""
-    product, version = parse_banner(banner.get("value", ""))
-    if not product:
-        return ""
-    return f"{product} {version}".strip()
-
-
 def _best_cvss(metrics: dict) -> tuple[float | None, str]:
     """Pick the most authoritative CVSS (v3.1 > v3.0 > v2) -> (score, severity)."""
     for key in ("cvssMetricV31", "cvssMetricV30"):

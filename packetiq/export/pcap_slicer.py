@@ -91,17 +91,3 @@ def slice_pcap(
         writer.close()
     return written
 
-
-def filter_for_event(event) -> PcapFilter:
-    """Build a sensible evidence filter from a DetectionEvent."""
-    ips = set()
-    ports = set()
-    if getattr(event, "src_ip", None):
-        ips.add(event.src_ip)
-    if getattr(event, "dst_ip", None):
-        ips.add(event.dst_ip)
-    if getattr(event, "dst_port", None):
-        ports.add(event.dst_port)
-    # drop placeholder values
-    ips.discard("(local host)")
-    return PcapFilter(ips=ips, ports=ports)

@@ -8,10 +8,14 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install dependencies first (better layer caching)
-COPY setup.py requirements.txt README.md ./
+# Packaging is PEP 621 / pyproject-only — there has been no setup.py since the
+# move off setuptools scripts, so the previous COPY failed on the first build
+# step. Dependencies and package data both come from pyproject.
+COPY pyproject.toml README.md ./
 COPY packetiq ./packetiq
-RUN pip install --no-cache-dir -e .
+# Not editable: an editable install is silently skipped by some Python 3.12+
+# builds, which leaves the `packetiq` entry point missing at runtime.
+RUN pip install --no-cache-dir .
 
 # Web app port
 EXPOSE 8080

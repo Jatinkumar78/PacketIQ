@@ -5,9 +5,13 @@ services:
     container_name: packetiq
     ports:
       - "8080:8080"
-    # Optional: provide AI keys for the copilot (analysis works without them)
+    # Optional: provide AI keys for the copilot (analysis works without them).
+    # `.env` is git-ignored, so a fresh clone does not have one — marking the file
+    # not-required is what stops `docker compose up` failing before it starts on
+    # exactly the path the README tells people to take. (Compose Spec v2.24+.)
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       # persist refreshed threat-intel feeds across restarts
       - packetiq_data:/data

@@ -14,7 +14,7 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3b82f6?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![Scapy](https://img.shields.io/badge/Scapy-packet%20engine-ef4444?style=for-the-badge&logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-1753%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-1754%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![Coverage](https://img.shields.io/badge/coverage-100%25-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![GUI](https://img.shields.io/badge/100%25-GUI%20web%20app-3b82f6?style=for-the-badge&logo=googlechrome&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff%20clean-000000?style=for-the-badge&logo=ruff&logoColor=white)
@@ -45,7 +45,7 @@
 
 <br/><br/>
 
-**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`15`** detection types · **`7,600+`** live threat-intel indicators · **`1,753`** tests · **`ruff`-clean**
+**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`7,600+`** live threat-intel indicators · **`1,754`** tests · **`ruff`-clean**
 
 </div>
 
@@ -55,7 +55,7 @@
 
 **PacketIQ** is a defensive network-forensics platform for SOC analysts, threat hunters and incident responders. Feed it a packet capture (`.pcap` / `.pcapng` / `.cap`), a **Zeek `conn.log`**, a **NetFlow / IPFIX export**, or a **live interface**, and it produces a complete, evidence-backed analysis:
 
-- **15 detection types** (across 12 detector modules) spanning recon, brute force, C2 beaconing, DNS/ICMP tunneling, credential exposure, TLS fingerprinting, file transfers and HTTP exploitation
+- **18 detection types** (across 12 detector modules) spanning recon, brute force, C2 beaconing, DNS/ICMP tunneling, credential exposure, TLS fingerprinting, file transfers and HTTP exploitation
 - **Real threat-intel enrichment** — every IP and domain is checked against real OSINT feeds (abuse.ch, Tor, Spamhaus) bundled as dated snapshots and refreshable with `packetiq feeds update`
 - **Attack-chain correlation** with **MITRE ATT&CK** and Lockheed-Martin kill-chain mapping
 - **Deployable detections** — pySigma-valid SIGMA rules, STIX 2.1 bundles, MISP push, evidence PCAP slices
@@ -136,8 +136,8 @@
 | Attribution | "this is APT28 (92%)" from a port scan | **honest TTP-overlap score with disclaimers** |
 | Output | a wall of text | SIGMA (pySigma-valid), STIX, MISP, HTML report, evidence PCAP |
 | Inputs | PCAP only | **PCAP · Zeek conn.log · NetFlow/IPFIX · live capture** |
-| Detections | a few heuristics | **15 detection types** incl. JA4, TLS certs, YARA, file carving |
-| Trust | unverifiable claims | **1,753 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
+| Detections | a few heuristics | **18 detection types** incl. JA4, TLS certs, YARA, file carving |
+| Trust | unverifiable claims | **1,754 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
 | Interface | terminal | **100% GUI web app — double-click to launch** |
 
 ---
@@ -179,12 +179,12 @@ Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` (crea
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev,yara,geoip]"                   # everything (tests, YARA, GeoIP)
-pytest                                                # run the 1,753-test suite
+pytest                                                # run the 1,754-test suite
 pytest --cov=packetiq --cov-report=term-missing      # with line-coverage report
 ```
 The CLI (`packetiq …`) is the same engine the web app uses — handy for scripting/CI, but not required.
 
-**Test coverage: 100%** — every one of the 9,889 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for **every supported interpreter, 3.9 through 3.12**, so a line can never ship untested.
+**Test coverage: 100%** — every one of the 9,860 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for **every supported interpreter, 3.9 through 3.12**, so a line can never ship untested.
 
 Coverage here is a property of the *suite*, not of the machine that runs it, and that distinction is enforced rather than assumed. Six rules are fixed in `tests/conftest.py`, and `tests/test_harness_guards.py` asserts each one still holds: a test gets its own history database, may not open a socket, may not open a real capture device, never sees the machine's own list of network interfaces, never resolves a link-layer address on the wire (neither the destination nor its own), and renders every table at one fixed width. Without those guards a workstation quietly flatters the number — a Mac with capture privileges really does start a live capture, a machine running `ollama serve` really does find an AI provider, a laptop with four Thunderbolt bridge adapters really does exercise the branch that ranks them, a Mac whose account may capture really does put the ARP request on the wire that scapy needs to finish building a packet, and a frame built with no source MAC really does carry the address of whichever NIC the host has. Every OS-specific and host-specific path — the macOS/Linux/Windows capture-privilege checks, the interface enumerator, the `tomllib`/`tomli` split, the whole `/api/live/*` lifecycle — is therefore driven from a fixture, so a line is covered on every matrix leg or on none. Verified by measuring the suite under simulated runner environments (Linux dispatch, denied capture socket, denied `/dev/bpf`, no local model, no external tools) on 3.9, 3.11 and 3.12: 100.00% in every one.
 
@@ -205,6 +205,9 @@ Every detector emits a structured event with severity, confidence, evidence and 
 | **Port Scan** | Distinct dest-ports per (src→dst) | T1046 | MEDIUM → CRITICAL |
 | **Host Scan** | Distinct dest-hosts per (src, port) | T1018 | MEDIUM → HIGH |
 | **Stealth SYN Scan** | Half-open SYNs with no SYN-ACK | T1046 | MEDIUM → HIGH |
+| **ARP Scan** | One sender ARP-requesting ≥ 20 distinct targets — layer-2 host discovery that never sends an IP packet | T1018 / T1595 | MEDIUM → HIGH |
+| **ARP Spoofing** | One IPv4 announced by more than one MAC (IP→MAC conflict) | T1557.002 | HIGH |
+| **DoS Flood** | ≥ 60 *unanswered* SYNs concentrated on one endpoint, tiered by volume and rate | T1499 / T1499.002 | MEDIUM → HIGH |
 | **C2 Beacon** | Coefficient-of-variation **+ jitter-tolerant periodicity** on inter-arrival times | T1071 | MEDIUM → CRITICAL |
 | **DNS DGA** | Shannon entropy + trusted-domain allowlist + compound-word filter | T1071.004 | HIGH |
 | **DNS Tunneling** | Oversized query-name length analysis | T1048 / T1071.004 | HIGH → CRITICAL |
@@ -458,7 +461,7 @@ dga_entropy_threshold = 3.8   # bits/char to suspect a DGA
 
 ```bash
 pip install -e ".[dev]"
-pytest                 # 1,753 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
+pytest                 # 1,754 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
 ruff check packetiq tools tests
 ```
 
@@ -554,7 +557,7 @@ PacketIQ/
 │   ├── screenshots/               # README UI screenshots — real running web app
 │   └── assets/                    # images (bot avatar)
 ├── samples/generate_sample.py     # build a demo PCAP
-├── tests/                         # 1,753 pytest tests
+├── tests/                         # 1,754 pytest tests
 ├── .github/workflows/ci.yml       # CI (pytest + ruff + mypy)
 ├── PacketIQ.command · PacketIQ.bat · quickstart.sh   # double-click / one-command launchers
 ├── Dockerfile · docker-compose.yml

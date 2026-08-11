@@ -2317,9 +2317,18 @@ def create_app() -> FastAPI:
         label = (f"{MAX_UPLOAD_MB // 1024} GB" if MAX_UPLOAD_MB >= 1024 and MAX_UPLOAD_MB % 1024 == 0
                  else f"{MAX_UPLOAD_MB / 1024:.1f} GB" if MAX_UPLOAD_MB >= 1024
                  else f"{MAX_UPLOAD_MB} MB")
+        # Same rule for the capability tiles. They were typed in by hand and said
+        # "15 detection types" long after the detectors grew to 18 — a number the
+        # landing page states about the product has to be counted from the product.
+        from packetiq import __version__
+        from packetiq.attribution.actors import THREAT_ACTORS
+        from packetiq.detection.models import EventType
         html = (TEMPLATE.read_text(encoding="utf-8")
                 .replace("__MAX_UPLOAD_MB__", str(MAX_UPLOAD_MB))
-                .replace("__MAX_UPLOAD_LABEL__", label))
+                .replace("__MAX_UPLOAD_LABEL__", label)
+                .replace("__DETECTION_TYPES__", str(len(EventType)))
+                .replace("__ACTOR_PROFILES__", str(len(THREAT_ACTORS)))
+                .replace("__APP_VERSION__", __version__))
         return HTMLResponse(html)
 
     @app.get("/static/vendor/{name}")

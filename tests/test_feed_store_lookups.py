@@ -148,13 +148,6 @@ def test_feed_details_omits_feeds_that_are_not_on_disk(tmp_path, monkeypatch):
     assert feeds.feed_details() == []
 
 
-def test_the_search_path_lists_the_bundled_copy_before_the_cache(tmp_path, monkeypatch):
-    monkeypatch.setenv("PACKETIQ_FEED_DIR", str(tmp_path))
-    paths = feeds._feed_paths("feodo.csv")
-
-    assert len(paths) == 2
-    assert paths[1] == tmp_path / "feodo.csv"
-
 
 # ── Store construction from feed files ───────────────────────────────────────
 

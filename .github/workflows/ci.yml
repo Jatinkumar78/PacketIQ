@@ -194,3 +194,23 @@ jobs:
         run: |
           python -m pip install bandit
           bandit -r packetiq --severity-level low --confidence-level low
+
+      # The audit above runs on 3.12, where every floor resolves to a patched
+      # release. It says nothing about the *oldest* interpreter this project
+      # supports, and that is where the risk actually lives: pillow 12.x,
+      # python-dotenv 1.2.2 and python-multipart 0.0.3x all require >=3.10, so a
+      # 3.9 install resolves to the newest 3.9-compatible versions — which carry
+      # published advisories with nowhere to upgrade to. Advisory-only for that
+      # reason, and run so the residual is visible in every log instead of being
+      # a sentence in SECURITY.md that nobody re-checks.
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.9"
+
+      - name: pip-audit (oldest supported interpreter — advisory)
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip install .
+          pip-audit

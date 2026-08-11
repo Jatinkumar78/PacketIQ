@@ -31,6 +31,14 @@ _RES = {
 }
 
 
+def _pdf_bytes(tmp_path, res) -> bytes:
+    """Render through `build_pdf` — the entry point the web app and the Telegram
+    sender actually call — and hand back the bytes to assert on."""
+    out = tmp_path / "rendered.pdf"
+    assert pdf_report.build_pdf(str(out), res) is True
+    return out.read_bytes()
+
+
 def test_reportlab_is_available():
     # reportlab is a declared runtime dependency now — the PDF path must be live.
     assert pdf_report.available()
@@ -42,11 +50,6 @@ def test_build_pdf_produces_valid_pdf(tmp_path):
     data = open(out, "rb").read()
     assert data[:5] == b"%PDF-"
     assert len(data) > 1500          # a real multi-section document, not a stub
-
-
-def test_build_pdf_bytes():
-    data = pdf_report.build_pdf_bytes(_RES)
-    assert data and data[:5] == b"%PDF-"
 
 
 def test_build_pdf_survives_minimal_result(tmp_path):
@@ -81,7 +84,7 @@ def test_iocs_and_recommendations_are_grounded():
 #  Degradation and the branches a single happy-path render never reaches        #
 # --------------------------------------------------------------------------- #
 
-def test_a_capture_with_only_low_findings_is_described_as_informational():
+def test_a_capture_with_only_low_findings_is_described_as_informational(tmp_path):
     """The lead paragraph is what an executive reads first. Saying a LOW-only
     capture 'warrants analyst attention' would misdirect the whole report."""
     res = {**_RES,
@@ -92,11 +95,11 @@ def test_a_capture_with_only_low_findings_is_described_as_informational():
                        "confidence": 40, "description": "High-volume DNS.",
                        "recommendation": "None required.", "mitre": []}]}
 
-    data = pdf_report.build_pdf_bytes(res)
+    data = _pdf_bytes(tmp_path, res)
     assert data and data[:5] == b"%PDF-"
 
 
-def test_a_large_finding_set_is_truncated_with_a_pointer_to_the_html_export():
+def test_a_large_finding_set_is_truncated_with_a_pointer_to_the_html_export(tmp_path):
     """45 rows is the table cap. Beyond it the PDF must say what was left out."""
     events = [{"event_type": "PORT_SCAN", "severity": "HIGH", "src_ip": f"45.33.32.{i}",
                "dst_ip": "10.0.0.5", "dst_port": 445, "confidence": 80,
@@ -104,12 +107,12 @@ def test_a_large_finding_set_is_truncated_with_a_pointer_to_the_html_export():
                "mitre": [{"id": "T1046", "name": "Network Service Discovery"}, "T1595"]}
               for i in range(60)]
 
-    data = pdf_report.build_pdf_bytes({**_RES, "events": events})
+    data = _pdf_bytes(tmp_path, {**_RES, "events": events})
     assert data and data[:5] == b"%PDF-"
     assert len(data) > 5000, "a 60-finding report should be substantially longer"
 
 
-def test_a_chain_with_timestamps_and_attributions_renders():
+def test_a_chain_with_timestamps_and_attributions_renders(tmp_path):
     """Exercises the observed-window line and the attribution caveat, both of
     which only appear when the analysis produced that data."""
     res = {**_RES,
@@ -118,7 +121,7 @@ def test_a_chain_with_timestamps_and_attributions_renders():
                        "first_seen": "2026-07-09 12:00:00",
                        "last_seen": "2026-07-09 12:07:31"}]}
 
-    data = pdf_report.build_pdf_bytes(res)
+    data = _pdf_bytes(tmp_path, res)
     assert data and data[:5] == b"%PDF-"
 
 
@@ -150,24 +153,6 @@ def test_the_pdf_path_reports_failure_rather_than_raising(tmp_path, monkeypatch)
     can fall back to the HTML report instead of the run dying."""
     unwritable = tmp_path / "no-such-dir" / "report.pdf"
     assert pdf_report.build_pdf(str(unwritable), _RES) is False
-
-
-def test_build_pdf_bytes_returns_none_when_the_render_fails(monkeypatch):
-    monkeypatch.setattr(pdf_report, "build_pdf", lambda path, res: False)
-    assert pdf_report.build_pdf_bytes(_RES) is None
-
-
-def test_the_temp_file_is_cleaned_up_even_when_it_is_already_gone(monkeypatch):
-    """The finally-block unlink races with anything else clearing /tmp; an
-    OSError there must not mask the returned bytes."""
-    import os as _os
-
-    def vanishing_unlink(path):
-        raise OSError("already removed")
-
-    monkeypatch.setattr(_os, "unlink", vanishing_unlink)
-    data = pdf_report.build_pdf_bytes(_RES)
-    assert data and data[:5] == b"%PDF-"
 
 
 def test_reportlab_being_absent_is_reported_not_raised(monkeypatch):

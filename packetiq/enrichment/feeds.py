@@ -55,11 +55,6 @@ def cache_dir() -> Path:
     return Path(env) if env else (Path.home() / ".packetiq" / "feeds")
 
 
-def _feed_paths(filename: str) -> list[Path]:
-    """Bundled first, then cache (cache wins on lookup since we load it last)."""
-    return [_BUNDLED_DIR / filename, cache_dir() / filename]
-
-
 def _read_lines(filename: str):
     """Yield non-comment, non-empty stripped lines from the first existing copy
     in the cache dir, else the bundled copy (cache takes precedence)."""

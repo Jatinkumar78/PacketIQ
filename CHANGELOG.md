@@ -5,6 +5,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.0.0]
 
+### Full-project audit: the claims, the container, and the code nothing calls
+
+A sweep over every feature, file and stated number, checking each against what
+the code actually does rather than what it says.
+
+**Fixed**
+- **`docker build` could not work.** The Dockerfile copied `setup.py`, which
+  stopped existing when packaging moved to pyproject-only, so the build died on
+  its first `COPY` — on exactly the path the README hands a new user. It now
+  copies `pyproject.toml`, and installs non-editable, because an editable install
+  is silently skipped by some Python 3.12+ builds and leaves the image without the
+  entry point its `ENTRYPOINT` invokes. Verified by installing the exact file set
+  the Dockerfile copies into a clean Python 3.9 environment: entry point runs,
+  bundled feeds/templates/vendor JS all present, and a real capture analyses to 39
+  events.
+- **`docker compose up` failed before it started.** `env_file: .env` is required
+  by default and `.env` is git-ignored, so a fresh clone had no such file. It is
+  now declared optional.
+- **The web UI stated numbers it had been told, not numbers it counted.** The
+  landing page read "15 Detection Types" while 18 event types are emitted, and
+  carried a hand-typed version label. Both are now rendered from
+  `len(EventType)`, `len(THREAT_ACTORS)` and `__version__`, the same way the
+  upload cap already was.
+- **Three detectors were missing from the README's capability table** — ARP scan,
+  ARP spoofing and the DoS-flood detector — so a reader would conclude the tool
+  does not have them. Added with their real thresholds, MITRE techniques and
+  severity ranges, and the headline count corrected from 15 to 18.
+- **`SECURITY.md` said `pip-audit` covers "Python 3.9–3.12"; the job only ran
+  3.12.** Rather than trim the claim, CI now audits the oldest supported
+  interpreter too. It is advisory-only and deliberately so: `pillow`,
+  `python-dotenv` and `python-multipart` have all moved past 3.9, so a 3.9 install
+  resolves to the newest 3.9-compatible release of each — some carrying published
+  advisories with no version to upgrade to. That residual is now visible in every
+  run's log, and SECURITY.md states it plainly.
+
+**Removed**
+- Four helpers with no caller anywhere in `packetiq/` or `tools/`, kept alive
+  only by tests: `pdf_report.build_pdf_bytes`, `pcap_slicer.filter_for_event`,
+  `nvd.keyword_for` (a second, subtly different copy of the keyword logic
+  `lookup_banners` already does inline) and `feeds._feed_paths`. 32 statements,
+  and with them the illusion that their coverage meant anything. The PDF tests now
+  render through `build_pdf` — the entry point the web app and the Telegram sender
+  actually call.
+
+**Added**
+- Tests that hold the documentation to the code: the README's detection-type
+  count must equal `len(EventType)`, every emitted type must appear in the
+  capability table, the detector-module count must match the package, and the
+  indicator figure may never exceed what the feeds actually hold. Plus: every path
+  the Dockerfile copies must exist, and the container may not install editable.
+  Each of these guards a drift that had already happened.
+
 ### Windows and macOS are supported in fact, not in principle
 
 The package metadata said `Operating System :: OS Independent` and the repository

@@ -194,3 +194,113 @@ def test_request_type_stubs_ship_with_the_dev_extra():
         "packetiq imports `requests` in several modules; without its stubs the mypy "
         "gate passes on 3.10+ and fails on 3.9"
     )
+
+
+# ── 4. README <-> the code it describes ──────────────────────────────────────
+#
+# The headline numbers in the README are claims about the product, and until now
+# nothing checked them. Two had already drifted: the detection-type count said 15
+# where 18 event types are emitted, and the capability table listed neither ARP
+# scanning, ARP spoofing nor the DoS-flood detector — three detectors a reader
+# would conclude the tool does not have.
+
+README = Path(__file__).resolve().parents[1] / "README.md"
+
+
+def _readme() -> str:
+    return README.read_text(encoding="utf-8")
+
+
+def _detector_modules_emitting_events() -> set:
+    """Modules under packetiq/detection that construct a DetectionEvent."""
+    root = Path(__file__).resolve().parents[1] / "packetiq" / "detection"
+    return {p.stem for p in root.glob("*.py")
+            if re.search(r"event_type\s*=\s*EventType\.", p.read_text(encoding="utf-8"))}
+
+
+def test_the_readme_detection_type_count_is_the_number_the_code_emits():
+    from packetiq.detection.models import EventType
+
+    claimed = {int(n) for n in re.findall(r"\*\*`?(\d+)`?\*\* detection types", _readme())}
+    assert claimed, "the README no longer states a detection-type count"
+    assert claimed == {len(EventType)}, (
+        f"README claims {claimed} detection types; EventType defines {len(EventType)}"
+    )
+
+
+def test_every_emitted_detection_type_reaches_the_readme_table():
+    """A detector nobody documents is a feature nobody knows they have."""
+    from packetiq.detection.models import EventType
+
+    readme = _readme().lower()
+    # The table names detectors in prose, so match on the words that identify each
+    # event type rather than on the enum spelling.
+    names = {
+        EventType.ARP_SCAN: "arp scan", EventType.ARP_SPOOFING: "arp spoofing",
+        EventType.BRUTE_FORCE: "brute force", EventType.C2_BEACON: "c2 beacon",
+        EventType.CREDENTIAL_EXPOSURE: "credential exposure", EventType.DNS_ANOMALY: "dns dga",
+        EventType.DNS_TUNNELING: "dns tunneling", EventType.DOS_FLOOD: "dos flood",
+        EventType.HOST_SCAN: "host scan", EventType.HTTP_ATTACK: "http attack",
+        EventType.ICMP_TUNNELING: "icmp tunneling", EventType.IOC_MATCH: "ioc match",
+        EventType.JA3_ANOMALY: "ja3", EventType.MALICIOUS_FILE: "file carving",
+        EventType.PORT_SCAN: "port scan", EventType.PROTOCOL_MISUSE: "protocol misuse",
+        EventType.SUSPICIOUS_FLAGS: "suspicious tcp flags", EventType.TLS_ANOMALY: "tls certificate",
+    }
+    assert set(names) == set(EventType), "a new EventType needs a row in the README table"
+    missing = sorted(v for k, v in names.items() if v not in readme)
+    assert not missing, f"detection types absent from the README table: {missing}"
+
+
+def test_the_readme_detector_module_count_matches_the_package():
+    claimed = {int(n) for n in re.findall(r"across (\d+) detector modules", _readme())}
+    assert claimed == {len(_detector_modules_emitting_events())}
+
+
+def test_the_readme_never_claims_more_indicators_than_the_feeds_hold():
+    """`7,600+` is a floor, so it may only ever be under the real count.
+
+    Counted the way the app's own feeds panel counts: per-feed entries as
+    ingested, plus the JA3 fingerprint blocklist.
+    """
+    from packetiq.detection.ja3 import load_blocklist
+    from packetiq.enrichment.feeds import load_store
+
+    real = sum(load_store().counts.values()) + len(load_blocklist())
+    claimed = {int(n.replace(",", "")) for n in re.findall(r"`?([\d,]+)\+`?\s*(?:live )?(?:threat-intel )?indicators", _readme())}
+    assert claimed, "the README no longer states an indicator count"
+    for n in claimed:
+        assert n <= real, f"README claims {n:,}+ indicators; the feeds hold {real:,}"
+
+
+# ── 5. The container build <-> the files it copies ───────────────────────────
+#
+# The Dockerfile copied `setup.py`, which stopped existing when packaging moved
+# to pyproject-only. `docker build` therefore failed on its first COPY — on the
+# exact path the README tells a new user to take — and nothing in the suite
+# noticed, because nothing in the suite read the Dockerfile.
+
+DOCKERFILE = Path(__file__).resolve().parents[1] / "Dockerfile"
+
+
+def test_every_path_the_dockerfile_copies_exists():
+    root = Path(__file__).resolve().parents[1]
+    missing = []
+    for line in DOCKERFILE.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("COPY "):
+            continue
+        parts = line.split()[1:]          # drop COPY; last token is the destination
+        for src in parts[:-1]:
+            if src.startswith("--"):      # --from=, --chown= and friends
+                continue
+            if not (root / src).exists():
+                missing.append(src)
+    assert not missing, f"Dockerfile copies files that are not in the repo: {missing}"
+
+
+def test_the_container_does_not_install_the_package_editable():
+    """An editable install is silently skipped by some Python 3.12+ builds, which
+    leaves the image without the `packetiq` entry point its ENTRYPOINT invokes —
+    the same trap `PacketIQ.bat` and `PacketIQ.command` already avoid."""
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    assert "pip install" in text
+    assert " -e ." not in text and "--editable" not in text

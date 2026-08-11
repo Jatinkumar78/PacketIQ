@@ -146,21 +146,37 @@ def test_the_synchronous_analyze_endpoint_returns_the_whole_result(client, tmp_p
 
 # ── Unknown job ids ──────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("path", [
+UNKNOWN_JOB_GET_PATHS = [
     "/api/results/{job}",
     "/api/report/{job}.html",
     "/api/packets/{job}",
     "/api/packets/{job}/0",
     "/api/evidence/{job}",
-    "/api/sigma/{job}",
+    "/api/sigma/{job}/rules.zip",
     "/api/stix/{job}",
     "/api/navigator/{job}",
-    "/api/timeline/{job}",
-])
+]
+
+
+@pytest.mark.parametrize("path", UNKNOWN_JOB_GET_PATHS)
 def test_an_unknown_job_is_a_not_found_not_a_crash(client, path):
     """The front end shows a message on 4xx and a crash dialog on 5xx."""
     r = client.get(path.format(job=UNKNOWN))
     assert r.status_code in (400, 404, 410), f"{path} → {r.status_code}"
+
+
+def test_those_paths_are_real_routes(client):
+    """Otherwise the test above passes on FastAPI's own 404 and proves nothing.
+
+    It did: the list carried `/api/sigma/{job}` (the route is
+    `/api/sigma/{job}/rules.zip`) and `/api/timeline/{job}`, which has never
+    existed — the browser timeline is served inside `/api/results/{job}`. Two of
+    nine cases were asserting that a typo is not a route.
+    """
+    routes = {getattr(r, "path", "") for r in client.app.routes}
+    for path in UNKNOWN_JOB_GET_PATHS:
+        template = path.replace("{job}", "{job_id}").replace("/0", "/{index}")
+        assert template in routes, f"{path} is not a route the app serves"
 
 
 @pytest.mark.parametrize("path", [

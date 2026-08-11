@@ -49,15 +49,24 @@ surface small:
 ## Dependency security
 
 Runtime dependencies are pinned to **security-patched floors** in `pyproject.toml`
-and `requirements.txt`, re-checked by **`pip-audit`** in CI on every push
-(Python 3.9–3.12). The **reference/dev environment runs on Python 3.12.13**, where
-those floors resolve to fully-patched releases and `pip-audit` reports **zero
-advisories in the runtime dependency set** (one dev-only transitive, `diskcache`
-via the `dev`-extra `pySigma`, has no upstream fix yet — it is never installed by
-`pip install packetiq`). **Python 3.9** remains supported (end-of-life since October
-2025); there each package installs at its newest 3.9-compatible version, so
-**Python 3.10+ is recommended** for the fullest patch set. Static analysis uses
-**bandit**.
+and `requirements.txt`, re-checked by **`pip-audit`** in CI on every push. The
+**reference/dev environment runs on Python 3.12.13**, where those floors resolve to
+fully-patched releases and `pip-audit` reports **zero advisories in the runtime
+dependency set** — that audit is **blocking**, so a finding fails the build. One
+dev-only transitive (`diskcache`, via the `dev`-extra `pySigma`) has no upstream
+fix and is never installed by `pip install packetiq`; its audit is advisory.
+
+**Python 3.9 is a different answer, and CI now states it rather than implying it.**
+3.9 has been end-of-life since October 2025, and several dependencies have moved
+past it: the current `pillow`, `python-dotenv` and `python-multipart` releases all
+require Python ≥ 3.10. A 3.9 install therefore resolves to the newest
+3.9-compatible version of each, and some of those carry published advisories with
+**no release to upgrade to**. CI runs a second, **advisory-only** `pip-audit` on
+3.9 so that residual is visible in every run's log instead of being a sentence
+here that nobody re-checks. **Python 3.10 or newer is recommended** for the
+fullest patch set; 3.9 remains supported and tested, with that caveat stated.
+
+Static analysis uses **bandit**.
 
 ## Audit
 

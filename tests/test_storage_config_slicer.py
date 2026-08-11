@@ -19,7 +19,7 @@ from scapy.all import ICMP, IP, TCP, UDP, Ether, rdpcap, wrpcap
 
 from packetiq import config as cfg
 from packetiq import storage
-from packetiq.export.pcap_slicer import PcapFilter, filter_for_event, slice_pcap
+from packetiq.export.pcap_slicer import PcapFilter, slice_pcap
 
 # =========================================================================== #
 #  Analysis history                                                            #
@@ -288,13 +288,6 @@ def test_an_empty_filter_copies_every_packet(mixed_pcap, tmp_path):
     out = tmp_path / "ev.pcap"
     assert slice_pcap(str(mixed_pcap), str(out), PcapFilter()) == 5
 
-
-def test_a_filter_is_built_from_a_detection_event(pipeline):
-    for event in pipeline["events"]:
-        f = filter_for_event(event)
-        assert isinstance(f, PcapFilter)
-        if event.src_ip:
-            assert event.src_ip in f.ips
 
 
 def test_slicing_a_capture_that_does_not_exist_reports_zero(tmp_path):

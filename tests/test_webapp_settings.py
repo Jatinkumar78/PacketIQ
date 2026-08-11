@@ -48,6 +48,24 @@ def test_no_cdn_and_vendored_assets_served(client):
         assert len(r.content) > 10_000
 
 
+def test_the_landing_page_states_numbers_it_counted_rather_than_remembered(client):
+    """The capability tiles are claims about the product, so they are rendered
+    from the product. They were typed in by hand and read "15 detection types"
+    long after the detectors grew to 18 — a number a visitor has no way to check.
+    """
+    from packetiq import __version__
+    from packetiq.attribution.actors import THREAT_ACTORS
+    from packetiq.detection.models import EventType
+
+    idx = client.get("/").text
+    assert f'<div class="stat-v">{len(EventType)}</div><div class="stat-l">Detection Types' in idx
+    assert f'<div class="stat-v">{len(THREAT_ACTORS)}</div><div class="stat-l">APT TTP Profiles' in idx
+    assert f"v{__version__} SIEM" in idx
+    for placeholder in ("__DETECTION_TYPES__", "__ACTOR_PROFILES__", "__APP_VERSION__",
+                        "__MAX_UPLOAD_MB__", "__MAX_UPLOAD_LABEL__"):
+        assert placeholder not in idx, f"{placeholder} was served unsubstituted"
+
+
 def test_vendor_route_is_allowlisted(client):
     assert client.get("/static/vendor/app.py").status_code == 404
     assert client.get("/static/vendor/does-not-exist.js").status_code == 404
