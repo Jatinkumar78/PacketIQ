@@ -41,11 +41,11 @@
 
 <img src="docs/screenshots/01-dashboard.png" alt="PacketIQ analyst dashboard — risk score, kill-chain coverage, protocol and severity breakdowns" width="100%"/>
 
-<sub>⬆︎ <i>The live web app analysing a capture. <b>Every screenshot in this README is the real running app</b> — nothing mocked, nothing staged.</i></sub>
+<sub>⬆︎ <i>The live web app on the bundled <code>samples/demo_attack.pcap</code>: risk 100/100, 39 threat events, 5 correlated attack chains, 4 predicted follow-on attacks. <b>Every screenshot in this README is the real running app</b> — nothing mocked, nothing staged.</i></sub>
 
 <br/><br/>
 
-**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`8,300+`** threat-intel indicators · **`1,756`** tests · **`ruff`-clean**
+**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`8,398`** threat-intel indicators · **`1,756`** tests · **`100%`** coverage · **`ruff`-clean**
 
 </div>
 
@@ -69,7 +69,7 @@
 
 ## 🎬 See It In Action
 
-<div align="center"><sub>A guided tour of the browser app analysing the bundled <code>samples/demo_attack.pcap</code> — real screenshots, not mockups.</sub></div>
+<div align="center"><sub>A guided tour of the browser app. Every image is the <b>real running app</b> — nothing mocked, nothing staged. Most panels analyse the bundled <code>samples/demo_attack.pcap</code>; the two marked <b>CTU-13</b> analyse <code>donbot.pcap</code>, a genuine Stratosphere botnet capture, because a device-level view only means something on traffic carrying real hardware addresses.</sub></div>
 
 <br/>
 
@@ -78,53 +78,74 @@
 <td width="50%" valign="top">
 <img src="docs/screenshots/02-threat-events.png" alt="Threat events with an expanded 'why was this flagged' explainability panel"/>
 <b>🔍 Threat Events → “Why was this flagged?”</b><br/>
-<sub>Every detection expands into <b>what · why · evidence · recommended action · MITRE</b>. No black box — each alert defends itself.</sub>
+<sub>Every detection expands into <b>what · why · evidence · recommended action · MITRE</b>, and every row carries a one-click <b>evidence-PCAP download</b>. No black box — each alert defends itself.</sub>
 </td>
 <td width="50%" valign="top">
 <img src="docs/screenshots/03-attack-chains.png" alt="Attack-chain correlation with MITRE ATT&CK coverage heatmap and kill-chain pipeline"/>
 <b>🔗 Attack-Chain Correlation</b><br/>
-<sub>A <b>MITRE ATT&CK coverage heatmap</b> (techniques × tactics) plus a visual kill-chain pipeline per attacker, with a one-click ATT&CK Navigator layer.</sub>
+<sub>A <b>MITRE ATT&CK coverage heatmap</b> — 23 techniques across 8 tactics in this capture — plus a visual kill-chain pipeline per attacker and a one-click ATT&CK Navigator layer.</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="docs/screenshots/04-network-graph.png" alt="Interactive force-directed connection graph"/>
-<b>🌐 Interactive Connection Graph</b><br/>
-<sub>Force-directed, draggable, colour-coded <b>internal / external / flagged</b> — the attacker lights up as the hub instantly.</sub>
+<img src="docs/screenshots/04-possible-attacks.png" alt="Possible Attacks threat-forecast panel with per-prediction evidence"/>
+<b>🔮 Possible Attacks — Threat Forecast</b><br/>
+<sub>What this capture is <i>exposed to</i>, inferred from the services and behaviour actually observed — each with <b>the evidence that produced it</b> and why it follows. Labelled a prediction, not an event; when a scan found nothing open, it says so.</sub>
 </td>
 <td width="50%" valign="top">
-<img src="docs/screenshots/05-packet-inspector.png" alt="Wireshark-style packet inspector"/>
+<img src="docs/screenshots/05-network-graph.png" alt="Device-level network connection graph on a real CTU-13 botnet capture"/>
+<b>🌐 Network Connection Graph <sup>CTU-13</sup></b><br/>
+<sub>Device-level topology built from <b>link-layer evidence</b> — attacker, target, internal hosts, gateway/infra. Only NICs that actually transmitted are drawn; probed-but-silent addresses are excluded rather than invented.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/06-device-inventory.png" alt="Device inventory with MAC, OUI vendor, role and passive OS fingerprints"/>
+<b>🖧 Device Inventory & OS Fingerprints <sup>CTU-13</sup></b><br/>
+<sub>Every physical device that transmitted, keyed by <b>MAC</b> with OUI vendor, inferred role (host / gateway) and protocols — beside passive <b>TTL-based OS inference</b> and hop distance.</sub>
+</td>
+<td width="50%" valign="top">
+<img src="docs/screenshots/07-packet-inspector.png" alt="Wireshark-style packet inspector with layer tree and hex"/>
 <b>🧬 Wireshark-style Packet Inspector</b><br/>
-<sub>Every packet, searchable, colour-by-protocol. Protocol/Info decided by <b>payload inspection like Wireshark</b>, not by port alone — click any packet for layers, fields, hex + “Explain with AI”.</sub>
+<sub>Every packet, searchable, colour-by-protocol — click any one for its <b>layer/field tree, raw hex</b> and “Explain with AI”. Protocol and Info come from <b>payload inspection like Wireshark</b>, not from the port number.</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="docs/screenshots/07-threat-intel.png" alt="Real OSINT threat-intelligence feeds panel"/>
-<b>📡 Real OSINT Threat Intel</b><br/>
-<sub><b>8,300+ indicators</b> from abuse.ch, Spamhaus & Tor ship in the box — cross-referenced against every capture, and refreshable from source with <code>packetiq feeds update</code>. <b>Nothing fabricated.</b></sub>
+<img src="docs/screenshots/08-timeline.png" alt="Attack timeline with activity density and phase transitions"/>
+<b>🕰️ Attack Timeline</b><br/>
+<sub>Activity density over the capture beside the reconstructed sequence — <b>phase transitions, chain starts and the silent gaps</b> between bursts, each traceable to its packets.</sub>
 </td>
 <td width="50%" valign="top">
-<img src="docs/screenshots/09-attribution.png" alt="Threat-actor TTP overlap panel with disclaimers"/>
-<b>🎯 Threat-Actor TTP Overlap</b><br/>
-<sub>Behavioural similarity to known APT / crime-group profiles — <b>clearly labelled an investigative lead, <i>not</i> confirmed attribution</b>. Honesty over hype.</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/screenshots/06-sigma-rules.png" alt="Deployable SIGMA detection rules"/>
+<img src="docs/screenshots/09-sigma-rules.png" alt="Deployable SIGMA detection rules with inline YAML"/>
 <b>📜 Deployable SIGMA Rules</b><br/>
-<sub>Auto-generated, <b>pySigma-valid</b> (validated in CI), compatible with Splunk / Elastic / Sentinel / QRadar — exported as a ZIP.</sub>
+<sub>Auto-generated and <b>pySigma-valid</b> (validated in CI), compatible with Splunk / Elastic / Sentinel / QRadar — readable inline as YAML, exported as a ZIP.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/10-threat-intel.png" alt="Real OSINT threat-intelligence feeds panel with provenance"/>
+<b>📡 Real OSINT Threat Intel</b><br/>
+<sub><b>8,398 indicators</b> across six abuse.ch / Spamhaus / Tor feeds ship in the box and refresh from source on demand (shown here freshly updated), each carrying <b>its provenance and age</b>. <b>Nothing fabricated</b> — and when a capture matches nothing, it says exactly that.</sub>
 </td>
 <td width="50%" valign="top">
-<img src="docs/screenshots/10-exports.png" alt="Export and share panel"/>
+<img src="docs/screenshots/11-attribution.png" alt="Threat-actor TTP overlap panel with disclaimers"/>
+<b>🎯 Threat-Actor TTP Overlap</b><br/>
+<sub>Behavioural similarity to known APT / crime-group profiles — <b>clearly labelled an investigative lead, <i>not</i> confirmed attribution</b>, on every single card. Honesty over hype.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/12-exports.png" alt="Export and share panel"/>
 <b>📤 Export & Share</b><br/>
-<sub><b>Court-ready PDF</b> (chain-of-custody + SHA-256), STIX 2.1, MISP push, ATT&CK Navigator, evidence PCAP carving, Telegram / Slack / email.</sub>
+<sub><b>Court-ready PDF</b> (chain-of-custody + SHA-256), STIX 2.1, MISP push, ATT&CK Navigator layer, SIGMA ZIP, evidence-PCAP carving, Telegram / Slack / email.</sub>
+</td>
+<td width="50%" valign="top">
+<b>…and the rest of the app</b><br/>
+<sub>Also in the browser, and not pictured here: a streaming <b>AI SOC copilot</b>; a <b>live-capture monitor</b> that streams packets and findings straight off a NIC; a version-aware <b>NVD/CVE + CISA-KEV</b> vulnerability panel; and a local <b>analysis history</b> of every capture you have run.</sub>
 </td>
 </tr>
 </table>
-
-<div align="center"><sub>…plus an <b>AI SOC copilot</b>, a <b>live-capture monitor</b>, a version-aware <b>NVD/CVE + CISA-KEV</b> panel, a timeline, and analysis history — all in the browser.</sub></div>
 
 ---
 
@@ -307,8 +328,10 @@ packetiq <command> [options]
 **Everything PacketIQ can do is in the browser — no terminal required.** A modern FastAPI single-page app with real-time WebSocket progress:
 
 - **Drag-and-drop upload** — `.pcap` / `.pcapng` / `.cap`, a Zeek `conn.log`, a **NetFlow/IPFIX export**, **or 2+ captures for a fused campaign**
-- **Risk dashboard** — score, severity breakdown, protocol mix, top talkers
-- **Interactive connection graph** — force-directed, draggable, color-coded (internal / external / flagged)
+- **Risk dashboard** — score, severity breakdown, protocol mix, top talkers, and the predicted follow-on attacks
+- **Possible Attacks** panel — a **threat forecast**: what the capture is *exposed to*, inferred from the services and behaviour actually observed, each prediction carrying the evidence that produced it, why it follows, the recommended action and its MITRE techniques. Explicitly a prediction, never reported as an event — and it stays quiet on a benign capture
+- **Interactive connection graph** — force-directed and draggable, drawn at **device level from link-layer evidence**: one node per NIC that actually transmitted, colour-coded attacker / target / internal / gateway-infra, with scan and attack edges. Addresses that were only ever *probed* are left out rather than drawn as hosts that may not exist
+- **Assets** panel — a **device inventory** (MAC, OUI vendor, inferred role, protocols, packet counts) beside passive **TTL-based OS fingerprints** with hop distance and internal/external scope
 - **Packet inspector** — browse **every packet** with search; click any packet to see its layer/field tree + hex (Wireshark-style, but friendly), and **"Explain with AI"**. Protocol + Info columns are decided by **payload inspection like Wireshark** (a bare SYN on :80 reads "TCP", a real handshake reads "TLS 1.2 Client Hello", etc.), not by port alone
 - **Threat events** table with evidence, confidence, a **precision grade** (Confirmed/High/Probable/Tentative) and an expandable **"Why was this flagged?"** panel (what · why · evidence · recommended action · MITRE), plus a **per-finding evidence-PCAP download (⬇)**
 - **Attack chains** with a **visual kill-chain pipeline**, a **MITRE ATT&CK coverage heatmap**, and a one-click **ATT&CK Navigator layer** export
@@ -319,7 +342,7 @@ packetiq <command> [options]
 - **Vulnerabilities** panel — one-click assessment that maps each host's observed software → **CPE** → **real NVD CVEs** (version-aware) → **CVSS** → **CISA KEV** (actively-exploited) → a vulnerability risk score, and **correlates observed exploit attempts against the target's real software** (attack seen + target vulnerable). All data from NVD + CISA; encrypted traffic exposes no banners
 - **History** panel — every past analysis, recorded locally
 - **Live Monitor** panel — pick an interface, watch **every packet + findings** stream live, **download the captured PCAP**, or **"Stop & Analyze"** to run the full report on it. First run needs capture rights — a **"🔓 Enable live capture (one-time)"** button does the OS setup for you (one password prompt), so no per-run `sudo` afterwards
-- **Timeline** with an activity sparkline
+- **Timeline** — an activity-density bar beside the reconstructed sequence: kill-chain phase transitions, chain starts, individual findings and the silent gaps between bursts
 - **AI copilot** chat panel (streaming, optional)
 
 > **100% feature parity with the CLI.** Single & multi-capture analysis, Zeek logs, NetFlow/IPFIX exports, live capture, SIGMA / STIX / MISP / HTML / AI reports, evidence PCAPs, threat-intel feeds, history, and alerts are all driveable from the browser — the CLI just shares the same engine for scripting/CI.
@@ -403,27 +426,31 @@ which measures all three local models on the same capture.
 ## 📐 Architecture
 
 ```
-            ┌──────────── INPUTS ────────────┐
-            │  PCAP / PCAPng   Zeek conn.log  │
-            │        Live interface (sniff)   │
-            └────────────────┬────────────────┘
-                             ▼
-        Parser ──▶ Extractor (flows, DNS/HTTP, TCP state)
-                             │
-                             ▼
+        ┌──────────────────── INPUTS ────────────────────┐
+        │  PCAP / PCAPng / cap        Zeek conn.log      │
+        │  NetFlow v5 / v9 / IPFIX    Live interface     │
+        └───────────────────────┬────────────────────────┘
+                                ▼
+    Parser ──▶ Extractor (flows, DNS/HTTP, TCP state, MAC devices)
+                                │
+                                ▼
    ┌──────────────── Detection Engine (sequential) ─────────────────┐
-   │ brute force · port/host/stealth scan · C2 beacon · DNS anomaly  │
-   │ ICMP tunnel · credential exposure · protocol misuse · HTTP atk  │
-   │ JA3/JA4 · TLS certs · file carving+YARA · IOC enrichment · OSfp │
+   │ brute force · port/host/stealth scan · ARP scan+spoof · DoS    │
+   │ C2 beacon · DNS anomaly · ICMP tunnel · credential exposure    │
+   │ protocol misuse · suspicious flags · HTTP attack · JA3/JA4     │
+   │ TLS certs · file carving+YARA · IOC enrichment · passive OSfp  │
    └────────────────────────────┬───────────────────────────────────┘
-                                 ▼
+                                ▼
    Correlation (8 rules) ─▶ MITRE ATT&CK + kill chain · TTP overlap · risk 0–100
-                                 │
-       ┌─────────────────────────┼─────────────────────────────┐
-       ▼                         ▼                              ▼
-  Terminal UI            Web app / dashboard            Exports & alerts
-  (rich tables)          (FastAPI + WS + graph)   SIGMA · STIX · MISP · HTML
-                          + AI copilot            evidence PCAP · Telegram/Slack
+                                │
+                                ▼
+   Threat forecast ─▶ what this exposure leads to next, with its evidence
+                                │
+       ┌────────────────────────┼─────────────────────────────┐
+       ▼                        ▼                             ▼
+  Terminal UI           Web app / dashboard           Exports & alerts
+  (rich tables)         (FastAPI + WS + graph)   SIGMA · STIX · MISP · HTML
+                         + AI copilot            evidence PCAP · Telegram/Slack
 ```
 
 ---
@@ -631,6 +658,6 @@ MIT © 2025 Jatin Kumar — see [`LICENSE`](LICENSE).
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:3b82f6,100:0b0f1a&height=100&section=footer&animation=fadeIn" width="100%" alt="Footer"/>
 
-<sub>Made with ❤️ and a lot of PCAP files · PacketIQ v1.0.0 · MIT License</sub>
+<sub>Made with ❤️ and a lot of PCAP files · PacketIQ v1.0.0, released 2026-08-11 · <a href="CHANGELOG.md">Release notes</a> · MIT License</sub>
 
 </div>

@@ -43,6 +43,21 @@ Every document in the repository checked claim by claim against what the code an
 the captures actually do. Where a number could be re-measured, it was.
 
 **Fixed**
+- **The README's screenshots were a month behind the app, and two of its
+  descriptions had become false.** Every image was recaptured from the running web
+  app at the release commit. The drift they were hiding was not cosmetic: the whole
+  **Possible Attacks** panel and its dashboard card did not exist when the old images
+  were taken, nor did the per-finding evidence-PCAP download in the events table, and
+  the protocol breakdown still showed everything as bare TCP/UDP/ICMP rather than
+  naming SSH, FTP, SMB, SMTP and Telnet. Worse, the README described the connection
+  graph as "colour-coded internal / external / flagged" when it had been rebuilt as a
+  **device-level** graph — one node per NIC that actually transmitted, coloured
+  attacker / target / internal / gateway — and never mentioned the Assets panel at
+  all. Both are now documented, and the tour covers twelve panels instead of eight.
+  The device-level views are shot on `donbot.pcap`, a real Stratosphere CTU-13 botnet
+  capture, and labelled as such: the bundled synthetic demo capture emits every host
+  from one hardware address, so a device graph of it correctly collapses to a single
+  node and would have shown the panel doing its job while looking broken.
 - **A documented command that did not exist — resolved in the code, not the prose.**
   `docs/RELEASE.md` told the reader to verify an install with `packetiq --version`,
   which exited with `Error: No such option '--version'`. The first pass corrected the
@@ -92,9 +107,12 @@ the captures actually do. Where a number could be re-measured, it was.
   `copilot_faithfulness_comparison.md`, which was tracked only by the accident of
   predating the ignore rule.
 - **The README understated its own threat-intel corpus.** "7,600+ indicators" against
-  a measured **8,398** shipped (8,301 feed entries + 97 JA3 fingerprints); the floor
-  now reads 8,300+. Its description of them as "live" is now accurate about being a
-  bundled snapshot that `packetiq feeds update` refreshes.
+  a measured **8,398** shipped (8,301 feed entries + 97 JA3 fingerprints). It now
+  states that exact figure rather than a floor, because it is quoted beside a
+  screenshot of the feeds panel and a reader can count it. Its description of them as
+  "live" is now accurate about being a bundled snapshot that `packetiq feeds update`
+  refreshes. `tests/test_project_metadata_sync.py` accepts either form and still fails
+  in the one direction that matters — a claim the shipped feeds cannot back.
 - **A footgun in the dataset guide.** `datasets/README.md` told users to point their
   own validation run at `reports/detection_real.md`, which `--markdown` overwrites
   wholesale. It also never said that a manifest's `base_dir` resolves relative to the

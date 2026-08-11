@@ -257,7 +257,14 @@ def test_the_readme_detector_module_count_matches_the_package():
 
 
 def test_the_readme_never_claims_more_indicators_than_the_feeds_hold():
-    """`7,600+` is a floor, so it may only ever be under the real count.
+    """The README's indicator count may only ever be at or under the real one.
+
+    Both forms are accepted — a floor (`8,300+`) and the exact bundled total
+    (`8,398`) — because the README states the exact figure now that it is quoted
+    beside a screenshot of the feeds panel. The `+` is therefore optional in the
+    pattern; what is not optional is the direction of the comparison, so a
+    bundled snapshot that ever shrinks fails here rather than leaving the README
+    overclaiming.
 
     Counted the way the app's own feeds panel counts: per-feed entries as
     ingested, plus the JA3 fingerprint blocklist.
@@ -266,10 +273,10 @@ def test_the_readme_never_claims_more_indicators_than_the_feeds_hold():
     from packetiq.enrichment.feeds import load_store
 
     real = sum(load_store().counts.values()) + len(load_blocklist())
-    claimed = {int(n.replace(",", "")) for n in re.findall(r"`?([\d,]+)\+`?\s*(?:live )?(?:threat-intel )?indicators", _readme())}
+    claimed = {int(n.replace(",", "")) for n in re.findall(r"`?([\d,]+)\+?`?\*{0,2}\s*(?:live )?(?:threat-intel )?indicators", _readme())}
     assert claimed, "the README no longer states an indicator count"
     for n in claimed:
-        assert n <= real, f"README claims {n:,}+ indicators; the feeds hold {real:,}"
+        assert n <= real, f"README claims {n:,} indicators; the feeds hold {real:,}"
 
 
 # ── 5. The container build <-> the files it copies ───────────────────────────
