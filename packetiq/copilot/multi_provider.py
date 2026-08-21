@@ -19,12 +19,25 @@ from typing import Callable
 class MultiProviderClient:
     """Drop-in replacement for CopilotClient that speaks to all providers."""
 
-    def __init__(self, provider: str = "auto"):
+    def __init__(self, provider: str = "auto", model: str = ""):
         # Imported lazily so importing the copilot package stays light.
+        import os
+
         from packetiq.webapp import app as webapp
         self._w = webapp
         if provider and provider not in ("auto", ""):
             webapp._AI_FORCED["provider"] = provider
+        if model:
+            # Same pin the web UI's model picker writes, so `--model` and the GUI
+            # selector are one mechanism: without it the local runtime is free to
+            # answer with whichever model it picked, which on a small machine may
+            # be one far too large to run at a usable speed. With no `--provider`
+            # the pin lands on whichever provider is about to be used, so the flag
+            # never silently configures one the run won't touch.
+            target = (provider if provider and provider not in ("auto", "")
+                      else webapp._detect_provider()["provider"])
+            if target:
+                os.environ[webapp._model_env_name(target)] = model
         self._context: str = ""
         self._system: str | None = None
 

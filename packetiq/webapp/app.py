@@ -11,6 +11,7 @@ Provides:
 
 import asyncio
 import contextlib
+import ctypes
 import io
 import ipaddress
 import json
@@ -1337,9 +1338,67 @@ _OLLAMA_DEFAULT_MODEL = "qwen2.5:7b-instruct"
 # Any fixed value works; what matters is that it does not change between runs.
 _OLLAMA_DEFAULT_SEED = 42
 # Cached reachability probe so we don't hit the daemon on every request.
-_OLLAMA_PROBE: dict = {"at": 0.0, "up": False, "models": []}
+# `models` is the name list; `info` maps name -> the daemon's own size and detail
+# fields, which is what lets the UI show what a model will cost in RAM.
+_OLLAMA_PROBE: dict = {"at": 0.0, "up": False, "models": [], "info": {}}
 # Models we've already fired a warm-up load for (once per process, per model).
 _OLLAMA_WARMED: set = set()
+
+# Fraction of physical RAM a local model may occupy. Ollama holds the weights
+# resident and adds a KV cache for the context window, while the OS, the browser
+# and PacketIQ itself still need room. Past roughly 60% a laptop starts swapping
+# and a reply that took seconds takes minutes — which is exactly the failure the
+# model picker exists to prevent.
+_RAM_BUDGET_FRACTION = 0.6
+
+
+class _MemoryStatusEx(ctypes.Structure):
+    """Windows MEMORYSTATUSEX — the struct GlobalMemoryStatusEx fills in."""
+
+    _fields_ = [
+        ("dwLength",                ctypes.c_ulong),
+        ("dwMemoryLoad",            ctypes.c_ulong),
+        ("ullTotalPhys",            ctypes.c_ulonglong),
+        ("ullAvailPhys",            ctypes.c_ulonglong),
+        ("ullTotalPageFile",        ctypes.c_ulonglong),
+        ("ullAvailPageFile",        ctypes.c_ulonglong),
+        ("ullTotalVirtual",         ctypes.c_ulonglong),
+        ("ullAvailVirtual",         ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
+
+
+def _ram_bytes_windows() -> int:
+    """Physical RAM via GlobalMemoryStatusEx, or 0 if the call fails."""
+    stat = _MemoryStatusEx()
+    stat.dwLength = ctypes.sizeof(_MemoryStatusEx)
+    if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):  # type: ignore[attr-defined]
+        return int(stat.ullTotalPhys)
+    return 0
+
+
+def _system_ram_bytes() -> Optional[int]:
+    """Total physical RAM in bytes, or None when the platform will not say.
+
+    Read from the OS rather than guessed, because it is the number that decides
+    whether a given local model runs or thrashes. No new dependency for it: POSIX
+    (Linux, macOS) reports it through sysconf, Windows through GlobalMemoryStatusEx.
+    """
+    with contextlib.suppress(Exception):        # Linux, macOS
+        total = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+        if total > 0:
+            return int(total)
+    with contextlib.suppress(Exception):        # Windows
+        total = _ram_bytes_windows()
+        if total > 0:
+            return total
+    return None
+
+
+def _ram_budget_bytes() -> Optional[int]:
+    """How much RAM a local model may reasonably use, or None if RAM is unknown."""
+    total = _system_ram_bytes()
+    return int(total * _RAM_BUDGET_FRACTION) if total else None
 
 
 def _ollama_host() -> str:
@@ -1357,22 +1416,37 @@ def _ollama_enabled() -> bool:
 
 
 def _ollama_probe(force: bool = False) -> dict:
-    """Reachability + installed-model probe of the local Ollama daemon (30s cache)."""
+    """Reachability + installed-model probe of the local Ollama daemon (30s cache).
+
+    Keeps the daemon's own `size` and `details` for each model alongside the name:
+    a model's weight file is very close to what it will occupy in RAM, so this is
+    the real number the picker needs to tell an 0.5B apart from a 70B.
+    """
     import time
     now = time.time()
     if not force and (now - _OLLAMA_PROBE["at"]) < 30 and _OLLAMA_PROBE["at"]:
         return _OLLAMA_PROBE
-    up, models = False, []
+    up, models, info = False, [], {}
     if _ollama_enabled():
         try:
             import httpx
             r = httpx.get(_ollama_host() + "/api/tags", timeout=1.5)
             if r.status_code == 200:
                 up = True
-                models = [m.get("name", "") for m in (r.json().get("models") or []) if m.get("name")]
+                for m in (r.json().get("models") or []):
+                    name = m.get("name") or ""
+                    if not name:
+                        continue
+                    details = m.get("details") or {}
+                    models.append(name)
+                    info[name] = {
+                        "size":           int(m.get("size") or 0),
+                        "parameter_size": str(details.get("parameter_size") or ""),
+                        "quantization":   str(details.get("quantization_level") or ""),
+                    }
         except Exception:  # noqa: BLE001 — daemon down / not installed
-            up, models = False, []
-    _OLLAMA_PROBE.update(at=now, up=up, models=models)
+            up, models, info = False, [], {}
+    _OLLAMA_PROBE.update(at=now, up=up, models=models, info=info)
     return _OLLAMA_PROBE
 
 
@@ -1380,17 +1454,44 @@ def _ollama_available() -> bool:
     return _ollama_probe()["up"]
 
 
+def _ollama_model_size(name: str) -> int:
+    """On-disk size of an installed model in bytes (0 when the daemon didn't say)."""
+    info = _ollama_probe().get("info") or {}
+    return int((info.get(name) or {}).get("size") or 0)
+
+
 def _ollama_model() -> str:
-    """Resolve the model to use: OLLAMA_MODEL if set (and honoured even if the
-    probe list is stale), else the default if pulled, else the first pulled model."""
+    """Resolve the local model to use.
+
+    An explicit choice always wins — OLLAMA_MODEL, which is what the in-app model
+    picker and .env both write — and is honoured even if the probe list is stale.
+
+    Without one, pick *deterministically*. This used to fall through to
+    ``models[0]``, i.e. whichever model the daemon happened to list first, so
+    pulling any new model silently changed which one answered and a 70B could end
+    up serving a 8 GB laptop: minutes per reply, or an out-of-memory failure. Now
+    the tuned default wins when it is installed and fits the RAM budget, otherwise
+    the largest installed model that fits, otherwise the smallest one installed.
+    Erring small is deliberate — an oversized model swaps, while an undersized one
+    is merely less eloquent, and the grounding guardrail holds either way.
+    """
     env = _read_env()
     want = (os.environ.get("OLLAMA_MODEL") or env.get("OLLAMA_MODEL") or "").strip()
-    models = _ollama_probe().get("models") or []
     if want:
         return want
-    if _OLLAMA_DEFAULT_MODEL in models:
+    models = _ollama_probe().get("models") or []
+    if not models:
         return _OLLAMA_DEFAULT_MODEL
-    return models[0] if models else _OLLAMA_DEFAULT_MODEL
+    budget = _ram_budget_bytes()
+    if _OLLAMA_DEFAULT_MODEL in models and (
+            budget is None or _ollama_model_size(_OLLAMA_DEFAULT_MODEL) <= budget):
+        return _OLLAMA_DEFAULT_MODEL
+    # Name breaks ties so two equal-sized models can't swap places between runs.
+    ordered = sorted(models, key=lambda n: (_ollama_model_size(n), n))
+    if budget is None:
+        return ordered[0]
+    affordable = [n for n in ordered if _ollama_model_size(n) <= budget]
+    return affordable[-1] if affordable else ordered[0]
 
 
 def _ollama_keep_alive() -> str:
@@ -1577,6 +1678,59 @@ def _next_model(provider: str, current: str) -> str:
     return ""
 
 
+def _model_env_name(provider: str) -> str:
+    """The env var that pins a provider's model. Also read by `_model_for`/`_ollama_model`."""
+    return f"{provider.upper()}_MODEL"
+
+
+def _model_pin(provider: str) -> str:
+    """The model the user has pinned for `provider`, or '' when it is automatic."""
+    envname = _model_env_name(provider)
+    return (os.environ.get(envname) or _read_env().get(envname) or "").strip()
+
+
+def _model_options(provider: str) -> list:
+    """Models the UI may offer for `provider`, each with whatever real facts we have.
+
+    For Ollama that is the daemon's installed list with its own size and detail
+    fields, so the user can pick one their machine can actually hold. For the cloud
+    providers it is the candidate list this code already knows how to call, plus
+    the provider's declared default — nothing invented. A pinned model that is not
+    in either list is still listed, so a hand-set OLLAMA_MODEL/GEMINI_MODEL shows
+    up as the current selection instead of silently disappearing from the picker.
+    """
+    pinned = _model_pin(provider)
+    out: list = []
+    if provider == "ollama":
+        probe = _ollama_probe()
+        info = probe.get("info") or {}
+        budget = _ram_budget_bytes()
+        for name in sorted(probe.get("models") or [], key=lambda n: (_ollama_model_size(n), n)):
+            meta = info.get(name) or {}
+            size = int(meta.get("size") or 0)
+            out.append({
+                "name":           name,
+                "size_bytes":     size,
+                "parameter_size": meta.get("parameter_size", ""),
+                "quantization":   meta.get("quantization", ""),
+                # None = we could not read this machine's RAM, so we make no claim.
+                "fits_ram":       None if (budget is None or not size) else size <= budget,
+                "installed":      True,
+            })
+    else:
+        seen = set()
+        for name in (_MODEL_CANDIDATES.get(provider, [])
+                     + [m for n, _, m in _PROVIDER_SPECS if n == provider]):
+            if name and name not in seen:
+                seen.add(name)
+                out.append({"name": name, "size_bytes": 0, "parameter_size": "",
+                            "quantization": "", "fits_ram": None, "installed": True})
+    if pinned and not any(o["name"] == pinned for o in out):
+        out.append({"name": pinned, "size_bytes": 0, "parameter_size": "",
+                    "quantization": "", "fits_ram": None, "installed": False})
+    return out
+
+
 def _detect_provider(skip: Optional[set] = None) -> dict:
     """
     Pick the AI provider to use. Honours a manual GUI override (_AI_FORCED) and,
@@ -1629,17 +1783,29 @@ def _ai_status_payload() -> dict:
     # user's first query doesn't wait on a cold model load.
     if probe["up"] and _ollama_should_warm():
         _ollama_warm(_ollama_model(), _ollama_host())
+    ram_total = _system_ram_bytes()
     return {
         "available": bool(configured),
         "mode": "auto" if not _AI_FORCED.get("provider") else "manual",
         "forced": _AI_FORCED.get("provider"),
         "active": active["provider"],
+        "active_model": active["model"],
         "providers": [
             {"name": n, "label": _AI_LABEL.get(n, n),
              "configured": n in configured, "cooldown": _cooldown_left(n),
-             "needs_key": n != "ollama", "key_hint": _key_hint(n)}
+             "needs_key": n != "ollama", "key_hint": _key_hint(n),
+             # Which model this provider would use right now, whether the user
+             # pinned it, and what else they could pick.
+             "model": _ollama_model() if n == "ollama" else _model_for(n),
+             "model_pinned": bool(_model_pin(n)),
+             "models": _model_options(n)}
             for n, _, _ in _PROVIDER_SPECS
         ],
+        # Real physical RAM, so the picker can say which local models fit instead
+        # of leaving the user to guess. null when the platform will not report it.
+        "ram": {"total_bytes": ram_total,
+                "budget_bytes": _ram_budget_bytes(),
+                "budget_fraction": _RAM_BUDGET_FRACTION},
         # Offline local-LLM status so the UI can guide the user without a key.
         "ollama": {
             "available": probe["up"],
@@ -2968,6 +3134,46 @@ def create_app() -> FastAPI:
             _AI_COOLDOWN.pop(prov, None)   # user explicitly chose it — clear any cooldown
         else:
             raise HTTPException(400, f"Unknown provider '{prov}'. Use auto/{'/'.join(names)}.")
+        return _ai_status_payload()
+
+    @app.post("/api/ai/model")
+    async def ai_set_model(request: Request):
+        """Pin the model a provider uses, or clear the pin to go back to automatic.
+
+        Applies immediately (no restart) and, unless persist=false, is written to
+        ./.env as <PROVIDER>_MODEL so the choice survives one. This is what stops
+        the local runtime from picking a different — possibly much larger and much
+        slower — model than the one the machine can comfortably run.
+        """
+        body = await request.json()
+        prov = (body.get("provider") or "").strip().lower()
+        model = (body.get("model") or "").strip()
+        persist = body.get("persist", True)
+        names = [n for n, _, _ in _PROVIDER_SPECS]
+        if prov not in names:
+            raise HTTPException(400, f"Unknown provider '{prov}'. Use {'/'.join(names)}.")
+        envname = _model_env_name(prov)
+        if not model:                       # empty = back to automatic selection
+            os.environ.pop(envname, None)
+            if persist:
+                with contextlib.suppress(OSError):
+                    _env_remove(envname)
+            return _ai_status_payload()
+        if len(model) > 200 or "\n" in model or "\r" in model:
+            raise HTTPException(400, "That does not look like a valid model name.")
+        if prov == "ollama":
+            # Only offer what is actually pulled — otherwise the first question
+            # gets a 404 from the daemon instead of an answer.
+            installed = _ollama_probe(force=True).get("models") or []
+            if model not in installed:
+                raise HTTPException(400, f"Ollama has no model '{model}'. "
+                                         f"Pull it first: `ollama pull {model}`.")
+        os.environ[envname] = model
+        if persist:
+            with contextlib.suppress(OSError):
+                _env_upsert(envname, model)  # runtime pin still works without the file
+        # The user asked for this model by name — un-bench it if a past call failed.
+        _MODEL_DEAD.discard(f"{prov}:{model}")
         return _ai_status_payload()
 
     @app.post("/api/ai/key")

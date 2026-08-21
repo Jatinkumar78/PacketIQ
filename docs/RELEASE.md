@@ -35,8 +35,8 @@ macOS 26.6.1 arm64 / CPython 3.12.13:
 |---|---|
 | `ruff check packetiq tools tests` | clean |
 | `mypy packetiq` | clean, 83 source files |
-| `pytest` with `--cov-fail-under=100` | **1,756 passed**, 100.00% of 9,861 statements |
-| `bandit -r packetiq --severity-level low --confidence-level low` | no issues at any severity, 16,864 lines |
+| `pytest` with `--cov-fail-under=100` | **1,802 passed**, 100.00% of 9,971 statements |
+| `bandit -r packetiq --severity-level low --confidence-level low` | no issues at any severity, 17,056 lines |
 | `pip-audit` (runtime closure, fresh venv) | no known vulnerabilities |
 | `pip-audit` (dev closure, fresh venv) | 1 advisory — `diskcache`, unfixable upstream, advisory-only |
 | Guardrail invariant tests | 26 passed (0 ungrounded entities) |

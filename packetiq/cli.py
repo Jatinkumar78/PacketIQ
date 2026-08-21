@@ -23,6 +23,11 @@ from packetiq.extractor.data_extractor import DataExtractor
 from packetiq.parser.pcap_parser import PCAPParser
 from packetiq.utils.helpers import UNSPECIFIED_IPV4, format_bytes, format_duration
 
+# Choices for `--provider` on the AI commands. "auto" keeps the existing
+# behaviour (first configured provider, switching away from a rate-limited one);
+# naming one pins it, which is what you want when a specific model must answer.
+_AI_PROVIDERS = ["auto", "gemini", "groq", "anthropic", "ollama"]
+
 
 def _run_pipeline(pcap_path: Path, ui: TerminalUI, quiet: bool = False) -> tuple:
     """
@@ -649,7 +654,12 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
               help="Output file path for the report (default: report_<name>_<ts>.md).")
 @click.option("--alert/--no-alert", default=False,
               help="Send Telegram alerts + attach report file after generation.")
-def report(pcap_file: str, out: str, alert: bool):
+@click.option("--provider", type=click.Choice(_AI_PROVIDERS), default="auto",
+              show_default=True, help="AI provider to use.")
+@click.option("--model", default="", metavar="NAME",
+              help="Pin the model (e.g. qwen2.5:3b). Local models: `ollama list`. "
+                   "Pick one that fits your RAM — a larger model is slower.")
+def report(pcap_file: str, out: str, alert: bool, provider: str, model: str):
     """
     Run full analysis and generate an AI SOC report.
 
@@ -657,6 +667,7 @@ def report(pcap_file: str, out: str, alert: bool):
     Example:
         packetiq report capture.pcap
         packetiq report capture.pcap --out /tmp/incident_report.md
+        packetiq report capture.pcap --provider ollama --model qwen2.5:3b
         packetiq report capture.pcap --alert
     """
     from packetiq.copilot import build_context
@@ -667,7 +678,7 @@ def report(pcap_file: str, out: str, alert: bool):
 
     ui.print_section("AI SOC REPORT GENERATION", "Gemini / Groq / Anthropic / local Ollama")
 
-    client = MultiProviderClient()
+    client = MultiProviderClient(provider=provider, model=model)
     if not client.available():
         ui.print_status(
             "No AI provider available. Add a free GEMINI_API_KEY or GROQ_API_KEY to "
@@ -722,13 +733,19 @@ def report(pcap_file: str, out: str, alert: bool):
 
 @main.command("chat")
 @click.argument("pcap_file", type=click.Path(exists=True, readable=True))
-def chat(pcap_file: str):
+@click.option("--provider", type=click.Choice(_AI_PROVIDERS), default="auto",
+              show_default=True, help="AI provider to use.")
+@click.option("--model", default="", metavar="NAME",
+              help="Pin the model (e.g. qwen2.5:3b). Local models: `ollama list`. "
+                   "Pick one that fits your RAM — a larger model is slower.")
+def chat(pcap_file: str, provider: str, model: str):
     """
     Run full analysis then open an AI chat session about the PCAP.
 
     \b
     Example:
         packetiq chat capture.pcap
+        packetiq chat capture.pcap --provider ollama --model qwen2.5:3b
     """
     from packetiq.copilot import InteractiveChat, build_context
     from packetiq.copilot.multi_provider import MultiProviderClient
@@ -738,7 +755,7 @@ def chat(pcap_file: str):
 
     ui.print_section("AI COPILOT", "loading analysis context")
 
-    client = MultiProviderClient()
+    client = MultiProviderClient(provider=provider, model=model)
     if not client.available():
         ui.print_status(
             "No AI provider available. Add a free GEMINI_API_KEY or GROQ_API_KEY to "

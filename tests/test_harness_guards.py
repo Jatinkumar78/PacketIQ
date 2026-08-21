@@ -2,8 +2,8 @@
 
 Each guard exists because something about the machine — a real bot token,
 capture rights, a running Ollama, a Thunderbolt bridge, a NIC's hardware
-address, the width of a terminal — quietly changed what the suite did, and the
-difference only showed up as a CI failure hours later. A guard that silently
+address, the width of a terminal, how much memory is installed — quietly changed
+what the suite did, and the difference only showed up as a CI failure hours later. A guard that silently
 stops applying recreates exactly that situation, and on the machine where it
 matters least: the workstation that has the privilege in the first place.
 
@@ -21,7 +21,7 @@ from scapy.layers.inet import IP
 from scapy.layers.inet6 import IPv6
 from scapy.layers.l2 import Ether
 
-from .conftest import FIXED_INTERFACES, FIXED_SOURCE_MAC
+from .conftest import FIXED_INTERFACES, FIXED_RAM_BYTES, FIXED_SOURCE_MAC
 
 
 def test_each_test_gets_its_own_history_database(tmp_path):
@@ -90,6 +90,19 @@ def test_a_frame_carries_the_fixed_source_mac():
     """
     frame = bytes(Ether() / IP(src="10.0.0.1", dst="10.0.0.2"))
     assert ":".join(f"{b:02x}" for b in frame[6:12]) == FIXED_SOURCE_MAC
+
+
+def test_the_machine_reports_a_fixed_amount_of_ram():
+    """`fixed_system_ram`: which local model is picked must not depend on the host.
+
+    The picker chooses between installed Ollama models by size against physical
+    memory, so a 64 GB desktop and a 4 GB runner take different arms of the same
+    function — the "nothing fits, fall back to the smallest" branch runs on one
+    and never on the other.
+    """
+    from packetiq.webapp import app as webapp
+
+    assert webapp._system_ram_bytes() == FIXED_RAM_BYTES
 
 
 def test_tables_render_at_a_fixed_width():

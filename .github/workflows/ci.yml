@@ -103,14 +103,15 @@ jobs:
       # is allowed to send and the macOS runner is not — and filling an unset
       # *source* MAC from whichever NIC the host happens to have.
       #
-      # Six guards in tests/conftest.py make that class impossible rather than
+      # Seven guards in tests/conftest.py make that class impossible rather than
       # merely fixed: every test gets its own history database, none may open a
       # socket, none may open a real capture device, none sees the machine's own
-      # interface list, none resolves a link-layer address on the wire, and every
-      # table renders at one fixed width. A path that depends on any of them has
-      # to be driven with a fixture, which is the only way its coverage means the
-      # same thing on every host. tests/test_harness_guards.py asserts all six
-      # are still in effect.
+      # interface list, none resolves a link-layer address on the wire, every
+      # table renders at one fixed width, and every test is told the machine has
+      # the same amount of RAM (the local-model picker branches on it). A path
+      # that depends on any of them has to be driven with a fixture, which is the
+      # only way its coverage means the same thing on every host.
+      # tests/test_harness_guards.py asserts all seven are still in effect.
       #
       # 3.9 is held at 100 like every other leg, and it is the strictest of them.
       # CPython 3.9 threads the conditional jump for each operand of a

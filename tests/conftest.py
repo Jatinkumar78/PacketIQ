@@ -243,6 +243,32 @@ def fixed_terminal_width(monkeypatch):
     monkeypatch.setenv("LINES", "25")
 
 
+# RAM every test sees, in place of whatever this machine has. 16 GiB is an
+# ordinary laptop, and it is big enough that the small fixture models used in the
+# suite fit inside the budget and small enough that an oversized one does not.
+FIXED_RAM_BYTES = 16 * 1024 ** 3
+
+
+@pytest.fixture(autouse=True)
+def fixed_system_ram(monkeypatch):
+    """Report one fixed amount of physical RAM instead of the host's.
+
+    The local-model picker sizes its choice against real RAM, so without this the
+    machine running the suite decides which branch of `_ollama_model` executes: on
+    a 64 GB desktop every fixture model fits and the "nothing fits, fall back to
+    the smallest" arm never runs, while a 4 GB runner takes the opposite path. That
+    is the same host-dependence the network, capture and interface guards above
+    exist to remove, and it would show up the same way — as a coverage number that
+    differs between two green runs.
+
+    Tests that care about a specific size still patch `_system_ram_bytes`
+    themselves; monkeypatch applies theirs after this one.
+    """
+    from packetiq.webapp import app as webapp
+
+    monkeypatch.setattr(webapp, "_system_ram_bytes", lambda: FIXED_RAM_BYTES)
+
+
 # The interface list every test sees, in place of whatever NICs this machine has.
 # One name per classification `_kind_for` can return, all suffixed `99` so none of
 # them can collide with a real adapter (and therefore with scapy's `conf.iface`,

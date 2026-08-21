@@ -1603,6 +1603,8 @@ tbody tr:hover td{background:var(--surface2)}
       <option value="anthropic">Anthropic</option>
       <option value="ollama">Local (Ollama)</option>
     </select>
+    <select id="ai-model-sel" onchange="setAIModel(this.value)" title="Choose which model answers"
+      style="display:none;max-width:210px;background:var(--bg-2,#11161c);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:12px"></select>
     <span id="ai-provider-active" style="color:var(--text-sub);flex:1"></span>
     <button onclick="openAiSettings()" title="Enter API keys / configure AI providers"
       style="background:var(--bg-2,#11161c);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 9px;font-size:12px;cursor:pointer;white-space:nowrap">Keys</button>
@@ -3452,7 +3454,51 @@ async function loadAIStatus(){
   try{ applyAIStatus(await (await fetch('/api/ai/status')).json()); }
   catch(e){ /* leave as-is */ }
 }
+/* Real numbers from Ollama's own /api/tags — decimal GB, the same unit
+   `ollama list` prints, so the two agree. */
+function fmtGB(b){ return (Number(b||0)/1e9).toFixed(1)+' GB'; }
+function modelSuffix(m){
+  const bits=[];
+  if(m.size_bytes) bits.push(fmtGB(m.size_bytes));
+  if(m.parameter_size) bits.push(m.parameter_size);
+  if(m.fits_ram===false) bits.push('over RAM budget');
+  if(!m.installed) bits.push('not installed');
+  return bits.length? ' · '+bits.join(' · ') : '';
+}
+/* The provider whose model list the picker is showing: the pinned one, else
+   whichever Auto is currently using. */
+function aiModelProvider(j){ return (j && (j.forced || j.active)) || null; }
+function fillModelSelect(j){
+  const sel=document.getElementById('ai-model-sel'); if(!sel) return;
+  const prov=aiModelProvider(j);
+  const p=(j.providers||[]).find(x=>x.name===prov);
+  if(!prov || !p || !(p.models||[]).length){ sel.style.display='none'; return; }
+  const ram=(j.ram||{}).total_bytes;
+  sel.style.display='';
+  sel.title='Model used by '+(AI_SHORT[prov]||prov)
+    +(ram? ' — this machine has '+fmtGB(ram)+' RAM; a model larger than the budget will swap and answer slowly.' : '');
+  let html='<option value="">Auto ('+esc(p.model||'—')+')</option>';
+  (p.models||[]).forEach(m=>{
+    html+='<option value="'+esc(m.name)+'">'+esc(m.name+modelSuffix(m))+'</option>';
+  });
+  sel.innerHTML=html;
+  sel.value=p.model_pinned ? (p.model||'') : '';
+}
+async function setAIModel(v){
+  const prov=aiModelProvider(AI_STATUS), act=document.getElementById('ai-provider-active');
+  if(!prov) return;
+  try{
+    const r=await fetch('/api/ai/model',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({provider:prov, model:v, persist:true})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
+    applyAIStatus(j);
+  }catch(e){ if(act){ act.textContent='✗ '+e.message; act.style.color='var(--critical)'; } loadAIStatus(); }
+}
+
+let AI_STATUS=null;
 function applyAIStatus(j){
+  AI_STATUS=j;
+  fillModelSelect(j);
   const sel=document.getElementById('ai-provider-sel'), act=document.getElementById('ai-provider-active');
   if(sel&&act){
     sel.value = j.forced || 'auto';
@@ -3488,6 +3534,31 @@ const AI_KEY_META = {
 function openAiSettings(){ const ov=document.getElementById('ai-settings-overlay'); if(ov){ ov.style.display='flex'; } setAiMsg(''); loadAIStatus(); }
 function closeAiSettings(){ const ov=document.getElementById('ai-settings-overlay'); if(ov) ov.style.display='none'; setAiMsg(''); }
 function setAiMsg(t, ok){ const m=document.getElementById('ai-settings-msg'); if(!m) return; m.textContent=t||''; m.style.color=ok?'var(--success)':'var(--high)'; }
+/* One model dropdown for a provider, used inside each settings card. Empty value
+   means "automatic" — the picker never hides what automatic would resolve to. */
+function modelPickerHtml(p){
+  if(!(p.models||[]).length) return '';
+  let html='<div style="display:flex;align-items:center;gap:6px;margin-top:8px">'
+    +'<span style="font-size:11px;color:var(--text-sub);white-space:nowrap">Model</span>'
+    +'<select onchange="setProviderModel(\''+p.name+'\',this.value)" '
+    +'style="flex:1;min-width:0;background:var(--bg-2,#11161c);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px">'
+    +'<option value=""'+(p.model_pinned?'':' selected')+'>Automatic ('+esc(p.model||'—')+')</option>';
+  (p.models||[]).forEach(m=>{
+    const on=(p.model_pinned && m.name===p.model)?' selected':'';
+    html+='<option value="'+esc(m.name)+'"'+on+'>'+esc(m.name+modelSuffix(m))+'</option>';
+  });
+  return html+'</select></div>';
+}
+async function setProviderModel(provider, model){
+  setAiMsg('Saving…', true);
+  try{
+    const r=await fetch('/api/ai/model',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({provider, model, persist:document.getElementById('ai-key-persist').checked})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
+    setAiMsg(model? ('✓ '+provider+' will use '+model+'.') : ('✓ '+provider+' model selection is automatic again.'), true);
+    applyAIStatus(j);
+  }catch(e){ setAiMsg('✗ '+e.message); loadAIStatus(); }
+}
 function renderAiSettings(j){
   const body=document.getElementById('ai-settings-body'); if(!body) return;
   let html='';
@@ -3505,17 +3576,29 @@ function renderAiSettings(j){
       +'style="flex:1;background:var(--bg-2,#11161c);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px">'
       +'<button onclick="saveAIKey(\''+p.name+'\')" class="btn btn-primary btn-sm">Save</button>'
       +(p.configured?'<button onclick="removeAIKey(\''+p.name+'\')" class="btn btn-secondary btn-sm" title="Remove key">✕</button>':'')
-      +'</div></div>';
+      +'</div>'
+      +(p.configured?modelPickerHtml(p):'')
+      +'</div>';
   });
-  const o=j.ollama||{};
+  const o=j.ollama||{}, ol=(j.providers||[]).find(p=>p.name==='ollama')||{};
+  const ram=(j.ram||{});
   const oStatus = o.available
-    ? '<span style="color:var(--success)">● Running</span> · model <code>'+esc(o.model||'')+'</code>'+((o.models&&o.models.length)?(' · '+o.models.length+' installed'):'')
+    ? '<span style="color:var(--success)">● Running</span>'+((o.models&&o.models.length)?(' · '+o.models.length+' model'+(o.models.length===1?'':'s')+' installed'):'')
     : '<span style="color:var(--text-sub)">○ Not running</span> — install <strong>Ollama</strong>, then <code>ollama pull qwen2.5:7b-instruct</code> &amp; <code>ollama serve</code>';
+  // Only claim a RAM budget when the OS actually told us the machine's RAM.
+  const ramLine = ram.total_bytes
+    ? '<div style="font-size:11px;color:var(--text-sub);margin-top:6px">This machine has '+esc(fmtGB(ram.total_bytes))
+      +' RAM, so a local model up to about '+esc(fmtGB(ram.budget_bytes))
+      +' runs comfortably. Larger models still work but swap, which can turn seconds into minutes.</div>'
+    : '';
   html+='<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px">'
     +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><strong style="font-size:13px">Local model (Ollama)</strong>'
     +'<span style="font-size:11px;color:var(--text-sub)">No key · fully offline · private</span>'
     +'<a href="https://ollama.com" target="_blank" rel="noopener" style="margin-left:auto;font-size:11px;color:var(--accent2,#7aa2f7)">Get Ollama ↗</a></div>'
-    +'<div style="font-size:12px;color:var(--text-sub)">'+oStatus+'</div></div>';
+    +'<div style="font-size:12px;color:var(--text-sub)">'+oStatus+'</div>'
+    +(o.available?modelPickerHtml(ol):'')
+    +(o.available?ramLine:'')
+    +'</div>';
   body.innerHTML=html;
 }
 async function saveAIKey(provider){

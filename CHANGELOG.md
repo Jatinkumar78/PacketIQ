@@ -17,11 +17,11 @@ CPython 3.12.13) rather than asserted:
 
 | | |
 |---|---|
-| Tests | **1,756 passing**, **100.00%** line coverage of **9,861** statements |
+| Tests | **1,802 passing**, **100.00%** line coverage of **9,971** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.9, 3.10, 3.11, 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean · `mypy` clean across **83** source files |
-| Static security | `bandit` at its strictest setting: **no issues at any severity** over **16,864** lines |
+| Static security | `bandit` at its strictest setting: **no issues at any severity** over **17,056** lines |
 | Dependencies | runtime closure: **zero** known advisories (blocking gate) |
 | Detection (real) | **100%** recall · **90.0%** precision · **94.7%** F1 on Stratosphere CTU-13 |
 | Detection (synthetic) | 100% recall · 100% precision, gated on every push |
@@ -36,6 +36,59 @@ inbound internet scanning. It is
 
 Everything below is the development record, newest first — the defects found, what
 each one actually broke, and how it was verified fixed.
+
+### The copilot's model is now a choice, not a lottery
+
+Reported against the AI Copilot: with several models pulled, the local runtime
+answered through a different one from run to run, and sometimes through one large
+enough to make the machine crawl. There was no way to say which model to use short
+of editing `.env` and restarting.
+
+**Fixed**
+- **The local model was picked by list order, so pulling anything changed which
+  one answered.** `_ollama_model()` preferred the tuned default when it was
+  installed and otherwise fell through to `models[0]` — the first entry of
+  Ollama's `/api/tags`, which is ordered by modification time. Pull a new model
+  and the copilot silently switched to it. On a machine with modest RAM that could
+  be a model several times too large, and an oversized model does not fail
+  cleanly: it loads, swaps, and answers minutes later. The pick is now
+  deterministic and sized against the machine's real memory — the tuned default if
+  it is installed *and* fits the RAM budget, else the largest installed model that
+  fits, else the smallest installed, with ties broken by name so two equal-sized
+  models cannot trade places between runs. Erring small is deliberate: an
+  undersized model is less eloquent, not less accurate, because the grounding
+  guardrail closes its indicator vocabulary to the evidence either way.
+- **Nothing in the product let a user choose the model.** `<PROVIDER>_MODEL` was
+  read from `.env` but only settable by hand, and only applied on restart —
+  precisely the workflow the in-app key entry had already replaced for API keys.
+  `POST /api/ai/model` now pins (or clears) a model for any provider, applies
+  immediately, and persists to `.env` unless asked not to. The AI Copilot panel
+  renders it as a dropdown beside the provider selector and inside *Keys*, and
+  `packetiq chat|report` gained `--provider` / `--model` so the CLI sets the same
+  pin. An Ollama model that is not pulled is refused with the `ollama pull`
+  command that would fix it, instead of being accepted and 404-ing on the first
+  question.
+
+**Added**
+- **Real numbers to choose against.** The daemon probe now keeps each model's
+  `size` and `details.parameter_size` alongside its name, and the picker shows
+  them — `llama3.2:3b · 2.0 GB · 3.2B` — beside this machine's physical RAM and
+  the 60% budget a resident model plus its KV cache can reasonably occupy. RAM is
+  read from the OS (`sysconf` on Linux and macOS, `GlobalMemoryStatusEx` on
+  Windows), never estimated; where the platform will not report it, no fit claim
+  is made anywhere in the UI.
+- **A conftest guard for host RAM.** The picker's branch now depends on physical
+  memory, which is exactly the kind of host fact that has made this project's
+  coverage differ between two green runs before (the network, capture and
+  interface guards each exist for the same reason). Every test now sees a fixed
+  16 GiB.
+
+**Verified** — 44 new tests covering both halves; suite **1,802 passing** at
+**100.00%** coverage of **9,971** statements; `ruff` and `mypy` clean. End to end
+against a real daemon: pinning `llama3.2:3b` in the web UI moved
+`/api/chat/{job}/status` to that model, and the copilot answered the demo capture
+through it. The pinned choice reached the daemon — Ollama's `/api/ps` showed the
+selected model loaded, not the previously auto-picked one.
 
 ### Documentation re-measured against the code, not re-read
 

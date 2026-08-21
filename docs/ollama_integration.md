@@ -182,6 +182,42 @@ Tunable via `OLLAMA_KEEP_ALIVE`, `OLLAMA_NUM_CTX`, `OLLAMA_MODEL`, `OLLAMA_HOST`
 `OLLAMA_SEED` (`random` restores sampling variety), and `PACKETIQ_ENABLE_OLLAMA=0`
 to disable the provider entirely.
 
+### 5b. Which model answers
+
+The single biggest lever on local latency is *which model runs*, and until now
+nothing let a user set it from the product. `_ollama_model()` fell through to
+`models[0]` — whatever `/api/tags` happened to list first, which is ordered by
+modification time. Pulling any new model therefore changed which model served the
+copilot, silently; and on a machine with modest RAM that could be one several
+times too large. An oversized model does not fail cleanly. It loads, swaps, and
+answers minutes later.
+
+Two changes:
+
+**The user can choose.** `POST /api/ai/model {provider, model, persist}` pins a
+model for any provider, applies immediately and writes `<PROVIDER>_MODEL` to
+`.env`. An empty `model` clears the pin. The AI Copilot panel renders it as a
+dropdown beside the provider selector, and the CLI exposes the same thing as
+`packetiq chat|report --provider ollama --model <name>`. For Ollama the offered
+list is the daemon's own installed list, with each model's real `size` and
+`details.parameter_size` from `/api/tags` shown against this machine's physical
+RAM — so the choice is made against numbers, not guesswork. A model that is not
+pulled is refused with the `ollama pull` command that would fix it, rather than
+being accepted and 404-ing on the first question.
+
+**Automatic became deterministic.** With no pin: the tuned default if it is
+installed *and* fits the RAM budget, else the largest installed model that fits,
+else the smallest installed (ties broken by name, so two equal-size models cannot
+trade places between runs). The budget is 60% of physical RAM — Ollama holds the
+weights resident and adds a KV cache for the context window, while the OS and the
+browser still need room. RAM is read from the OS (`sysconf` on Linux/macOS,
+`GlobalMemoryStatusEx` on Windows), never guessed; when the platform will not say,
+no fit claim is made anywhere in the UI and the automatic pick errs small.
+
+Erring small is the deliberate part. An undersized model is less eloquent; the
+grounding guardrail below means it is not less *accurate*, because the indicator
+vocabulary is closed to the evidence either way.
+
 ---
 
 ## 6. The interesting result: a small local model that does not hallucinate
