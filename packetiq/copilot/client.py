@@ -8,6 +8,8 @@ Features:
   - Graceful error handling with informative messages
 """
 
+import functools
+import inspect
 import os
 from typing import Any, Callable, Optional, cast
 
@@ -19,6 +21,29 @@ MODEL      = "claude-sonnet-4-6"
 MAX_TOKENS = 4096
 # Grounding: low temperature keeps explanations tied to the evidence, not creative.
 TEMPERATURE = float(os.environ.get("PACKETIQ_AI_TEMPERATURE", "0.15"))
+
+
+@functools.lru_cache(maxsize=1)
+def anthropic_supports_temperature() -> bool:
+    """Whether the installed Anthropic SDK still accepts `temperature`.
+
+    anthropic 1.0.0 removed it from the Messages API, and those methods take no
+    `**kwargs` — so passing it does not get ignored, it raises TypeError and the
+    provider stops answering. The declared floor is 0.40.0 and both majors are
+    installed in the wild, so ask the SDK that is actually here rather than
+    pinning users to the old major or inferring from a version string.
+
+    Where it is gone, the request runs at the API's own default temperature.
+    That changes how varied the prose is, not whether it is grounded: the
+    deterministic guardrail is what holds the indicator vocabulary to the
+    evidence, and it does not depend on sampling settings.
+    """
+    return "temperature" in inspect.signature(anthropic.resources.Messages.create).parameters
+
+
+def _sampling_kwargs() -> dict:
+    """The sampling parameters this SDK will accept — empty on anthropic >= 1.0."""
+    return {"temperature": TEMPERATURE} if anthropic_supports_temperature() else {}
 
 
 class CopilotClient:
@@ -85,9 +110,9 @@ class CopilotClient:
         with self._client.messages.stream(
             model       = MODEL,
             max_tokens  = MAX_TOKENS,
-            temperature = TEMPERATURE,
             system      = self._system,
             messages    = cast(Any, messages),
+            **_sampling_kwargs(),
         ) as stream:
             for chunk in stream.text_stream:
                 on_chunk(chunk)
@@ -106,9 +131,9 @@ class CopilotClient:
         response = self._client.messages.create(
             model       = MODEL,
             max_tokens  = MAX_TOKENS,
-            temperature = TEMPERATURE,
             system      = self._system,
             messages    = [{"role": "user", "content": prompt}],
+            **_sampling_kwargs(),
         )
         # Our prompts always lead with a text block, but the content union also
         # covers thinking/tool-use blocks — don't assume, and don't index empty.

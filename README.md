@@ -14,7 +14,7 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3b82f6?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![Scapy](https://img.shields.io/badge/Scapy-packet%20engine-ef4444?style=for-the-badge&logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-1802%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-1836%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![Coverage](https://img.shields.io/badge/coverage-100%25-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![GUI](https://img.shields.io/badge/100%25-GUI%20web%20app-3b82f6?style=for-the-badge&logo=googlechrome&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff%20clean-000000?style=for-the-badge&logo=ruff&logoColor=white)
@@ -45,7 +45,7 @@
 
 <br/><br/>
 
-**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`8,398`** threat-intel indicators · **`1,802`** tests · **`100%`** coverage · **`ruff`-clean**
+**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`8,398`** threat-intel indicators · **`1,836`** tests · **`100%`** coverage · **`ruff`-clean**
 
 </div>
 
@@ -158,7 +158,7 @@
 | Output | a wall of text | SIGMA (pySigma-valid), STIX, MISP, HTML report, evidence PCAP |
 | Inputs | PCAP only | **PCAP · Zeek conn.log · NetFlow/IPFIX · live capture** |
 | Detections | a few heuristics | **18 detection types** incl. JA4, TLS certs, YARA, file carving |
-| Trust | unverifiable claims | **1,802 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
+| Trust | unverifiable claims | **1,836 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
 | Interface | terminal | **100% GUI web app — double-click to launch** |
 
 ---
@@ -200,12 +200,12 @@ Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` — `
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev,yara,geoip]"                   # everything (tests, YARA, GeoIP)
-pytest                                                # run the 1,802-test suite
+pytest                                                # run the 1,836-test suite
 pytest --cov=packetiq --cov-report=term-missing      # with line-coverage report
 ```
 The CLI (`packetiq …`) is the same engine the web app uses — handy for scripting/CI, but not required.
 
-**Test coverage: 100%** — every one of the 9,971 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for **every supported interpreter, 3.9 through 3.12**, so a line can never ship untested.
+**Test coverage: 100%** — every one of the 10,049 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for **every supported interpreter, 3.9 through 3.12**, so a line can never ship untested.
 
 Coverage here is a property of the *suite*, not of the machine that runs it, and that distinction is enforced rather than assumed. Six rules are fixed in `tests/conftest.py`, and `tests/test_harness_guards.py` asserts each one still holds: a test gets its own history database, may not open a socket, may not open a real capture device, never sees the machine's own list of network interfaces, never resolves a link-layer address on the wire (neither the destination nor its own), and renders every table at one fixed width. Without those guards a workstation quietly flatters the number — a Mac with capture privileges really does start a live capture, a machine running `ollama serve` really does find an AI provider, a laptop with four Thunderbolt bridge adapters really does exercise the branch that ranks them, a Mac whose account may capture really does put the ARP request on the wire that scapy needs to finish building a packet, and a frame built with no source MAC really does carry the address of whichever NIC the host has. Every OS-specific and host-specific path — the macOS/Linux/Windows capture-privilege checks, the interface enumerator, the `tomllib`/`tomli` split, the whole `/api/live/*` lifecycle — is therefore driven from a fixture, so a line is covered on every matrix leg or on none. Verified by measuring the suite under simulated runner environments (Linux dispatch, denied capture socket, denied `/dev/bpf`, no local model, no external tools) on 3.9, 3.11 and 3.12: 100.00% in every one.
 
@@ -387,14 +387,22 @@ curl http://localhost:8080/api/sigma/<job>/rules.zip                # SIGMA rule
 
 ## 🤖 AI Copilot (optional)
 
-| Provider | Default model | Cost |
-|----------|---------------|------|
+| Provider | Starting model | Cost |
+|----------|----------------|------|
 | Google Gemini | `gemini-2.0-flash` | 🆓 free |
-| Groq | `llama-3.3-70b-versatile` | 🆓 free |
+| Groq | `openai/gpt-oss-120b` | 🆓 free |
 | Anthropic | `claude-sonnet-4-6` | 💳 paid |
 | Local Ollama | `qwen2.5:7b-instruct` | 🆓 free, offline |
 
-**Pick the model, don't be given one** — every provider has a **model dropdown** next to the provider selector in the AI Copilot panel (and in *Keys → Providers*), so you can choose which model answers instead of accepting whatever the runtime picked. The local list is read live from your Ollama daemon and shows each model's **real size and parameter count** next to your machine's RAM, because that is the choice that matters offline: a model larger than your memory does not fail, it swaps, and a question that took seconds takes minutes. Choosing applies immediately, is saved to `.env` as `<PROVIDER>_MODEL`, and works from the CLI too — `packetiq chat capture.pcap --provider ollama --model qwen2.5:3b`. Set it by hand with `GEMINI_MODEL`, `GROQ_MODEL`, `ANTHROPIC_MODEL` or `OLLAMA_MODEL` if you prefer. (Endpoint: `POST /api/ai/model`; send an empty model to go back to automatic.)
+These are starting points, not a catalogue — the real list is loaded from each provider (see below), and a model you pick there overrides them.
+
+**Pick the model, don't be given one** — every provider has a **model dropdown** next to the provider selector in the AI Copilot panel (and in *Keys → Providers*), so you can choose which model answers instead of accepting whatever the runtime picked. Choosing applies immediately, is saved to `.env` as `<PROVIDER>_MODEL`, and works from the CLI too — `packetiq chat capture.pcap --provider ollama --model qwen2.5:3b`. Set it by hand with `GEMINI_MODEL`, `GROQ_MODEL`, `ANTHROPIC_MODEL` or `OLLAMA_MODEL` if you prefer. (Endpoint: `POST /api/ai/model`; send an empty model to go back to automatic.)
+
+**Every name in that dropdown came from the provider, not from us** — opening the panel asks each configured provider's own models endpoint what *your key* can actually call, and lists exactly that, with the display name and context window the provider reports (`gemini-2.5-pro · 1M ctx · Gemini 2.5 Pro`, `openai/gpt-oss-120b · 128K ctx · OpenAI`). Measured on one real setup: **37 Gemini models, 9 Groq models, 3 local**. Entries the provider marks as something other than text-to-text — Whisper transcription, Orpheus speech — are dropped, because they cannot answer a chat request at all. The list is cached for 15 minutes and reloaded by the **Refresh** button or whenever a key changes. If a provider cannot be reached the panel says so and falls back to PacketIQ's built-in names, **labelled as built-in** rather than presented as confirmed — and any model you typed in yourself is shown as `unverified`. Endpoint: `POST /api/ai/models/refresh`.
+
+> This is not cosmetic. Groq retired `llama-3.3-70b-versatile`, which was this project's compiled-in default, and every Groq request began returning **404**. A hardcoded model list is a claim with a shelf life; the live catalogue is the provider's own answer, and `_model_for` now prefers it over any name compiled in here.
+
+**Local models are chosen against your actual RAM** — the local list is read from your Ollama daemon and shows each model's **real size and parameter count** next to your machine's memory, because that is the choice that matters offline: a model larger than your RAM does not fail, it swaps, and a question that took seconds takes minutes.
 
 **Automatic is deterministic** — with no model chosen, the local runtime used to fall through to whichever model the daemon happened to list first, so pulling anything new silently changed which model served the copilot. It now prefers the tuned default when it is installed and fits your RAM budget (60% of physical memory), then the largest installed model that fits, and otherwise the smallest one installed. Erring small is deliberate: an oversized model swaps, while an undersized one is only less eloquent — the grounding guardrail holds either way.
 
@@ -491,7 +499,7 @@ dga_entropy_threshold = 3.8   # bits/char to suspect a DGA
 
 ```bash
 pip install -e ".[dev]"
-pytest                 # 1,802 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
+pytest                 # 1,836 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
 ruff check packetiq tools tests
 ```
 
@@ -594,7 +602,7 @@ PacketIQ/
 │   ├── screenshots/               # README UI screenshots — real running web app
 │   └── assets/                    # images (bot avatar)
 ├── samples/generate_sample.py     # build a demo PCAP
-├── tests/                         # 1,802 pytest tests
+├── tests/                         # 1,836 pytest tests
 ├── .github/workflows/ci.yml       # CI (pytest + ruff + mypy)
 ├── PacketIQ.command · PacketIQ.bat · quickstart.sh   # double-click / one-command launchers
 ├── Dockerfile · docker-compose.yml

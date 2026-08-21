@@ -137,8 +137,17 @@ def test_a_streamed_answer_is_delivered_chunk_by_chunk_and_returned_whole(stub_s
 
 def test_the_streaming_request_pins_a_low_temperature(stub_sdk, monkeypatch):
     """Grounding depends on it: a creative temperature is how an LLM starts
-    describing findings the capture does not contain."""
+    describing findings the capture does not contain.
+
+    Only where the SDK still takes it. anthropic 1.0.0 removed `temperature`
+    from the Messages API and accepts no `**kwargs`, so sending it there raises
+    TypeError instead of being ignored — and what this request carries is decided
+    by which major is installed. Both answers are driven here so the assertion
+    means the same thing on every machine; the deterministic grounding guardrail,
+    not the sampler, is what actually holds the answer to the evidence.
+    """
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setattr(copilot_client, "anthropic_supports_temperature", lambda: True)
     c = copilot_client.CopilotClient()
     c.load_context("context")
     c.stream_message([{"role": "user", "content": "hi"}], lambda t: None)
@@ -147,6 +156,20 @@ def test_the_streaming_request_pins_a_low_temperature(stub_sdk, monkeypatch):
     assert kw["temperature"] == copilot_client.TEMPERATURE
     assert kw["temperature"] <= 0.3
     assert kw["model"] == copilot_client.MODEL
+
+
+def test_no_temperature_is_sent_to_an_sdk_that_no_longer_takes_one(stub_sdk, monkeypatch):
+    """The request must still go out — dropping the parameter, not the answer."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setattr(copilot_client, "anthropic_supports_temperature", lambda: False)
+    c = copilot_client.CopilotClient()
+    c.load_context("context")
+    c.stream_message([{"role": "user", "content": "hi"}], lambda t: None)
+    c.single_message("write the report")
+
+    for _, kw in c._client.messages.calls:
+        assert "temperature" not in kw
+        assert kw["model"] == copilot_client.MODEL
 
 
 def test_a_single_message_returns_the_first_text_block(stub_sdk, monkeypatch):

@@ -86,9 +86,16 @@ Priority order lives in one table (`packetiq/webapp/app.py`, `_PROVIDER_SPECS`):
 | Priority | Provider | Env var | Default model |
 |--:|---|---|---|
 | 1 | Gemini | `GEMINI_API_KEY` | `gemini-2.0-flash` |
-| 2 | Groq | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| 2 | Groq | `GROQ_API_KEY` | `openai/gpt-oss-120b` |
 | 3 | Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` |
 | 4 | **Ollama (local)** | *none needed* | `qwen2.5:7b-instruct` |
+
+The cloud defaults are a starting point, not a catalogue, and they expire: Groq
+retired `llama-3.3-70b-versatile` — the entry that sat in this table — and every
+request for it came back 404. `_fetch_provider_models` asks each provider's own
+models endpoint what the configured key can call, and `_model_for` prefers that
+answer over any name compiled into the source. Ollama needs no such call: its
+list is the daemon's installed models, probed locally on every status read.
 
 Ollama is deliberately last: a cloud key wins when one is present. But it is the
 only provider that is *always* available, needs no key, and has **no rate limit**

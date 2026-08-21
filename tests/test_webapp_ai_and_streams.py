@@ -229,18 +229,43 @@ def test_the_anthropic_arm_streams_and_caches_the_capture_block(monkeypatch):
 
 def test_every_arm_pins_the_configured_temperature(monkeypatch):
     """Grounding depends on a low temperature; a drifting default is how the
-    copilot would start inventing findings."""
+    copilot would start inventing findings.
+
+    Anthropic is asserted separately below: its SDK stopped accepting the
+    parameter at 1.0.0, so what this arm sends is decided by which major is
+    installed — not something to assert against whatever happens to be here.
+    """
     groq = _fake_groq(monkeypatch)
     _drain(webapp._stream_ai_raw("groq", "k", "m", "s", "c", MESSAGES))
     assert groq["temperature"] == webapp._AI_TEMPERATURE
 
-    anth = _fake_anthropic(monkeypatch)
-    _drain(webapp._stream_ai_raw("anthropic", "k", "m", "s", "c", MESSAGES))
-    assert anth["temperature"] == webapp._AI_TEMPERATURE
-
     gem = _fake_gemini(monkeypatch)
     _drain(webapp._stream_ai_raw("gemini", "k", "m", "s", "c", MESSAGES))
     assert gem["config"]["temperature"] == webapp._AI_TEMPERATURE
+
+
+@pytest.mark.parametrize("supported", [True, False])
+def test_the_anthropic_arm_sends_temperature_only_where_the_sdk_takes_it(monkeypatch, supported):
+    """anthropic 1.0.0 removed `temperature` from the Messages API, and the method
+    signature has no `**kwargs` — so sending it does not get ignored, it raises
+    TypeError and the provider stops answering entirely.
+
+    Both arms are driven here rather than left to the installed SDK. `client` is
+    annotated `Any` in that branch (one name, four SDKs), so mypy cannot see the
+    call at all; and letting the environment pick the branch is how a line ends
+    up covered on the developer's machine and uncovered on the runner.
+    """
+    from packetiq.copilot import client as copilot_client
+
+    monkeypatch.setattr(copilot_client, "anthropic_supports_temperature", lambda: supported)
+    captured = _fake_anthropic(monkeypatch)
+    out = "".join(_drain(webapp._stream_ai_raw("anthropic", "k", "m", "s", "c", MESSAGES)))
+
+    assert out == "The host was scanned."          # the answer arrives either way
+    if supported:
+        assert captured["temperature"] == webapp._AI_TEMPERATURE
+    else:
+        assert "temperature" not in captured
 
 
 def test_the_reply_length_cap_is_passed_through(monkeypatch):

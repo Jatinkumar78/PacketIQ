@@ -1306,9 +1306,15 @@ def _env_remove(key: str) -> None:
 # override) and is treated as configured when its daemon is reachable. It sits
 # last so cloud keys win when present, but it is always there as an offline
 # fallback with no rate limits and no data leaving the machine.
+# These are starting points, not a catalogue. A provider can retire a model at
+# any time — Groq's `llama-3.3-70b-versatile` was this file's default until its
+# API began answering 404 for it, which is a hardcoded name failing silently in
+# production. `_fetch_provider_models` asks each provider what its key can
+# actually call, and `_model_for` prefers that answer whenever it has one; these
+# defaults are what a first run uses before anything has been fetched.
 _PROVIDER_SPECS = [
     ("gemini",    "GEMINI_API_KEY",    "gemini-2.0-flash"),
-    ("groq",      "GROQ_API_KEY",      "llama-3.3-70b-versatile"),
+    ("groq",      "GROQ_API_KEY",      "openai/gpt-oss-120b"),
     ("anthropic", "ANTHROPIC_API_KEY", "claude-sonnet-4-6"),
     ("ollama",    "OLLAMA_MODEL",      "qwen2.5:7b-instruct"),
 ]
@@ -1653,11 +1659,23 @@ def _model_for(name: str) -> str:
     override = (os.environ.get(envname) or env.get(envname) or "").strip()
     if override:
         return override
+    # A fetched catalogue is the provider's own answer to "what can this key
+    # call?", so it outranks any name compiled in here — that is what stops a
+    # retired default (Groq's llama-3.3-70b-versatile now 404s) from being asked
+    # for over and over. Names still come from the same lists; the catalogue only
+    # decides which of them still exists.
+    catalog = _catalog_for(name).get("models") or []
+    live = {m["name"] for m in catalog}
     for model in _MODEL_CANDIDATES.get(name, []):
-        if _model_alive(name, model):
+        if _model_alive(name, model) and (not live or model in live):
             return model
     for n, _, model in _PROVIDER_SPECS:
         if n == name:
+            if live and model not in live:
+                # The declared default is gone. Take the provider's own first
+                # entry — the catalogue is ordered by context window, so that is
+                # the model most likely to hold a large capture's evidence.
+                return catalog[0]["name"]
             return model
     return ""
 
@@ -1676,6 +1694,91 @@ def _next_model(provider: str, current: str) -> str:
         if model != current and _model_alive(provider, model):
             return model
     return ""
+
+
+# Live model catalogues, fetched from each provider's own models endpoint.
+# provider -> {"at": epoch, "models": [...], "error": str}
+_MODEL_CATALOG: dict = {}
+# Line-ups change on the order of weeks and the call costs a round trip against
+# the user's key, so a fetched catalogue is reused rather than re-requested.
+_MODEL_CATALOG_TTL = 900.0
+
+
+def _fetch_provider_models(provider: str, key: str) -> list:
+    """Ask a provider which models this key can actually call.
+
+    Every field returned here — the id, the display name, the context window —
+    comes from the provider's own models endpoint. Nothing is inferred and
+    nothing is invented; the only judgement applied is dropping entries the
+    provider itself marks as something other than text-to-text, because a
+    speech or transcription model cannot answer a chat request at all.
+
+    Raises whatever the SDK raises. The caller records that as the catalogue's
+    error so the UI can say the list could not be loaded instead of showing a
+    stale or made-up one.
+    """
+    out: list = []
+    if provider == "gemini":
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            from google import genai as _genai
+        # The pager is lazy, so the client has to stay referenced for the whole
+        # walk — let it fall out of scope and the SDK closes the connection
+        # underneath the iteration ("the client has been closed").
+        gclient = _genai.Client(api_key=key)
+        # One loop variable per SDK — the three model types share no base class.
+        for gm in gclient.models.list():
+            actions = list(getattr(gm, "supported_actions", None) or [])
+            name = (getattr(gm, "name", "") or "").split("/")[-1]
+            if name and "generateContent" in actions:
+                out.append({"name": name,
+                            "label": getattr(gm, "display_name", "") or "",
+                            "context": int(getattr(gm, "input_token_limit", 0) or 0)})
+    elif provider == "groq":
+        from groq import Groq
+        for qm in Groq(api_key=key).models.list().data:
+            ins = list(getattr(qm, "input_modalities", None) or ["text"])
+            outs = list(getattr(qm, "output_modalities", None) or ["text"])
+            if "text" in ins and "text" in outs:
+                out.append({"name": qm.id,
+                            "label": getattr(qm, "owned_by", "") or "",
+                            "context": int(getattr(qm, "context_window", 0) or 0)})
+    elif provider == "anthropic":
+        import anthropic
+        for am in anthropic.Anthropic(api_key=key).models.list():
+            out.append({"name": am.id,
+                        "label": getattr(am, "display_name", "") or "",
+                        "context": int(getattr(am, "max_input_tokens", 0) or 0)})
+    # Biggest context first: it is the one property that decides whether a large
+    # capture's evidence survives the prompt intact.
+    out.sort(key=lambda m: (-m["context"], m["name"]))
+    return out
+
+
+def _catalog_for(provider: str) -> dict:
+    """The cached catalogue for `provider`, or {} when none is fresh."""
+    import time
+    entry = _MODEL_CATALOG.get(provider)
+    if entry and not entry.get("error") and (time.time() - entry["at"]) < _MODEL_CATALOG_TTL:
+        return entry
+    return {}
+
+
+def _refresh_catalog(provider: str) -> dict:
+    """Fetch and cache `provider`'s catalogue. Never raises — the error is data."""
+    import time
+    key = _provider_key(provider)
+    if not key:
+        entry = {"at": time.time(), "models": [], "error": "no API key"}
+    else:
+        try:
+            entry = {"at": time.time(), "models": _fetch_provider_models(provider, key),
+                     "error": ""}
+        except Exception as exc:  # noqa: BLE001 — offline, bad key, rate limit
+            entry = {"at": time.time(), "models": [], "error": str(exc)[:200]}
+    _MODEL_CATALOG[provider] = entry
+    return entry
 
 
 def _model_env_name(provider: str) -> str:
@@ -1716,18 +1819,33 @@ def _model_options(provider: str) -> list:
                 # None = we could not read this machine's RAM, so we make no claim.
                 "fits_ram":       None if (budget is None or not size) else size <= budget,
                 "installed":      True,
+                "label":          meta.get("quantization", ""),
+                "context":        0,
+                # The daemon's own installed list — as live as it gets.
+                "source":         "provider",
             })
     else:
-        seen = set()
-        for name in (_MODEL_CANDIDATES.get(provider, [])
-                     + [m for n, _, m in _PROVIDER_SPECS if n == provider]):
-            if name and name not in seen:
-                seen.add(name)
-                out.append({"name": name, "size_bytes": 0, "parameter_size": "",
-                            "quantization": "", "fits_ram": None, "installed": True})
+        catalog = _catalog_for(provider).get("models") or []
+        if catalog:
+            # The provider's own answer, in its own words.
+            for m in catalog:
+                out.append({"name": m["name"], "size_bytes": 0, "parameter_size": "",
+                            "quantization": "", "fits_ram": None, "installed": True,
+                            "label": m["label"], "context": m["context"],
+                            "source": "provider"})
+        else:
+            seen = set()
+            for name in (_MODEL_CANDIDATES.get(provider, [])
+                         + [m for n, _, m in _PROVIDER_SPECS if n == provider]):
+                if name and name not in seen:
+                    seen.add(name)
+                    out.append({"name": name, "size_bytes": 0, "parameter_size": "",
+                                "quantization": "", "fits_ram": None, "installed": True,
+                                "label": "", "context": 0, "source": "builtin"})
     if pinned and not any(o["name"] == pinned for o in out):
         out.append({"name": pinned, "size_bytes": 0, "parameter_size": "",
-                    "quantization": "", "fits_ram": None, "installed": False})
+                    "quantization": "", "fits_ram": None, "installed": False,
+                    "label": "", "context": 0, "source": "pinned"})
     return out
 
 
@@ -1798,7 +1916,11 @@ def _ai_status_payload() -> dict:
              # pinned it, and what else they could pick.
              "model": _ollama_model() if n == "ollama" else _model_for(n),
              "model_pinned": bool(_model_pin(n)),
-             "models": _model_options(n)}
+             "models": _model_options(n),
+             # Where that list came from, so the UI never presents a compiled-in
+             # guess as though the provider had confirmed it.
+             "catalog": {"live": bool(_catalog_for(n)) or n == "ollama",
+                         "error": (_MODEL_CATALOG.get(n) or {}).get("error", "")}}
             for n, _, _ in _PROVIDER_SPECS
         ],
         # Real physical RAM, so the picker can say which local models fit instead
@@ -2099,18 +2221,28 @@ async def _stream_ai_raw(provider: str, key: str, model: str,
 
     elif provider == "anthropic":
         import anthropic
+
+        from packetiq.copilot.client import anthropic_supports_temperature
         client = anthropic.AsyncAnthropic(api_key=key)
         system_blocks = [
             {"type": "text", "text": system},
             {"type": "text", "text": f"<pcap_analysis>\n{context}\n</pcap_analysis>",
              "cache_control": {"type": "ephemeral"}},
         ]
+        # anthropic 1.0.0 dropped `temperature` from the Messages API, and the
+        # method takes no **kwargs — passing it raises TypeError. `client` is
+        # annotated Any here (one name, four SDKs), so the type gate cannot see
+        # that; tests/test_provider_sdk_contract.py binds this call to the
+        # installed signature instead.
+        anthropic_kwargs: dict = {}
+        if anthropic_supports_temperature():
+            anthropic_kwargs["temperature"] = _AI_TEMPERATURE
         async with client.messages.stream(
             model       = model,
             max_tokens  = max_tokens,
-            temperature = _AI_TEMPERATURE,
             system      = system_blocks,
             messages    = messages,
+            **anthropic_kwargs,
         ) as stream:
             async for chunk in stream.text_stream:
                 yield chunk
@@ -2345,9 +2477,21 @@ _NO_PROVIDER_HINT = (
     "offline): install Ollama, `ollama pull qwen2.5:7b-instruct`, then `ollama serve`.")
 
 
+# Providers say "you are going too fast" in more than one way, and the sticky
+# cooldown only works on the ones we recognise. Groq answers a context larger
+# than its free tier's per-minute token allowance with HTTP 413 and
+# `rate_limit_exceeded` — no 429, no "quota", and "rate_limit" with an
+# underscore rather than a space — so it fell through every marker below and was
+# retried on every single message, paying a full failing round trip each time.
+_RATE_LIMIT_MARKERS = (
+    "429", "resource_exhausted", "quota", "rate limit", "rate_limit",
+    "too many requests", "tokens per minute", "requests per minute",
+)
+
+
 def _is_rate_limit(msg: str) -> bool:
-    m = msg.lower()
-    return "429" in msg or "resource_exhausted" in m or "quota" in m or "rate limit" in m
+    m = (msg or "").lower()
+    return any(marker in m for marker in _RATE_LIMIT_MARKERS)
 
 
 # A rejected key does not fix itself in a few seconds, so bench that provider for
@@ -3136,6 +3280,30 @@ def create_app() -> FastAPI:
             raise HTTPException(400, f"Unknown provider '{prov}'. Use auto/{'/'.join(names)}.")
         return _ai_status_payload()
 
+    @app.post("/api/ai/models/refresh")
+    async def ai_refresh_models(request: Request):
+        """Load a provider's real model list from the provider itself.
+
+        This is what makes the picker a catalogue rather than a guess: the names,
+        display names and context windows come from Google's, Groq's or
+        Anthropic's own models endpoint, using the key already configured here.
+        Ollama needs no refresh — its list is probed from the local daemon on
+        every status read. A failure is returned as text for the UI to show,
+        never swallowed and never replaced by an invented list.
+        """
+        body = await request.json()
+        prov = (body.get("provider") or "").strip().lower()
+        names = [n for n, _, _ in _PROVIDER_SPECS]
+        if prov not in names:
+            raise HTTPException(400, f"Unknown provider '{prov}'. Use {'/'.join(names)}.")
+        if prov == "ollama":
+            _ollama_probe(force=True)
+        else:
+            # The SDKs are synchronous; keep the event loop free while the
+            # provider answers.
+            await asyncio.to_thread(_refresh_catalog, prov)
+        return _ai_status_payload()
+
     @app.post("/api/ai/model")
     async def ai_set_model(request: Request):
         """Pin the model a provider uses, or clear the pin to go back to automatic.
@@ -3198,6 +3366,9 @@ def create_app() -> FastAPI:
             except OSError:
                 pass                        # runtime key still works for this session
         _AI_COOLDOWN.pop(prov, None)
+        # A catalogue belongs to the key that fetched it — a different key can
+        # reach a different set of models, so do not carry the old list over.
+        _MODEL_CATALOG.pop(prov, None)
         _AI_FORCED["provider"] = prov       # a key just entered → use it
         return _ai_status_payload()
 
@@ -3213,6 +3384,7 @@ def create_app() -> FastAPI:
             _env_remove(envname)
         except OSError:
             pass
+        _MODEL_CATALOG.pop(prov, None)      # the list belonged to that key
         if _AI_FORCED.get("provider") == prov:
             _AI_FORCED["provider"] = None   # don't stay forced on a now-keyless provider
         return _ai_status_payload()

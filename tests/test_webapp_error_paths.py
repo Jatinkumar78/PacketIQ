@@ -385,12 +385,23 @@ def test_an_ollama_line_that_is_not_json_is_skipped(monkeypatch):
     ("429 Too Many Requests", True),
     ("RESOURCE_EXHAUSTED: quota", True),
     ("rate limit exceeded", True),
+    # Measured against Groq's free tier: a grounded PCAP context is ~11k tokens
+    # and the tier allows 8k per minute, so the request comes back 413 — no 429,
+    # no "quota", and `rate_limit_exceeded` spelled with an underscore. It matched
+    # nothing, so Groq was never put on cooldown and every following message paid
+    # another full failing round trip before switching providers.
+    ("Error code: 413 - {'error': {'message': 'Request too large for model "
+     "`openai/gpt-oss-20b` ... on tokens per minute (TPM): Limit 8000, Requested "
+     "10957', 'code': 'rate_limit_exceeded'}}", True),
+    ("Requests per minute exceeded", True),
     ("500 internal error", False),
     ("connection reset", False),
+    ("413 Payload Too Large", False),      # a size problem, not a pacing one
 ])
 def test_rate_limit_detection_only_fires_on_real_quota_errors(text, expected):
     """Marking a provider as rate-limited puts it in cooldown. Doing that for an
-    ordinary 500 would take a working provider out of rotation."""
+    ordinary 500 would take a working provider out of rotation — and *not* doing
+    it for a real one leaves a dead provider first in line on every message."""
     assert webapp._is_rate_limit(text) is expected
 
 

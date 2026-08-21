@@ -17,11 +17,11 @@ CPython 3.12.13) rather than asserted:
 
 | | |
 |---|---|
-| Tests | **1,802 passing**, **100.00%** line coverage of **9,971** statements |
+| Tests | **1,836 passing**, **100.00%** line coverage of **10,049** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.9, 3.10, 3.11, 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean · `mypy` clean across **83** source files |
-| Static security | `bandit` at its strictest setting: **no issues at any severity** over **17,056** lines |
+| Static security | `bandit` at its strictest setting: **no issues at any severity** over **17,189** lines |
 | Dependencies | runtime closure: **zero** known advisories (blocking gate) |
 | Detection (real) | **100%** recall · **90.0%** precision · **94.7%** F1 on Stratosphere CTU-13 |
 | Detection (synthetic) | 100% recall · 100% precision, gated on every push |
@@ -36,6 +36,75 @@ inbound internet scanning. It is
 
 Everything below is the development record, newest first — the defects found, what
 each one actually broke, and how it was verified fixed.
+
+### Provider SDKs and model lists, checked against the providers rather than remembered
+
+CI went red on four of five legs, and chasing it down turned up three more
+defects of the same shape: a name or a signature written into the source once,
+believed thereafter, and wrong.
+
+**Fixed**
+- **`anthropic` 1.0.0 removed `temperature` from the Messages API, and PacketIQ
+  still sent it.** The methods take no `**kwargs`, so the parameter is not
+  ignored — it raises `TypeError` and the provider stops answering. mypy caught
+  it in `copilot/client.py` and could not see it in `webapp/app.py`, where the
+  client is annotated `Any` because one name is rebound to four SDKs in that
+  function; that half would have reached users as a runtime failure on the first
+  question after a clean install. Both call sites now ask the installed SDK
+  whether it takes the parameter and send it only where it does, so 0.x and 1.x
+  both work and neither is pinned. Where it is gone the request runs at the API
+  default temperature — that changes how varied the prose is, not whether it is
+  grounded, because the deterministic guardrail does not depend on sampling.
+- **Groq retired `llama-3.3-70b-versatile`, this file's declared Groq default.**
+  Every request for it returns `404 - The model does not exist or you do not have
+  access to it`. Verified against the live API, replaced with
+  `openai/gpt-oss-120b` — measured answering the same analysis question in 0.7s
+  with clean prose, where `qwen/qwen3.6-27b` leaks `<think>` blocks into the
+  answer and `groq/compound` took 6.4s.
+- **A Groq 413 was not recognised as a rate limit, so the provider was never
+  benched.** Groq's free tier allows 8,000 tokens per minute and a grounded PCAP
+  context is around 11,000, so it answers `413 … 'code': 'rate_limit_exceeded'`
+  — no `429`, no `quota`, and `rate_limit` spelled with an underscore rather
+  than a space. It matched none of the markers, so the sticky cooldown never
+  fired and every subsequent message paid another full failing round trip before
+  switching. The fallback itself worked correctly throughout; it was just doing
+  it the expensive way.
+- **The Gemini catalogue came back empty because its pager outlived its client.**
+  Written as `for m in Client(key).models.list()`, the client is released the
+  moment the expression ends and the lazy pager dies with "Cannot send a request,
+  as the client has been closed" — which surfaces as "this key has no models".
+  Found by running it against the real API rather than a stub.
+
+**Added**
+- **Model lists loaded from the providers themselves.** `POST /api/ai/models/refresh`
+  asks Google's, Groq's or Anthropic's models endpoint what the configured key
+  can actually call, and the picker shows exactly that — id, the provider's own
+  display name, and its context window. Measured on one real setup: **37 Gemini
+  models, 9 Groq, 3 local**. Entries the provider marks as something other than
+  text-to-text (Whisper transcription, Orpheus speech) are dropped because they
+  cannot answer a chat request; nothing else is filtered and nothing is invented.
+  Cached 15 minutes, reloaded on demand or when a key changes, and a failure is
+  shown as the provider's own message. Where no list has been fetched the built-in
+  names are used and **labelled built-in**, and a hand-typed model is labelled
+  `unverified`, so a compiled-in guess never looks like a confirmed fact.
+- **A contract test binding every provider call to the installed SDK.** The
+  suite stubs each SDK, which is what makes it fast and offline — and is what let
+  the Anthropic break through: the stubs take `**kwargs` and accepted a parameter
+  the real SDK had deleted, so 1,836 tests stayed green against a provider that
+  would have raised on the first question.
+  `tests/test_provider_sdk_contract.py` binds the exact keyword set each call
+  site sends to the real `Signature`, for Anthropic (sync, single-shot and the
+  web app's async arm), Groq and Gemini. A dropped or renamed parameter now fails
+  pytest on every platform instead of mypy on one — and covers the arm mypy
+  cannot see at all.
+
+**Verified** — reproduced the CI failure locally in a clean environment first,
+then ran the whole gate on three closures: Python 3.9 (mypy 1.19.1, anthropic
+0.125.0 — the only leg that was green, and only because 1.0.0 requires >=3.10),
+Python 3.12 with anthropic 0.116.0, and Python 3.12 with anthropic 1.0.0 and
+mypy 2.3.1, which is the combination CI installs. All three: **1,836 passing**,
+**100.00%** coverage, `ruff` and `mypy` clean. The Gemini pager fix was confirmed
+by reverting it and watching the new test fail with the real error message.
 
 ### The copilot's model is now a choice, not a lottery
 
@@ -83,8 +152,8 @@ of editing `.env` and restarting.
   interface guards each exist for the same reason). Every test now sees a fixed
   16 GiB.
 
-**Verified** — 44 new tests covering both halves; suite **1,802 passing** at
-**100.00%** coverage of **9,971** statements; `ruff` and `mypy` clean. End to end
+**Verified** — 44 new tests covering both halves; suite **1,836 passing** at
+**100.00%** coverage of **10,049** statements; `ruff` and `mypy` clean. End to end
 against a real daemon: pinning `llama3.2:3b` in the web UI moved
 `/api/chat/{job}/status` to that model, and the copilot answered the demo capture
 through it. The pinned choice reached the daemon — Ollama's `/api/ps` showed the

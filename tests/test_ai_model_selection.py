@@ -13,6 +13,8 @@ sized against the machine's real RAM rather than arbitrary.
 
 import ctypes
 import os
+import sys
+import types
 
 import httpx
 import pytest
@@ -32,9 +34,10 @@ _KEY_VARS = ("GEMINI_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY")
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
-    """No host .env, no host daemon, no leaked pin between tests."""
+    """No host .env, no host daemon, no leaked pin or catalogue between tests."""
     webapp._AI_FORCED["provider"] = None
     webapp._AI_COOLDOWN.clear()
+    webapp._MODEL_CATALOG.clear()
     webapp._OLLAMA_PROBE.update(at=0.0, up=False, models=[], info={})
     monkeypatch.setattr(webapp, "_read_env", lambda: {})
     for var in _MODEL_VARS + _KEY_VARS:
@@ -43,6 +46,7 @@ def _clean(monkeypatch):
     yield
     webapp._AI_FORCED["provider"] = None
     webapp._AI_COOLDOWN.clear()
+    webapp._MODEL_CATALOG.clear()
     webapp._OLLAMA_PROBE.update(at=0.0, up=False, models=[], info={})
 
 
@@ -260,10 +264,12 @@ def test_no_fit_verdict_when_the_daemon_reported_no_size(monkeypatch):
     assert webapp._model_options("ollama")[0]["fits_ram"] is None
 
 
-def test_cloud_options_are_the_models_this_code_knows_how_to_call():
-    """Nothing invented: the candidate list plus the provider's declared default."""
+def test_cloud_options_fall_back_to_what_this_code_knows_how_to_call():
+    """With nothing fetched: the candidate list plus the provider's declared
+    default, each marked `builtin` so the UI can say it is not the live list."""
     names = [o["name"] for o in webapp._model_options("gemini")]
     assert names[:len(webapp._MODEL_CANDIDATES["gemini"])] == webapp._MODEL_CANDIDATES["gemini"]
+    assert all(o["source"] == "builtin" for o in webapp._model_options("gemini"))
     assert webapp._model_options("anthropic")[0]["name"] == \
         [m for n, _, m in webapp._PROVIDER_SPECS if n == "anthropic"][0]
     assert [o["name"] for o in webapp._model_options("groq")] == \
@@ -276,6 +282,229 @@ def test_a_hand_set_model_is_listed_even_if_we_do_not_know_it(monkeypatch):
     opts = webapp._model_options("gemini")
     assert opts[-1]["name"] == "gemini-something-new"
     assert opts[-1]["installed"] is False
+
+
+# ── the live catalogue: what each provider says its key can call ─────────────
+
+def _stub_gemini(monkeypatch, entries, dies_when_released=False):
+    """`entries` are (name, display, input_limit, actions) as the SDK returns them.
+
+    With `dies_when_released`, this reproduces the real SDK's behaviour: the pager
+    holds no reference back to the client, so a client kept only as a temporary is
+    collected the moment the expression ends and the walk then raises.
+    """
+    import gc
+
+    state = {"closed": False}
+
+    class _Model:
+        def __init__(self, name, display, limit, actions):
+            self.name, self.display_name = name, display
+            self.input_token_limit, self.supported_actions = limit, actions
+
+    def _list():
+        for e in entries:
+            if dies_when_released:
+                gc.collect()                # settle any released client now
+                if state["closed"]:
+                    raise RuntimeError(
+                        "Cannot send a request, as the client has been closed.")
+            yield _Model(*e)
+
+    class _Client:
+        def __init__(self, api_key=None):
+            self.api_key = api_key
+            # Deliberately not a bound method: the pager must not keep the
+            # client alive, which is the whole point of the reference.
+            self.models = types.SimpleNamespace(list=_list)
+
+        def __del__(self):
+            state["closed"] = True
+
+    genai = types.ModuleType("google.genai")
+    genai.Client = _Client
+    google = types.ModuleType("google")
+    google.genai = genai
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.genai", genai)
+    return state
+
+
+def _stub_groq(monkeypatch, entries):
+    """`entries` are (id, owned_by, context, input_modalities, output_modalities)."""
+    class _Model:
+        def __init__(self, mid, owner, ctx, ins, outs):
+            self.id, self.owned_by, self.context_window = mid, owner, ctx
+            self.input_modalities, self.output_modalities = ins, outs
+
+    class _Groq:
+        def __init__(self, api_key=None):
+            self.models = types.SimpleNamespace(
+                list=lambda: types.SimpleNamespace(data=[_Model(*e) for e in entries]))
+
+    groq = types.ModuleType("groq")
+    groq.Groq = _Groq
+    monkeypatch.setitem(sys.modules, "groq", groq)
+
+
+def _stub_anthropic(monkeypatch, entries):
+    """`entries` are (id, display_name, max_input_tokens)."""
+    class _Model:
+        def __init__(self, mid, display, limit):
+            self.id, self.display_name, self.max_input_tokens = mid, display, limit
+
+    class _Anthropic:
+        def __init__(self, api_key=None):
+            self.models = types.SimpleNamespace(list=lambda: [_Model(*e) for e in entries])
+
+    anthropic = types.ModuleType("anthropic")
+    anthropic.Anthropic = _Anthropic
+    monkeypatch.setitem(sys.modules, "anthropic", anthropic)
+
+
+def test_the_gemini_catalogue_is_the_providers_own_answer(monkeypatch):
+    _stub_gemini(monkeypatch, [
+        ("models/gemini-2.5-flash", "Gemini 2.5 Flash", 1048576, ["generateContent"]),
+        ("models/embedding-001", "Embedding 001", 2048, ["embedContent"]),
+        ("models/gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", 1048576, ["generateContent"]),
+    ])
+    got = webapp._fetch_provider_models("gemini", "AIza-test")
+    # The embedding model cannot answer a chat request — the provider says so.
+    assert [m["name"] for m in got] == ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    assert got[0]["label"] == "Gemini 2.5 Flash"
+    assert got[0]["context"] == 1048576
+
+
+def test_the_gemini_client_outlives_its_lazy_pager(monkeypatch):
+    """Measured against the live API before it was fixed: written as
+    `for m in Client(key).models.list()`, the client is released the instant the
+    expression ends and the walk dies with "the client has been closed" — which
+    surfaces as an empty catalogue, i.e. "this key has no models"."""
+    _stub_gemini(monkeypatch, [
+        ("models/a", "A", 10, ["generateContent"]),
+        ("models/b", "B", 20, ["generateContent"]),
+    ], dies_when_released=True)
+    assert len(webapp._fetch_provider_models("gemini", "k")) == 2
+
+
+def test_the_groq_catalogue_drops_what_cannot_answer_text(monkeypatch):
+    _stub_groq(monkeypatch, [
+        ("whisper-large-v3", "OpenAI", 448, ["audio"], ["transcription"]),
+        ("openai/gpt-oss-120b", "OpenAI", 131072, ["text"], ["text"]),
+        ("orpheus-v1", "Canopy Labs", 4000, ["text"], ["speech"]),
+        ("allam-2-7b", "SDAIA", 4096, ["text"], ["text"]),
+    ])
+    got = webapp._fetch_provider_models("groq", "gsk_test")
+    assert [m["name"] for m in got] == ["openai/gpt-oss-120b", "allam-2-7b"]
+    assert got[0]["context"] == 131072 and got[0]["label"] == "OpenAI"
+
+
+def test_a_groq_model_with_no_declared_modalities_is_kept(monkeypatch):
+    """Absent fields are not evidence that a model cannot chat."""
+    _stub_groq(monkeypatch, [("mystery-1", "", 8192, None, None)])
+    assert [m["name"] for m in webapp._fetch_provider_models("groq", "k")] == ["mystery-1"]
+
+
+def test_the_anthropic_catalogue_carries_ids_and_display_names(monkeypatch):
+    _stub_anthropic(monkeypatch, [("claude-sonnet-4-6", "Claude Sonnet 4.6", 200000)])
+    got = webapp._fetch_provider_models("anthropic", "sk-ant-test")
+    assert got == [{"name": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6",
+                    "context": 200000}]
+
+
+def test_the_catalogue_leads_with_the_largest_context(monkeypatch):
+    """Context window is what decides whether a big capture's evidence survives."""
+    _stub_groq(monkeypatch, [("small", "x", 4096, ["text"], ["text"]),
+                             ("big", "x", 131072, ["text"], ["text"]),
+                             ("mid", "x", 32768, ["text"], ["text"])])
+    assert [m["name"] for m in webapp._fetch_provider_models("groq", "k")] == \
+        ["big", "mid", "small"]
+
+
+def test_a_failed_fetch_is_recorded_rather_than_replaced_with_a_guess(monkeypatch):
+    def _boom(provider, key):
+        raise RuntimeError("401 invalid api key")
+
+    monkeypatch.setattr(webapp, "_fetch_provider_models", _boom)
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_bad")
+    entry = webapp._refresh_catalog("groq")
+    assert entry["models"] == [] and "401" in entry["error"]
+    # …and the picker falls back to the built-in names, saying so.
+    assert all(o["source"] == "builtin" for o in webapp._model_options("groq"))
+    assert webapp._catalog_for("groq") == {}
+
+
+def test_a_provider_with_no_key_is_not_asked(monkeypatch):
+    def _never(provider, key):                       # pragma: no cover - must not run
+        raise AssertionError("fetched without a key")
+
+    monkeypatch.setattr(webapp, "_fetch_provider_models", _never)
+    assert webapp._refresh_catalog("anthropic")["error"] == "no API key"
+
+
+def test_a_stale_catalogue_is_not_reused(monkeypatch):
+    import time
+
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
+    monkeypatch.setattr(webapp, "_fetch_provider_models",
+                        lambda p, k: [{"name": "m", "label": "", "context": 1}])
+    webapp._refresh_catalog("groq")
+    assert webapp._catalog_for("groq")["models"]
+    webapp._MODEL_CATALOG["groq"]["at"] = time.time() - webapp._MODEL_CATALOG_TTL - 1
+    assert webapp._catalog_for("groq") == {}
+
+
+def test_the_picker_prefers_the_live_catalogue(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza")
+    monkeypatch.setattr(webapp, "_fetch_provider_models", lambda p, k: [
+        {"name": "gemini-3.1-pro", "label": "Gemini 3.1 Pro", "context": 1048576},
+        {"name": "gemini-2.5-flash", "label": "Gemini 2.5 Flash", "context": 1048576}])
+    webapp._refresh_catalog("gemini")
+    opts = webapp._model_options("gemini")
+    assert [o["name"] for o in opts] == ["gemini-3.1-pro", "gemini-2.5-flash"]
+    assert all(o["source"] == "provider" for o in opts)
+    assert opts[0]["context"] == 1048576
+
+
+# ── a retired model must not keep being asked for ────────────────────────────
+
+def test_a_candidate_still_in_the_catalogue_is_used(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza")
+    first = webapp._MODEL_CANDIDATES["gemini"][0]
+    monkeypatch.setattr(webapp, "_fetch_provider_models",
+                        lambda p, k: [{"name": first, "label": "", "context": 1}])
+    webapp._refresh_catalog("gemini")
+    assert webapp._model_for("gemini") == first
+
+
+def test_a_declared_default_the_provider_has_retired_is_replaced(monkeypatch):
+    """The reason this exists: Groq removed `llama-3.3-70b-versatile`, which was
+    this file's declared default, and every request for it came back 404."""
+    monkeypatch.setenv("GROQ_API_KEY", "gsk")
+    monkeypatch.setattr(webapp, "_fetch_provider_models", lambda p, k: [
+        {"name": "openai/gpt-oss-120b", "label": "OpenAI", "context": 131072},
+        {"name": "allam-2-7b", "label": "SDAIA", "context": 4096}])
+    monkeypatch.setattr(webapp, "_PROVIDER_SPECS",
+                        [("groq", "GROQ_API_KEY", "llama-3.3-70b-versatile")])
+    webapp._refresh_catalog("groq")
+    assert webapp._model_for("groq") == "openai/gpt-oss-120b"
+
+
+def test_the_declared_default_stands_when_nothing_has_been_fetched(monkeypatch):
+    declared = [m for n, _, m in webapp._PROVIDER_SPECS if n == "groq"][0]
+    assert webapp._model_for("groq") == declared
+
+
+def test_the_shipped_groq_default_is_one_the_provider_still_lists(monkeypatch):
+    """A guard on the constant itself: the last one was retired upstream and
+    nothing here noticed until every Groq request returned 404."""
+    monkeypatch.setenv("GROQ_API_KEY", "gsk")
+    declared = [m for n, _, m in webapp._PROVIDER_SPECS if n == "groq"][0]
+    assert declared != "llama-3.3-70b-versatile", "that model no longer exists at Groq"
+    monkeypatch.setattr(webapp, "_fetch_provider_models",
+                        lambda p, k: [{"name": declared, "label": "", "context": 1}])
+    webapp._refresh_catalog("groq")
+    assert webapp._model_for("groq") == declared
 
 
 # ── the HTTP surface the web UI drives ───────────────────────────────────────
@@ -382,6 +611,71 @@ def test_an_unwritable_env_file_still_clears_the_pin_for_this_session(client, mo
     monkeypatch.setattr(webapp, "_env_remove", _boom)
     j = client.post("/api/ai/model", json={"provider": "ollama", "model": ""}).json()
     assert _provider(j, "ollama")["model_pinned"] is False
+
+
+def test_refreshing_loads_the_providers_list_into_the_picker(client, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
+    monkeypatch.setattr(webapp, "_fetch_provider_models", lambda p, k: [
+        {"name": "openai/gpt-oss-120b", "label": "OpenAI", "context": 131072}])
+    j = client.post("/api/ai/models/refresh", json={"provider": "groq"}).json()
+    groq = _provider(j, "groq")
+    assert groq["catalog"] == {"live": True, "error": ""}
+    assert [m["name"] for m in groq["models"]] == ["openai/gpt-oss-120b"]
+    assert groq["models"][0]["source"] == "provider"
+
+
+def test_a_refresh_that_fails_says_so_and_keeps_the_builtin_list(client, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_bad")
+
+    def _boom(provider, key):
+        raise RuntimeError("401 Unauthorized")
+
+    monkeypatch.setattr(webapp, "_fetch_provider_models", _boom)
+    j = client.post("/api/ai/models/refresh", json={"provider": "groq"}).json()
+    groq = _provider(j, "groq")
+    assert groq["catalog"]["live"] is False
+    assert "401" in groq["catalog"]["error"]
+    assert all(m["source"] == "builtin" for m in groq["models"])
+
+
+def test_refreshing_ollama_re_probes_the_daemon_instead(client, monkeypatch):
+    """The local list is already live; there is no remote catalogue to fetch."""
+    def _never(provider, key):                       # pragma: no cover - must not run
+        raise AssertionError("asked a remote provider about local models")
+
+    monkeypatch.setattr(webapp, "_fetch_provider_models", _never)
+    monkeypatch.setattr(httpx, "get", _tags(TINY))
+    j = client.post("/api/ai/models/refresh", json={"provider": "ollama"}).json()
+    ollama = _provider(j, "ollama")
+    assert [m["name"] for m in ollama["models"]] == [TINY[0]]
+    assert ollama["catalog"]["live"] is True
+
+
+def test_refreshing_an_unknown_provider_is_refused(client):
+    r = client.post("/api/ai/models/refresh", json={"provider": "openai"})
+    assert r.status_code == 400 and "Unknown provider" in r.json()["detail"]
+
+
+def test_a_new_key_does_not_inherit_the_previous_keys_catalogue(client, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_first")
+    monkeypatch.setattr(webapp, "_fetch_provider_models",
+                        lambda p, k: [{"name": "only-on-the-first-key", "label": "",
+                                       "context": 1}])
+    client.post("/api/ai/models/refresh", json={"provider": "groq"})
+    assert webapp._catalog_for("groq")["models"]
+
+    client.post("/api/ai/key", json={"provider": "groq", "key": "gsk_second",
+                                     "persist": False})
+    assert webapp._catalog_for("groq") == {}, "a catalogue belongs to the key that got it"
+
+
+def test_clearing_a_key_clears_its_catalogue(client, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_first")
+    monkeypatch.setattr(webapp, "_fetch_provider_models",
+                        lambda p, k: [{"name": "m", "label": "", "context": 1}])
+    client.post("/api/ai/models/refresh", json={"provider": "groq"})
+    client.delete("/api/ai/key/groq")
+    assert webapp._catalog_for("groq") == {}
 
 
 # ── the same choice from the CLI ─────────────────────────────────────────────

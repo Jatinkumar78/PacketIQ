@@ -3457,12 +3457,23 @@ async function loadAIStatus(){
 /* Real numbers from Ollama's own /api/tags — decimal GB, the same unit
    `ollama list` prints, so the two agree. */
 function fmtGB(b){ return (Number(b||0)/1e9).toFixed(1)+' GB'; }
+/* Context window as the providers quote it. */
+function fmtCtx(n){
+  n=Number(n||0);
+  if(n>=1e6) return (n/1048576).toFixed(1).replace(/\.0$/,'')+'M ctx';
+  if(n>=1000) return Math.round(n/1024)+'K ctx';
+  return n+' ctx';
+}
 function modelSuffix(m){
   const bits=[];
   if(m.size_bytes) bits.push(fmtGB(m.size_bytes));
   if(m.parameter_size) bits.push(m.parameter_size);
+  if(m.context) bits.push(fmtCtx(m.context));
+  if(m.label && !m.size_bytes) bits.push(m.label);
   if(m.fits_ram===false) bits.push('over RAM budget');
-  if(!m.installed) bits.push('not installed');
+  /* Every other entry was confirmed by the provider itself; this one was typed
+     in, so say so rather than let it look equally verified. */
+  if(!m.installed) bits.push('unverified');
   return bits.length? ' · '+bits.join(' · ') : '';
 }
 /* The provider whose model list the picker is showing: the pinned one, else
@@ -3531,13 +3542,29 @@ const AI_KEY_META = {
   groq:      {label:'Groq',                hint:'gsk_…',    url:'https://console.groq.com/keys',                free:'Free · very fast'},
   anthropic: {label:'Anthropic (Claude)',  hint:'sk-ant-…', url:'https://console.anthropic.com/settings/keys',  free:'Paid'},
 };
-function openAiSettings(){ const ov=document.getElementById('ai-settings-overlay'); if(ov){ ov.style.display='flex'; } setAiMsg(''); loadAIStatus(); }
+async function openAiSettings(){
+  const ov=document.getElementById('ai-settings-overlay'); if(ov){ ov.style.display='flex'; }
+  setAiMsg(''); await loadAIStatus(); await autoLoadCatalogs();
+}
 function closeAiSettings(){ const ov=document.getElementById('ai-settings-overlay'); if(ov) ov.style.display='none'; setAiMsg(''); }
 function setAiMsg(t, ok){ const m=document.getElementById('ai-settings-msg'); if(!m) return; m.textContent=t||''; m.style.color=ok?'var(--success)':'var(--high)'; }
 /* One model dropdown for a provider, used inside each settings card. Empty value
    means "automatic" — the picker never hides what automatic would resolve to. */
+/* Where a provider's list came from, stated plainly. A built-in list is a set of
+   names compiled into PacketIQ, and a provider can retire any of them at any
+   time — so it is never presented as though the provider had confirmed it. */
+function catalogNote(p){
+  const c=p.catalog||{}, n=(p.models||[]).length;
+  if(c.error) return '<span style="color:var(--high)">could not load the list: '+esc(c.error)+'</span>';
+  if(p.name==='ollama') return n+' installed on this machine';
+  if(c.live) return n+' model'+(n===1?'':'s')+' this key can call, live from '+esc(p.label);
+  return 'built-in list — Refresh to load what '+esc(p.label)+' actually offers your key';
+}
 function modelPickerHtml(p){
-  if(!(p.models||[]).length) return '';
+  if(!(p.models||[]).length && p.name==='ollama') return '';
+  const refresh = p.name==='ollama' ? '' :
+    '<button onclick="refreshProviderModels(\''+p.name+'\')" class="btn btn-secondary btn-sm" '
+    +'title="Ask '+esc(p.label)+' which models this key can call" style="white-space:nowrap">Refresh</button>';
   let html='<div style="display:flex;align-items:center;gap:6px;margin-top:8px">'
     +'<span style="font-size:11px;color:var(--text-sub);white-space:nowrap">Model</span>'
     +'<select onchange="setProviderModel(\''+p.name+'\',this.value)" '
@@ -3547,7 +3574,34 @@ function modelPickerHtml(p){
     const on=(p.model_pinned && m.name===p.model)?' selected':'';
     html+='<option value="'+esc(m.name)+'"'+on+'>'+esc(m.name+modelSuffix(m))+'</option>';
   });
-  return html+'</select></div>';
+  return html+'</select>'+refresh+'</div>'
+    +'<div style="font-size:11px;color:var(--text-sub);margin-top:4px">'+catalogNote(p)+'</div>';
+}
+async function refreshProviderModels(provider, quiet){
+  if(!quiet) setAiMsg('Asking '+provider+' for its model list…', true);
+  try{
+    const r=await fetch('/api/ai/models/refresh',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({provider})});
+    const j=await r.json(); if(!r.ok) throw new Error(j.detail||('HTTP '+r.status));
+    const p=(j.providers||[]).find(x=>x.name===provider)||{};
+    if(!quiet){
+      setAiMsg((p.catalog||{}).error ? ('✗ '+p.catalog.error)
+                                     : ('✓ '+(p.models||[]).length+' models loaded from '+provider+'.'),
+               !(p.catalog||{}).error);
+    }
+    applyAIStatus(j);
+  }catch(e){ if(!quiet) setAiMsg('✗ '+e.message); }
+}
+/* Opening the panel loads each configured provider's real list once, so the
+   dropdowns are already the provider's own catalogue rather than a built-in
+   list waiting to be refreshed by hand. Cached server-side, so reopening the
+   panel does not re-ask. */
+async function autoLoadCatalogs(){
+  for(const p of ((AI_STATUS||{}).providers||[])){
+    const c=p.catalog||{};
+    if(p.name==='ollama' || !p.configured || c.live || c.error) continue;
+    await refreshProviderModels(p.name, true);
+  }
 }
 async function setProviderModel(provider, model){
   setAiMsg('Saving…', true);
@@ -3613,6 +3667,9 @@ async function saveAIKey(provider){
     setAiMsg('✓ '+((AI_KEY_META[provider]||{}).label||provider)+' key saved — ready to use.', true);
     applyAIStatus(j);
     if(typeof checkChatAvailability==='function') checkChatAvailability();
+    // A different key can reach a different set of models, so load the list this
+    // one actually has rather than keeping whatever the last key returned.
+    await refreshProviderModels(provider, true);
   }catch(e){ setAiMsg('✗ '+e.message); }
 }
 async function removeAIKey(provider){
