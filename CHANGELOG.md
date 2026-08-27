@@ -17,7 +17,7 @@ CPython 3.12.13) rather than asserted:
 
 | | |
 |---|---|
-| Tests | **1,838 passing**, **100.00%** line coverage of **10,050** statements |
+| Tests | **1,843 passing**, **100.00%** line coverage of **10,050** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.9, 3.10, 3.11, 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean · `mypy` clean across **83** source files |
@@ -36,6 +36,48 @@ inbound internet scanning. It is
 
 Everything below is the development record, newest first — the defects found, what
 each one actually broke, and how it was verified fixed.
+
+### The source download was being deleted by anti-virus
+
+Microsoft Defender quarantined `PacketIQ-main.zip`, downloaded straight from
+codeload.github.com, as `Backdoor:PHP/Remoteshell.F`. Not a warning — the archive
+was removed. On a managed university or corporate machine that happens silently
+and there is no obvious way past it.
+
+**Fixed**
+- **`tests/test_yara.py` shipped two complete PHP webshells and the EICAR
+  string.** They were inert Python byte-literals, never executed, feeding
+  PacketIQ's *own* webshell detector so the test could assert it fires — which is
+  the only way to test a webshell detector, and also precisely what a signature
+  matches. The fixtures are now assembled at runtime from fragments split with a
+  visible `~`; the scanner under test receives byte-identical input and every
+  assertion is unchanged. A round-trip test pins the bytes **by digest** rather
+  than by writing the payload out a second time, and the EICAR digest it checks
+  against is the published one for EICAR.COM — a value from outside this
+  repository.
+- **The bundled YARA rules carried the EICAR string as a quoted literal.** Every
+  anti-virus product detects EICAR; that is its entire purpose. It is now written
+  as a hex byte sequence, which matches the same 68 bytes and leaves nothing for a
+  scanner to lift out of the rule file. The webshell and cradle patterns were
+  already fragments (`eval($_POST` with no `<?php`) and stay that way — better
+  detection, and not a runnable anything.
+
+**Added**
+- **`tests/test_repo_hygiene.py`**, which scans the *tracked* file set — what
+  GitHub actually serves, not the working tree — for a contiguous EICAR string or
+  a PHP open tag sitting near an exec sink. It caught one immediately: a line in
+  the new test's own docstring that quoted the offending string while explaining
+  it. A fourth test proves the pattern has teeth by matching the exact literal
+  Defender flagged, and proves it does not fire on the detection fragments that
+  must stay in the rule file.
+
+**Verified** — built the archive with `git archive` and confirmed both signatures
+are present at HEAD (reproducing what was quarantined), then staged the working
+tree the same way and confirmed both are gone from all 255 shipped files. The
+generated demo capture was checked too and carries no EICAR, no webshell, no PE
+header: it is synthetic attack *behaviour*, not malware bytes. YARA still matches
+both fixtures, so detection is unchanged. Suite **1,843 passing** at 100.00%
+coverage on Python 3.9 and 3.12, natively and under the Windows simulation.
 
 ### The Windows leg, fixed and then actually run
 
@@ -73,7 +115,7 @@ line, and behind it a second failure that had never had the chance to happen.
 before changing anything, then rebuilt the Windows simulation described in the
 cross-platform notes (a pytest plugin: `sys.platform = "win32"`, the POSIX `os`
 attributes deleted, `grp`/`pwd`/`resource`/`fcntl` unimportable). Under it the
-whole suite is **1,838 passing at 100.00% coverage** — coverage holding on the
+whole suite is **1,843 passing at 100.00% coverage** — coverage holding on the
 simulated platform is the real result, because it means no branch quietly stops
 being measured there. Confirmed the simulation has teeth by removing
 `raising=False` again and watching exactly those three tests fail. mypy is clean
@@ -136,7 +178,7 @@ believed thereafter, and wrong.
 - **A contract test binding every provider call to the installed SDK.** The
   suite stubs each SDK, which is what makes it fast and offline — and is what let
   the Anthropic break through: the stubs take `**kwargs` and accepted a parameter
-  the real SDK had deleted, so 1,838 tests stayed green against a provider that
+  the real SDK had deleted, so 1,843 tests stayed green against a provider that
   would have raised on the first question.
   `tests/test_provider_sdk_contract.py` binds the exact keyword set each call
   site sends to the real `Signature`, for Anthropic (sync, single-shot and the
@@ -148,7 +190,7 @@ believed thereafter, and wrong.
 then ran the whole gate on three closures: Python 3.9 (mypy 1.19.1, anthropic
 0.125.0 — the only leg that was green, and only because 1.0.0 requires >=3.10),
 Python 3.12 with anthropic 0.116.0, and Python 3.12 with anthropic 1.0.0 and
-mypy 2.3.1, which is the combination CI installs. All three: **1,838 passing**,
+mypy 2.3.1, which is the combination CI installs. All three: **1,843 passing**,
 **100.00%** coverage, `ruff` and `mypy` clean. The Gemini pager fix was confirmed
 by reverting it and watching the new test fail with the real error message.
 
@@ -198,7 +240,7 @@ of editing `.env` and restarting.
   interface guards each exist for the same reason). Every test now sees a fixed
   16 GiB.
 
-**Verified** — 44 new tests covering both halves; suite **1,838 passing** at
+**Verified** — 44 new tests covering both halves; suite **1,843 passing** at
 **100.00%** coverage of **10,050** statements; `ruff` and `mypy` clean. End to end
 against a real daemon: pinning `llama3.2:3b` in the web UI moved
 `/api/chat/{job}/status` to that model, and the copilot answered the demo capture

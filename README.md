@@ -14,7 +14,7 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3b82f6?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![Scapy](https://img.shields.io/badge/Scapy-packet%20engine-ef4444?style=for-the-badge&logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-1838%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-1843%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![Coverage](https://img.shields.io/badge/coverage-100%25-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![GUI](https://img.shields.io/badge/100%25-GUI%20web%20app-3b82f6?style=for-the-badge&logo=googlechrome&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff%20clean-000000?style=for-the-badge&logo=ruff&logoColor=white)
@@ -45,7 +45,7 @@
 
 <br/><br/>
 
-**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`8,398`** threat-intel indicators · **`1,838`** tests · **`100%`** coverage · **`ruff`-clean**
+**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`8,398`** threat-intel indicators · **`1,843`** tests · **`100%`** coverage · **`ruff`-clean**
 
 </div>
 
@@ -158,7 +158,7 @@
 | Output | a wall of text | SIGMA (pySigma-valid), STIX, MISP, HTML report, evidence PCAP |
 | Inputs | PCAP only | **PCAP · Zeek conn.log · NetFlow/IPFIX · live capture** |
 | Detections | a few heuristics | **18 detection types** incl. JA4, TLS certs, YARA, file carving |
-| Trust | unverifiable claims | **1,838 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
+| Trust | unverifiable claims | **1,843 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
 | Interface | terminal | **100% GUI web app — double-click to launch** |
 
 ---
@@ -175,6 +175,17 @@
 3. That's it — the first run installs everything automatically (~1–2 min), then your browser opens to the app. Drag in a capture and go.
 
 > First time on macOS? If you get a security prompt, right-click `PacketIQ.command` → **Open** → **Open**. You only do this once.
+
+<details>
+<summary><b>Windows: if your anti-virus objects to the download</b></summary>
+
+PacketIQ detects webshells and other malicious content carried in network traffic, so its YARA rules have to contain the patterns they match, and the tests for those rules have to contain something for them to match. Written out plainly, that reads to a desktop scanner exactly like the thing it detects — Microsoft Defender flagged an earlier source zip as `Backdoor:PHP/Remoteshell.F` over a Python test fixture that is never executed, and deleted the whole archive.
+
+That is fixed rather than excused. **No file in this repository contains a contiguous malware signature**: the EICAR pattern is written as bytes in the rule file, the webshell patterns are deliberately fragments with no PHP tag, and the test fixtures are assembled at runtime. `tests/test_repo_hygiene.py` scans the tracked file set on every CI run and fails the build if a literal reappears, so the download stays clean. Detection is unchanged — the same rules match the same bytes, and `tests/test_yara.py` proves it against the published EICAR digest.
+
+If a scanner on a managed machine still queries it: nothing here is an executable, the repository ships **no binaries and no packet captures** (the demo capture is generated locally on first run and contains synthetic attack *behaviour*, not malware), and `PacketIQ.bat` is a plain launcher that creates a virtualenv and runs `pip install .`. All of it is readable source you can inspect before running.
+
+</details>
 
 ### Alternative — one command
 
@@ -200,7 +211,7 @@ Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` — `
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev,yara,geoip]"                   # everything (tests, YARA, GeoIP)
-pytest                                                # run the 1,838-test suite
+pytest                                                # run the 1,843-test suite
 pytest --cov=packetiq --cov-report=term-missing      # with line-coverage report
 ```
 The CLI (`packetiq …`) is the same engine the web app uses — handy for scripting/CI, but not required.
@@ -499,7 +510,7 @@ dga_entropy_threshold = 3.8   # bits/char to suspect a DGA
 
 ```bash
 pip install -e ".[dev]"
-pytest                 # 1,838 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
+pytest                 # 1,843 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
 ruff check packetiq tools tests
 ```
 
@@ -602,7 +613,7 @@ PacketIQ/
 │   ├── screenshots/               # README UI screenshots — real running web app
 │   └── assets/                    # images (bot avatar)
 ├── samples/generate_sample.py     # build a demo PCAP
-├── tests/                         # 1,838 pytest tests
+├── tests/                         # 1,843 pytest tests
 ├── .github/workflows/ci.yml       # CI (pytest + ruff + mypy)
 ├── PacketIQ.command · PacketIQ.bat · quickstart.sh   # double-click / one-command launchers
 ├── Dockerfile · docker-compose.yml
