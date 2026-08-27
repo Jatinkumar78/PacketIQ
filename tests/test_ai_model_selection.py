@@ -74,24 +74,59 @@ HUGE = ("llama3:70b", 39 * GB, "70.6B")
 
 
 # ── reading the machine's real RAM ───────────────────────────────────────────
+#
+# `os.sysconf` is POSIX-only: on Windows there is no attribute to replace, so
+# every patch of it needs `raising=False` or the test errors before it starts.
+# Supplying the symbol rather than skipping the test keeps the POSIX branch
+# measured on all three platforms, which is the same reason the capture-privilege
+# tests seed `os.geteuid`/`grp` instead of branching on the host OS.
+
+def _fake_sysconf(monkeypatch, answer):
+    monkeypatch.setattr(os, "sysconf", answer, raising=False)
+
 
 def test_ram_comes_from_posix_sysconf(monkeypatch):
-    monkeypatch.setattr(os, "sysconf",
-                        lambda name: {"SC_PHYS_PAGES": 4096, "SC_PAGE_SIZE": 4096}[name])
+    _fake_sysconf(monkeypatch, lambda name: {"SC_PHYS_PAGES": 4096, "SC_PAGE_SIZE": 4096}[name])
     assert _REAL_SYSTEM_RAM() == 4096 * 4096
 
 
 def test_ram_falls_through_to_windows_when_sysconf_has_no_answer(monkeypatch):
     """Windows has no sysconf at all, so the second source has to carry it."""
-    monkeypatch.setattr(os, "sysconf", lambda name: (_ for _ in ()).throw(ValueError(name)))
+    _fake_sysconf(monkeypatch, lambda name: (_ for _ in ()).throw(ValueError(name)))
     monkeypatch.setattr(webapp, "_ram_bytes_windows", lambda: 8 * GB)
     assert _REAL_SYSTEM_RAM() == 8 * GB
 
 
+def test_ram_falls_through_to_windows_when_there_is_no_sysconf_at_all(monkeypatch):
+    """The real Windows shape: the attribute is missing, not failing. Asserted
+    here because the Windows CI leg has to reach this line the same way."""
+    monkeypatch.delattr(os, "sysconf", raising=False)
+    monkeypatch.setattr(webapp, "_ram_bytes_windows", lambda: 6 * GB)
+    assert _REAL_SYSTEM_RAM() == 6 * GB
+
+
 def test_ram_is_none_when_neither_source_answers(monkeypatch):
-    monkeypatch.setattr(os, "sysconf", lambda name: 0)
+    _fake_sysconf(monkeypatch, lambda name: 0)
     monkeypatch.setattr(webapp, "_ram_bytes_windows", lambda: 0)
     assert _REAL_SYSTEM_RAM() is None
+
+
+def test_the_memory_struct_matches_the_win32_declaration():
+    """GlobalMemoryStatusEx writes into this struct *by offset*, so a reordered or
+    mistyped field does not fail — it returns a different number. Nothing on a Mac
+    or a Linux runner can call the real API, so the layout is asserted instead.
+
+    MEMORYSTATUSEX (winbase.h): DWORD dwLength, DWORD dwMemoryLoad, then seven
+    DWORDLONGs. `c_ulong` is the right spelling for DWORD precisely because
+    ctypes follows the platform ABI — 32-bit on Windows' LLP64, where this runs.
+    """
+    fields = webapp._MemoryStatusEx._fields_
+    assert [name for name, _ in fields] == [
+        "dwLength", "dwMemoryLoad", "ullTotalPhys", "ullAvailPhys",
+        "ullTotalPageFile", "ullAvailPageFile", "ullTotalVirtual",
+        "ullAvailVirtual", "ullAvailExtendedVirtual"]
+    assert [t for _, t in fields[:2]] == [ctypes.c_ulong, ctypes.c_ulong]
+    assert all(t is ctypes.c_ulonglong for _, t in fields[2:])
 
 
 def test_windows_helper_reads_the_filled_struct(monkeypatch):

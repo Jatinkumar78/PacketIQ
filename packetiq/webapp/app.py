@@ -1389,9 +1389,17 @@ def _system_ram_bytes() -> Optional[int]:
     Read from the OS rather than guessed, because it is the number that decides
     whether a given local model runs or thrashes. No new dependency for it: POSIX
     (Linux, macOS) reports it through sysconf, Windows through GlobalMemoryStatusEx.
+
+    `os.sysconf` does not exist on Windows, and typeshed knows it: targeting that
+    platform turns the call below into an `attr-defined` error that appears on the
+    Windows leg and nowhere else. The ignore is the fix rather than an
+    `if sys.platform` guard, because such a guard reads as unreachable to mypy on
+    *Linux* — which is the leg that measures coverage. `warn_unused_ignores` is
+    off, so it costs nothing on the platforms where the attribute is real.
     """
     with contextlib.suppress(Exception):        # Linux, macOS
-        total = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+        sysconf = os.sysconf   # type: ignore[attr-defined]
+        total = sysconf("SC_PHYS_PAGES") * sysconf("SC_PAGE_SIZE")
         if total > 0:
             return int(total)
     with contextlib.suppress(Exception):        # Windows

@@ -17,11 +17,11 @@ CPython 3.12.13) rather than asserted:
 
 | | |
 |---|---|
-| Tests | **1,836 passing**, **100.00%** line coverage of **10,049** statements |
+| Tests | **1,838 passing**, **100.00%** line coverage of **10,050** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.9, 3.10, 3.11, 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean · `mypy` clean across **83** source files |
-| Static security | `bandit` at its strictest setting: **no issues at any severity** over **17,189** lines |
+| Static security | `bandit` at its strictest setting: **no issues at any severity** over **17,196** lines |
 | Dependencies | runtime closure: **zero** known advisories (blocking gate) |
 | Detection (real) | **100%** recall · **90.0%** precision · **94.7%** F1 on Stratosphere CTU-13 |
 | Detection (synthetic) | 100% recall · 100% precision, gated on every push |
@@ -36,6 +36,52 @@ inbound internet scanning. It is
 
 Everything below is the development record, newest first — the defects found, what
 each one actually broke, and how it was verified fixed.
+
+### The Windows leg, fixed and then actually run
+
+CI came back with one job red — `test (windows-latest, py3.12)` — on a single
+line, and behind it a second failure that had never had the chance to happen.
+
+**Fixed**
+- **`os.sysconf` does not exist on Windows, and typeshed knows it.** The RAM
+  probe added for the local-model picker calls it inside a `contextlib.suppress`,
+  which is correct at runtime on every platform — but mypy targeting Windows
+  reports `Module has no attribute "sysconf"  [attr-defined]`, so the type gate
+  failed there and only there. Fixed with the ignore this project already uses
+  for POSIX-only symbols, deliberately *not* an `if sys.platform` guard: mypy
+  reads such a guard as unreachable on Linux, which is the leg that measures
+  coverage.
+- **Three tests would have failed on Windows the moment mypy stopped failing
+  first.** `monkeypatch.setattr(os, "sysconf", …)` raises `AttributeError` where
+  the attribute does not exist, and because the Windows job died at the type
+  check, its test step had never run — the defect was queued behind the one that
+  was visible. All three now pass `raising=False`, which is what the
+  capture-privilege tests already do for `os.geteuid`/`grp`: supply the symbol
+  rather than skip the test, so the POSIX branch stays *measured* on Windows
+  instead of silently unmeasured.
+
+**Added**
+- **A test for the shape Windows actually has** — the attribute missing rather
+  than failing — so the fall-through to `GlobalMemoryStatusEx` is exercised the
+  way the Windows runner will exercise it.
+- **A layout assertion for `MEMORYSTATUSEX`.** `GlobalMemoryStatusEx` fills the
+  struct *by offset*, so a reordered or mistyped field would not raise — it would
+  return a different number, silently, on the one platform that cannot be run
+  here. The field order and the DWORD/DWORDLONG split are asserted instead.
+
+**Verified** — reproduced the failure from this Mac with `mypy --platform win32`
+before changing anything, then rebuilt the Windows simulation described in the
+cross-platform notes (a pytest plugin: `sys.platform = "win32"`, the POSIX `os`
+attributes deleted, `grp`/`pwd`/`resource`/`fcntl` unimportable). Under it the
+whole suite is **1,838 passing at 100.00% coverage** — coverage holding on the
+simulated platform is the real result, because it means no branch quietly stops
+being measured there. Confirmed the simulation has teeth by removing
+`raising=False` again and watching exactly those three tests fail. mypy is clean
+on **all three target platforms** (`--platform win32`, `linux`, `darwin`) under
+mypy 1.19.1 and 2.3.1 alike, and the suite passes on Python 3.9 and 3.12, both
+natively and under the simulation. The one Groq-era lesson repeated itself
+usefully: `anthropic` had moved on again, to **1.1.0**, and the capability probe
+picked it up with no change.
 
 ### Provider SDKs and model lists, checked against the providers rather than remembered
 
@@ -90,7 +136,7 @@ believed thereafter, and wrong.
 - **A contract test binding every provider call to the installed SDK.** The
   suite stubs each SDK, which is what makes it fast and offline — and is what let
   the Anthropic break through: the stubs take `**kwargs` and accepted a parameter
-  the real SDK had deleted, so 1,836 tests stayed green against a provider that
+  the real SDK had deleted, so 1,838 tests stayed green against a provider that
   would have raised on the first question.
   `tests/test_provider_sdk_contract.py` binds the exact keyword set each call
   site sends to the real `Signature`, for Anthropic (sync, single-shot and the
@@ -102,7 +148,7 @@ believed thereafter, and wrong.
 then ran the whole gate on three closures: Python 3.9 (mypy 1.19.1, anthropic
 0.125.0 — the only leg that was green, and only because 1.0.0 requires >=3.10),
 Python 3.12 with anthropic 0.116.0, and Python 3.12 with anthropic 1.0.0 and
-mypy 2.3.1, which is the combination CI installs. All three: **1,836 passing**,
+mypy 2.3.1, which is the combination CI installs. All three: **1,838 passing**,
 **100.00%** coverage, `ruff` and `mypy` clean. The Gemini pager fix was confirmed
 by reverting it and watching the new test fail with the real error message.
 
@@ -152,8 +198,8 @@ of editing `.env` and restarting.
   interface guards each exist for the same reason). Every test now sees a fixed
   16 GiB.
 
-**Verified** — 44 new tests covering both halves; suite **1,836 passing** at
-**100.00%** coverage of **10,049** statements; `ruff` and `mypy` clean. End to end
+**Verified** — 44 new tests covering both halves; suite **1,838 passing** at
+**100.00%** coverage of **10,050** statements; `ruff` and `mypy` clean. End to end
 against a real daemon: pinning `llama3.2:3b` in the web UI moved
 `/api/chat/{job}/status` to that model, and the copilot answered the demo capture
 through it. The pinned choice reached the daemon — Ollama's `/api/ps` showed the
