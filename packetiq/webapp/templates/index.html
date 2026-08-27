@@ -3557,7 +3557,11 @@ function catalogNote(p){
   const c=p.catalog||{}, n=(p.models||[]).length;
   if(c.error) return '<span style="color:var(--high)">could not load the list: '+esc(c.error)+'</span>';
   if(p.name==='ollama') return n+' installed on this machine';
-  if(c.live) return n+' model'+(n===1?'':'s')+' this key can call, live from '+esc(p.label);
+  // "lists for", not "you can call": the models endpoint reports what the provider
+  // knows about, and a listed model can still refuse the request for this key or
+  // tier. Auto-switch walks past one that does; claiming more than the API states
+  // would be putting words in the provider's mouth.
+  if(c.live) return n+' model'+(n===1?'':'s')+' listed by '+esc(p.label)+' for this key';
   return 'built-in list — Refresh to load what '+esc(p.label)+' actually offers your key';
 }
 function modelPickerHtml(p){

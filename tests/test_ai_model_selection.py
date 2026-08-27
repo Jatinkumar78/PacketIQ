@@ -530,6 +530,33 @@ def test_the_declared_default_stands_when_nothing_has_been_fetched(monkeypatch):
     assert webapp._model_for("groq") == declared
 
 
+@pytest.mark.parametrize("provider,retired", [
+    # Names measured against the live APIs as "no longer available". Each was
+    # the shipped default or lead candidate when it stopped working, and nothing
+    # here noticed until every request to that provider returned 404.
+    ("groq", "llama-3.3-70b-versatile"),
+    ("gemini", "gemini-2.0-flash"),
+])
+def test_no_shipped_default_is_a_model_known_to_be_retired(provider, retired):
+    declared = [m for n, _, m in webapp._PROVIDER_SPECS if n == provider][0]
+    assert declared != retired, f"{retired} no longer exists at {provider}"
+    assert retired not in webapp._MODEL_CANDIDATES.get(provider, []), \
+        f"{retired} is retired — walking to it just burns a round trip"
+
+
+def test_the_gemini_candidates_prefer_aliases_over_pinned_versions():
+    """Measured: every version-numbered Gemini name tried (`gemini-2.0-flash`,
+    `gemini-2.5-flash`, `gemini-2.5-flash-lite`) now answers "no longer
+    available", while the `-latest` aliases keep working across generations. A
+    pinned version in this list is a name with an expiry date on it."""
+    import re
+
+    for name in webapp._MODEL_CANDIDATES["gemini"]:
+        assert not re.match(r"^gemini-\d+\.\d+-", name), (
+            f"{name} pins a model generation; prefer the -latest alias so the "
+            "default does not rot when Google retires that version")
+
+
 def test_the_shipped_groq_default_is_one_the_provider_still_lists(monkeypatch):
     """A guard on the constant itself: the last one was retired upstream and
     nothing here noticed until every Groq request returned 404."""

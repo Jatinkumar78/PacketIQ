@@ -1,10 +1,17 @@
 """A model whose free tier is zero must not kill its provider.
 
 Google grants free-tier quota *per model*, not per key: a valid key answers
-`limit: 0` for `gemini-2.0-flash` while `gemini-flash-lite-latest` replies
-normally on the very same project. The copilot used to read that 429 as "Gemini
-is dead", bench it for an hour and fall through to another provider. It must
-instead try the next model of the same provider.
+`limit: 0` for one model while another replies normally on the very same
+project. The copilot used to read that 429 as "Gemini is dead", bench it for an
+hour and fall through to another provider. It must instead try the next model of
+the same provider. The same walk covers a model retired outright — which is not
+hypothetical: `gemini-2.0-flash` was the first candidate until Google began
+answering "no longer available" for it.
+
+Which is also why nothing below names a model directly. These tests take the
+first and second candidates from `_MODEL_CANDIDATES`, so the list can be updated
+when a model is retired without leaving a test asserting a name that no longer
+exists.
 """
 
 import json
@@ -17,11 +24,14 @@ from packetiq.webapp import create_app
 
 _JOB = "job-model-fallback"
 
+# The provider's own preference order — the first two are what the fallback walks.
+FIRST, SECOND = webapp._MODEL_CANDIDATES["gemini"][:2]
+
 # The real body Google returns for a project with no free-tier allowance.
 _ZERO_QUOTA = (
     "429 RESOURCE_EXHAUSTED. Quota exceeded for metric: "
-    "generativelanguage.googleapis.com/generate_content_free_tier_requests, "
-    "limit: 0, model: gemini-2.0-flash. Please retry in 8.09s."
+    f"generativelanguage.googleapis.com/generate_content_free_tier_requests, "
+    f"limit: 0, model: {FIRST}. Please retry in 8.09s."
 )
 _PER_MINUTE = "429 RESOURCE_EXHAUSTED. Please retry in 42s."
 
@@ -78,21 +88,21 @@ def test_model_can_be_overridden_from_the_environment(monkeypatch):
 def test_default_model_is_the_first_candidate(monkeypatch):
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.setattr(webapp, "_read_env", dict)
-    assert webapp._model_for("gemini") == "gemini-2.0-flash"
+    assert webapp._model_for("gemini") == FIRST
 
 
 def test_a_dead_model_is_never_resolved_again(monkeypatch):
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.setattr(webapp, "_read_env", dict)
-    webapp._mark_model_dead("gemini", "gemini-2.0-flash")
-    assert webapp._model_for("gemini") == "gemini-flash-lite-latest"
+    webapp._mark_model_dead("gemini", FIRST)
+    assert webapp._model_for("gemini") == SECOND
 
 
 def test_next_model_walks_the_candidates_then_gives_up():
-    assert webapp._next_model("gemini", "gemini-2.0-flash") == "gemini-flash-lite-latest"
+    assert webapp._next_model("gemini", FIRST) == SECOND
     for m in webapp._MODEL_CANDIDATES["gemini"]:
         webapp._mark_model_dead("gemini", m)
-    assert webapp._next_model("gemini", "gemini-2.0-flash") == ""
+    assert webapp._next_model("gemini", FIRST) == ""
     # A provider with no candidate list simply has no alternative.
     assert webapp._next_model("groq", "llama-3.3-70b-versatile") == ""
 
@@ -128,14 +138,14 @@ def test_chat_switches_model_not_provider_when_free_tier_is_zero(client, monkeyp
 
     async def fake_stream(provider, key, model, system, context, messages, max_tokens=2048):
         seen.append((provider, model))
-        if model == "gemini-2.0-flash":
+        if model == FIRST:
             raise RuntimeError(_ZERO_QUOTA)
         yield "answered by gemini on a model that has quota"
 
     monkeypatch.setattr(webapp, "_stream_ai", fake_stream)
     events = _sse(_ask(client).text)
 
-    assert seen == [("gemini", "gemini-2.0-flash"), ("gemini", "gemini-flash-lite-latest")]
+    assert seen == [("gemini", FIRST), ("gemini", SECOND)]
     assert _texts(events) == "answered by gemini on a model that has quota"
     # Nothing the analyst cares about changed: no notice, and Gemini stays healthy.
     assert _notices(events) == []
@@ -148,7 +158,7 @@ def test_the_dead_model_is_not_retried_on_the_next_message(client, monkeypatch):
 
     async def fake_stream(provider, key, model, system, context, messages, max_tokens=2048):
         calls.append(model)
-        if model == "gemini-2.0-flash":
+        if model == FIRST:
             raise RuntimeError(_ZERO_QUOTA)
         yield "ok"
 
@@ -156,7 +166,7 @@ def test_the_dead_model_is_not_retried_on_the_next_message(client, monkeypatch):
     _ask(client)
     calls.clear()
     _ask(client)
-    assert calls == ["gemini-flash-lite-latest"]  # straight to the model that works
+    assert calls == [SECOND]  # straight to the model that works
 
 
 def test_provider_is_benched_only_once_every_model_is_exhausted(client, monkeypatch):
@@ -186,7 +196,7 @@ def test_a_per_minute_rate_limit_still_benches_the_provider(client, monkeypatch)
 
     assert "quota reached" in _notices(events)[0]
     assert 0 < webapp._cooldown_left("gemini") <= 42
-    assert webapp._model_alive("gemini", "gemini-2.0-flash")   # model untouched
+    assert webapp._model_alive("gemini", FIRST)   # model untouched
 
 
 def test_forced_gemini_model_override_is_never_swapped(client, monkeypatch):
@@ -219,7 +229,7 @@ async def test_collect_path_also_switches_model_before_switching_provider(monkey
 
     async def fake_stream(provider, key, model, system, context, messages, max_tokens=2048):
         seen.append((provider, model))
-        if model == "gemini-2.0-flash":
+        if model == FIRST:
             raise RuntimeError(_ZERO_QUOTA)
         yield "explained"
 
@@ -227,7 +237,7 @@ async def test_collect_path_also_switches_model_before_switching_provider(monkey
     out = await webapp._collect_ai_with_fallback("sys", "ctx", [{"role": "user", "content": "hi"}])
 
     assert out == "explained"
-    assert seen == [("gemini", "gemini-2.0-flash"), ("gemini", "gemini-flash-lite-latest")]
+    assert seen == [("gemini", FIRST), ("gemini", SECOND)]
     assert webapp._cooldown_left("gemini") == 0
 
 

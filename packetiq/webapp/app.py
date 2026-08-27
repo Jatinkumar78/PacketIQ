@@ -1307,25 +1307,36 @@ def _env_remove(key: str) -> None:
 # last so cloud keys win when present, but it is always there as an offline
 # fallback with no rate limits and no data leaving the machine.
 # These are starting points, not a catalogue. A provider can retire a model at
-# any time — Groq's `llama-3.3-70b-versatile` was this file's default until its
-# API began answering 404 for it, which is a hardcoded name failing silently in
-# production. `_fetch_provider_models` asks each provider what its key can
-# actually call, and `_model_for` prefers that answer whenever it has one; these
-# defaults are what a first run uses before anything has been fetched.
+# any time, and both of the cloud defaults here have already been retired once:
+# Groq's `llama-3.3-70b-versatile` and Google's `gemini-2.0-flash` each began
+# answering 404 while sitting in this list, which is a hardcoded name failing
+# silently in production. `_fetch_provider_models` asks each provider what its
+# key can call, and `_model_for` prefers that answer whenever it has one; these
+# defaults are only what a first run uses before anything has been fetched.
+#
+# Prefer an *alias* over a pinned version. Measured against the live API: the
+# `-latest` aliases keep answering across model generations, while every
+# version-numbered name tried (`gemini-2.0-flash`, `gemini-2.5-flash`,
+# `gemini-2.5-flash-lite`) now returns "no longer available".
 _PROVIDER_SPECS = [
-    ("gemini",    "GEMINI_API_KEY",    "gemini-2.0-flash"),
+    ("gemini",    "GEMINI_API_KEY",    "gemini-flash-lite-latest"),
     ("groq",      "GROQ_API_KEY",      "openai/gpt-oss-120b"),
     ("anthropic", "ANTHROPIC_API_KEY", "claude-sonnet-4-6"),
     ("ollama",    "OLLAMA_MODEL",      "qwen2.5:7b-instruct"),
 ]
 
 # Google grants free-tier quota *per model*, not per key. A project can therefore
-# hold a perfectly valid key that answers `limit: 0` for gemini-2.0-flash while
-# newer models reply normally. That is a wrong-model problem, not a dead-provider
-# problem, so we walk a candidate list instead of benching Gemini for an hour.
-# Order = preference; the first entry is the documented free-tier model.
+# hold a perfectly valid key that answers `limit: 0` for one model while others
+# reply normally. That is a wrong-model problem, not a dead-provider problem, so
+# we walk a candidate list instead of benching Gemini for an hour. The same walk
+# covers a model that has been retired outright, which is how `gemini-2.0-flash`
+# stopped being the first entry here.
+#
+# Order = preference. Flash-Lite leads because it answers within a small
+# `max_tokens` budget; the other two spend that budget on reasoning tokens and
+# can return empty text, which matters for the short per-packet explainer.
 _MODEL_CANDIDATES = {
-    "gemini": ["gemini-2.0-flash", "gemini-flash-lite-latest", "gemini-3-flash-preview"],
+    "gemini": ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3-flash-preview"],
 }
 # "provider:model" pairs this process has proven unusable — never retried.
 _MODEL_DEAD: set = set()

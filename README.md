@@ -14,7 +14,7 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3b82f6?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![Scapy](https://img.shields.io/badge/Scapy-packet%20engine-ef4444?style=for-the-badge&logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-1843%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-1846%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![Coverage](https://img.shields.io/badge/coverage-100%25-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
 ![GUI](https://img.shields.io/badge/100%25-GUI%20web%20app-3b82f6?style=for-the-badge&logo=googlechrome&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff%20clean-000000?style=for-the-badge&logo=ruff&logoColor=white)
@@ -45,7 +45,7 @@
 
 <br/><br/>
 
-**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`8,398`** threat-intel indicators · **`1,843`** tests · **`100%`** coverage · **`ruff`-clean**
+**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`8,398`** threat-intel indicators · **`1,846`** tests · **`100%`** coverage · **`ruff`-clean**
 
 </div>
 
@@ -158,7 +158,7 @@
 | Output | a wall of text | SIGMA (pySigma-valid), STIX, MISP, HTML report, evidence PCAP |
 | Inputs | PCAP only | **PCAP · Zeek conn.log · NetFlow/IPFIX · live capture** |
 | Detections | a few heuristics | **18 detection types** incl. JA4, TLS certs, YARA, file carving |
-| Trust | unverifiable claims | **1,843 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
+| Trust | unverifiable claims | **1,846 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
 | Interface | terminal | **100% GUI web app — double-click to launch** |
 
 ---
@@ -211,7 +211,7 @@ Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` — `
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev,yara,geoip]"                   # everything (tests, YARA, GeoIP)
-pytest                                                # run the 1,843-test suite
+pytest                                                # run the 1,846-test suite
 pytest --cov=packetiq --cov-report=term-missing      # with line-coverage report
 ```
 The CLI (`packetiq …`) is the same engine the web app uses — handy for scripting/CI, but not required.
@@ -400,7 +400,7 @@ curl http://localhost:8080/api/sigma/<job>/rules.zip                # SIGMA rule
 
 | Provider | Starting model | Cost |
 |----------|----------------|------|
-| Google Gemini | `gemini-2.0-flash` | 🆓 free |
+| Google Gemini | `gemini-flash-lite-latest` | 🆓 free |
 | Groq | `openai/gpt-oss-120b` | 🆓 free |
 | Anthropic | `claude-sonnet-4-6` | 💳 paid |
 | Local Ollama | `qwen2.5:7b-instruct` | 🆓 free, offline |
@@ -419,7 +419,7 @@ These are starting points, not a catalogue — the real list is loaded from each
 
 **Smart auto-switch** — by default PacketIQ uses whichever provider is available (priority **Gemini → Groq → Anthropic → local Ollama**) and switches automatically the moment one is rate-limited. The switch is *sticky*: a provider that returns `429` is put on a short cooldown (honouring the API's own retry hint), so subsequent requests go straight to a healthy provider instead of retrying the dead one. A quota that will not recover soon — a *per-day* limit, or Google's `limit: 0` free tier — benches that provider for an hour instead of trusting its (misleading) few-second retry hint.
 
-**Per-model quota recovery** — Google grants free-tier quota *per model*, so a perfectly valid key can answer `limit: 0` for `gemini-2.0-flash` while newer models reply normally. PacketIQ treats that as a wrong-model problem rather than a dead provider: it marks the model unusable, silently retries the same provider on its next candidate model, and remembers the result for the rest of the session. A dropdown in the AI Copilot panel lets you pick **Auto** or lock a specific provider, and shows which one is active plus any cooldowns. (Endpoints: `GET /api/ai/status`, `POST /api/ai/provider`.) Auto-switch covers **chat, "Explain with AI", and AI reports**. The copilot only sees the **structured analysis summary** — raw packets are never sent.
+**Per-model quota recovery, and per-model retirement** — Google grants free-tier quota *per model*, so a perfectly valid key can answer `limit: 0` for one model while others reply normally. PacketIQ treats that as a wrong-model problem rather than a dead provider: it marks the model unusable, silently retries the same provider on its next candidate model, and remembers the result for the rest of the session. The same walk covers a model retired outright — which is not hypothetical, and is why the defaults above prefer `-latest` aliases: measured against the live API, every version-pinned Gemini name this project shipped (`gemini-2.0-flash` among them) now answers *"no longer available"*, while the aliases keep working across model generations. A dropdown in the AI Copilot panel lets you pick **Auto** or lock a specific provider, and shows which one is active plus any cooldowns. (Endpoints: `GET /api/ai/status`, `POST /api/ai/provider`.) Auto-switch covers **chat, "Explain with AI", and AI reports**. The copilot only sees the **structured analysis summary** — raw packets are never sent.
 
 **Grounded, low-hallucination prompts** — the system prompts enforce evidence-only answers (*never invent an IP/domain/technique/CVE; say "not present in this capture" when there's no evidence*) at temperature `0.15`. The detectors, not the LLM, decide what was found — the AI only explains it. Copilot groundedness is measured quantitatively by `tools/eval_copilot.py` (see [Validation harnesses](#validation-harnesses)).
 
@@ -510,7 +510,7 @@ dga_entropy_threshold = 3.8   # bits/char to suspect a DGA
 
 ```bash
 pip install -e ".[dev]"
-pytest                 # 1,843 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
+pytest                 # 1,846 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
 ruff check packetiq tools tests
 ```
 
@@ -613,7 +613,7 @@ PacketIQ/
 │   ├── screenshots/               # README UI screenshots — real running web app
 │   └── assets/                    # images (bot avatar)
 ├── samples/generate_sample.py     # build a demo PCAP
-├── tests/                         # 1,843 pytest tests
+├── tests/                         # 1,846 pytest tests
 ├── .github/workflows/ci.yml       # CI (pytest + ruff + mypy)
 ├── PacketIQ.command · PacketIQ.bat · quickstart.sh   # double-click / one-command launchers
 ├── Dockerfile · docker-compose.yml

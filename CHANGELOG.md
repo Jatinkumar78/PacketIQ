@@ -17,7 +17,7 @@ CPython 3.12.13) rather than asserted:
 
 | | |
 |---|---|
-| Tests | **1,843 passing**, **100.00%** line coverage of **10,050** statements |
+| Tests | **1,846 passing**, **100.00%** line coverage of **10,050** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.9, 3.10, 3.11, 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean · `mypy` clean across **83** source files |
@@ -36,6 +36,43 @@ inbound internet scanning. It is
 
 Everything below is the development record, newest first — the defects found, what
 each one actually broke, and how it was verified fixed.
+
+### Google retired the Gemini default too
+
+Found while checking a demo machine was ready, by asking the live API rather than
+trusting the constant: `gemini-2.0-flash` — the shipped Gemini default and the
+lead candidate — answers **404, "no longer available"**. Same failure as Groq's
+`llama-3.3-70b-versatile` a commit earlier, on the other cloud provider.
+
+**Fixed**
+- **The Gemini default and candidate list.** Measured against the live API on a
+  real key: `gemini-2.0-flash`, `gemini-2.5-flash` and `gemini-2.5-flash-lite`
+  are all retired, while `gemini-flash-lite-latest` (0.7s), `gemini-flash-latest`
+  and `gemini-3-flash-preview` all answer. The default is now
+  `gemini-flash-lite-latest`, and it leads the candidate list because it returns
+  text within a small `max_tokens` budget where the other two spend it on
+  reasoning tokens and can come back empty — which is what the short per-packet
+  explainer asks for. Auto-switch would have recovered from the 404 on its own,
+  but only after burning a failed round trip on the first question of every
+  session.
+- **The pattern behind it, not just the instance.** Every Gemini name that broke
+  was version-pinned; every `-latest` alias kept working across generations. The
+  defaults now prefer aliases, and a test rejects a version-pinned Gemini
+  candidate so the list cannot quietly acquire another expiry date.
+- **The UI overstated what a model list means.** It said "N models this key can
+  call". The models endpoint reports what the provider *knows about*: two models
+  it listed for this key then returned 404 on use. It now says "listed by … for
+  this key", which is what the API actually states.
+
+**Changed**
+- `tests/test_model_fallback.py` no longer names Gemini models directly. It takes
+  the first two entries of `_MODEL_CANDIDATES`, so retiring a model means editing
+  one list instead of leaving tests asserting a name that no longer exists — the
+  same trap one level up.
+
+**Added**
+- A guard asserting no shipped default is a model *known* to be retired, covering
+  both names this project has now been bitten by.
 
 ### The source download was being deleted by anti-virus
 
@@ -76,7 +113,7 @@ are present at HEAD (reproducing what was quarantined), then staged the working
 tree the same way and confirmed both are gone from all 255 shipped files. The
 generated demo capture was checked too and carries no EICAR, no webshell, no PE
 header: it is synthetic attack *behaviour*, not malware bytes. YARA still matches
-both fixtures, so detection is unchanged. Suite **1,843 passing** at 100.00%
+both fixtures, so detection is unchanged. Suite **1,846 passing** at 100.00%
 coverage on Python 3.9 and 3.12, natively and under the Windows simulation.
 
 ### The Windows leg, fixed and then actually run
@@ -115,7 +152,7 @@ line, and behind it a second failure that had never had the chance to happen.
 before changing anything, then rebuilt the Windows simulation described in the
 cross-platform notes (a pytest plugin: `sys.platform = "win32"`, the POSIX `os`
 attributes deleted, `grp`/`pwd`/`resource`/`fcntl` unimportable). Under it the
-whole suite is **1,843 passing at 100.00% coverage** — coverage holding on the
+whole suite is **1,846 passing at 100.00% coverage** — coverage holding on the
 simulated platform is the real result, because it means no branch quietly stops
 being measured there. Confirmed the simulation has teeth by removing
 `raising=False` again and watching exactly those three tests fail. mypy is clean
@@ -178,7 +215,7 @@ believed thereafter, and wrong.
 - **A contract test binding every provider call to the installed SDK.** The
   suite stubs each SDK, which is what makes it fast and offline — and is what let
   the Anthropic break through: the stubs take `**kwargs` and accepted a parameter
-  the real SDK had deleted, so 1,843 tests stayed green against a provider that
+  the real SDK had deleted, so 1,846 tests stayed green against a provider that
   would have raised on the first question.
   `tests/test_provider_sdk_contract.py` binds the exact keyword set each call
   site sends to the real `Signature`, for Anthropic (sync, single-shot and the
@@ -190,7 +227,7 @@ believed thereafter, and wrong.
 then ran the whole gate on three closures: Python 3.9 (mypy 1.19.1, anthropic
 0.125.0 — the only leg that was green, and only because 1.0.0 requires >=3.10),
 Python 3.12 with anthropic 0.116.0, and Python 3.12 with anthropic 1.0.0 and
-mypy 2.3.1, which is the combination CI installs. All three: **1,843 passing**,
+mypy 2.3.1, which is the combination CI installs. All three: **1,846 passing**,
 **100.00%** coverage, `ruff` and `mypy` clean. The Gemini pager fix was confirmed
 by reverting it and watching the new test fail with the real error message.
 
@@ -240,7 +277,7 @@ of editing `.env` and restarting.
   interface guards each exist for the same reason). Every test now sees a fixed
   16 GiB.
 
-**Verified** — 44 new tests covering both halves; suite **1,843 passing** at
+**Verified** — 44 new tests covering both halves; suite **1,846 passing** at
 **100.00%** coverage of **10,050** statements; `ruff` and `mypy` clean. End to end
 against a real daemon: pinning `llama3.2:3b` in the web UI moved
 `/api/chat/{job}/status` to that model, and the copilot answered the demo capture
