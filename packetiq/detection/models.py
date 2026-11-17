@@ -41,6 +41,22 @@ class EventType(str, Enum):
     MALICIOUS_FILE      = "MALICIOUS_FILE"
     HTTP_ATTACK         = "HTTP_ATTACK"
     TLS_ANOMALY         = "TLS_ANOMALY"
+    # Active Directory authentication, read from Kerberos on the wire rather
+    # than inferred from port 88 being open.
+    KERBEROS_USER_ENUM  = "KERBEROS_USER_ENUM"
+    KERBEROS_BRUTE_FORCE = "KERBEROS_BRUTE_FORCE"
+    KERBEROS_ROASTING   = "KERBEROS_ROASTING"
+    KERBEROS_ANOMALY    = "KERBEROS_ANOMALY"
+    # Remote management and the identity that authenticates to it. Command
+    # text is inside SPNEGO session encryption; the account is not.
+    WINRM_EXECUTION     = "WINRM_EXECUTION"
+    NTLM_AUTHENTICATION = "NTLM_AUTHENTICATION"
+    # Reading the directory, and moving through the file-sharing layer.
+    LDAP_ENUMERATION    = "LDAP_ENUMERATION"
+    SMB_LATERAL_MOVEMENT = "SMB_LATERAL_MOVEMENT"
+    SMB_FILE_ACCESS     = "SMB_FILE_ACCESS"
+    DCERPC_SUSPECT_BIND = "DCERPC_SUSPECT_BIND"
+    DCERPC_RECON        = "DCERPC_RECON"
 
 
 @dataclass

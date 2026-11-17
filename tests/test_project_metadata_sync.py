@@ -290,6 +290,17 @@ def test_every_emitted_detection_type_reaches_the_readme_table():
         EventType.JA3_ANOMALY: "ja3", EventType.MALICIOUS_FILE: "file carving",
         EventType.PORT_SCAN: "port scan", EventType.PROTOCOL_MISUSE: "protocol misuse",
         EventType.SUSPICIOUS_FLAGS: "suspicious tcp flags", EventType.TLS_ANOMALY: "tls certificate",
+        EventType.KERBEROS_USER_ENUM: "kerberos user enumeration",
+        EventType.KERBEROS_BRUTE_FORCE: "kerberos brute force",
+        EventType.KERBEROS_ROASTING: "kerberos roasting",
+        EventType.KERBEROS_ANOMALY: "kerberos anomaly",
+        EventType.WINRM_EXECUTION: "winrm execution",
+        EventType.NTLM_AUTHENTICATION: "ntlm authentication",
+        EventType.LDAP_ENUMERATION: "ldap enumeration",
+        EventType.SMB_LATERAL_MOVEMENT: "smb lateral movement",
+        EventType.SMB_FILE_ACCESS: "smb file access",
+        EventType.DCERPC_SUSPECT_BIND: "dcerpc suspect bind",
+        EventType.DCERPC_RECON: "dcerpc recon",
     }
     assert set(names) == set(EventType), "a new EventType needs a row in the README table"
     missing = sorted(v for k, v in names.items() if v not in readme)

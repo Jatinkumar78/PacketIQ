@@ -13,13 +13,13 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Jatinkumar78/PacketIQ/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/Jatinkumar78/PacketIQ/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3b82f6?style=for-the-badge&logo=python&logoColor=white)](https://github.com/Jatinkumar78/PacketIQ/blob/main/pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-2%2C006%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)](https://github.com/Jatinkumar78/PacketIQ/tree/main/tests)
+[![Tests](https://img.shields.io/badge/tests-2%2C221%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)](https://github.com/Jatinkumar78/PacketIQ/tree/main/tests)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-22c55e?style=for-the-badge&logo=pytest&logoColor=white)](#-testing--quality)
 [![Ruff](https://img.shields.io/badge/lint-ruff%20clean-000000?style=for-the-badge&logo=ruff&logoColor=white)](https://github.com/Jatinkumar78/PacketIQ/blob/main/.github/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/Jatinkumar78/PacketIQ?style=for-the-badge&color=8b5cf6)](https://github.com/Jatinkumar78/PacketIQ/blob/main/LICENSE)
 [![Version](https://img.shields.io/badge/Version-1.1.0-60a5fa?style=for-the-badge)](https://github.com/Jatinkumar78/PacketIQ/blob/main/CHANGELOG.md)
 
-[![Detections](https://img.shields.io/badge/detections-18%20types-dc2626?style=for-the-badge&logo=shield&logoColor=white)](#-detection-capabilities)
+[![Detections](https://img.shields.io/badge/detections-29%20types-dc2626?style=for-the-badge&logo=shield&logoColor=white)](#-detection-capabilities)
 [![MITRE ATT&CK](https://img.shields.io/badge/MITRE-ATT%26CK%20mapped-eab308?style=for-the-badge&logo=target&logoColor=white)](https://attack.mitre.org/)
 [![SIGMA](https://img.shields.io/badge/SIGMA-pySigma%20valid-f97316?style=for-the-badge&logo=yaml&logoColor=white)](https://github.com/SigmaHQ/sigma)
 [![Threat Intel](https://img.shields.io/badge/Threat%20Intel-abuse.ch%20feeds-10b981?style=for-the-badge)](#-threat-intelligence)
@@ -49,7 +49,7 @@
 
 <br/><br/>
 
-**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`7,855`** threat-intel indicators · **`2,006`** tests · **`100%`** coverage · **`ruff`-clean**
+**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`29`** detection types · **`7,855`** threat-intel indicators · **`2,221`** tests · **`100%`** coverage · **`ruff`-clean**
 
 </div>
 
@@ -59,7 +59,7 @@
 
 **PacketIQ** is a defensive network-forensics platform for SOC analysts, threat hunters and incident responders. Feed it a packet capture (`.pcap` / `.pcapng` / `.cap`), a **Zeek `conn.log`**, a **NetFlow / IPFIX export**, or a **live interface**, and it produces a complete, evidence-backed analysis:
 
-- **18 detection types** (across 12 detector modules) spanning recon, brute force, C2 beaconing, DNS/ICMP tunneling, credential exposure, TLS fingerprinting, file transfers and HTTP exploitation
+- **29 detection types** (across 17 detector modules) spanning recon, brute force, C2 beaconing, DNS/ICMP tunneling, credential exposure, TLS fingerprinting, file transfers and HTTP exploitation
 - **Real threat-intel enrichment** — every IP and domain is checked against real OSINT feeds (abuse.ch, Tor, Spamhaus) bundled as dated snapshots and refreshable with `packetiq feeds update`
 - **Attack-chain correlation** with **MITRE ATT&CK** and Lockheed-Martin kill-chain mapping
 - **Deployable detections** — pySigma-valid SIGMA rules, STIX 2.1 bundles, MISP push, evidence PCAP slices
@@ -161,8 +161,8 @@
 | Attribution | "this is APT28 (92%)" from a port scan | **honest TTP-overlap score with disclaimers** |
 | Output | a wall of text | SIGMA (pySigma-valid), STIX, MISP, HTML report, evidence PCAP |
 | Inputs | PCAP only | **PCAP · Zeek conn.log · NetFlow/IPFIX · live capture** |
-| Detections | a few heuristics | **18 detection types** incl. JA4, TLS certs, YARA, file carving |
-| Trust | unverifiable claims | **2,006 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
+| Detections | a few heuristics | **29 detection types** incl. Kerberos, LDAP, SMB, DCERPC and WinRM AD attacks, JA4, TLS certs, YARA, file carving |
+| Trust | unverifiable claims | **2,221 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
 | Interface | terminal | **100% GUI web app — double-click to launch** |
 
 ---
@@ -215,12 +215,12 @@ Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` — `
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev,yara,geoip]"                   # everything (tests, YARA, GeoIP)
-pytest                                                # run the 2,006-test suite
+pytest                                                # run the 2,221-test suite
 pytest --cov=packetiq --cov-report=term-missing      # with line-coverage report
 ```
 The CLI (`packetiq …`) is the same engine the web app uses — handy for scripting/CI, but not required.
 
-**Test coverage: 100%** — every one of the 10,132 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for **every supported interpreter, 3.11 and 3.12**, so a line can never ship untested.
+**Test coverage: 100%** — every one of the 11,499 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for **every supported interpreter, 3.11 and 3.12**, so a line can never ship untested.
 
 Coverage here is a property of the *suite*, not of the machine that runs it, and that distinction is enforced rather than assumed. Seven rules are fixed in `tests/conftest.py`, and `tests/test_harness_guards.py` asserts each one still holds: a test gets its own history database, may not open a socket, may not open a real capture device, never sees the machine's own list of network interfaces, never resolves a link-layer address on the wire (neither the destination nor its own), is told the machine has one fixed amount of RAM (the local-model picker branches on it), and renders every table at one fixed width. Without those guards a workstation quietly flatters the number — a Mac with capture privileges really does start a live capture, a machine running `ollama serve` really does find an AI provider, a laptop with four Thunderbolt bridge adapters really does exercise the branch that ranks them, a Mac whose account may capture really does put the ARP request on the wire that scapy needs to finish building a packet, and a frame built with no source MAC really does carry the address of whichever NIC the host has. Every OS-specific and host-specific path — the macOS/Linux/Windows capture-privilege checks, the interface enumerator, the whole `/api/live/*` lifecycle — is therefore driven from a fixture, so a line is covered on every matrix leg or on none. Verified by measuring the suite under simulated runner environments (Linux dispatch, denied capture socket, denied `/dev/bpf`, no local model, no external tools) on 3.11 and 3.12: 100.00% in every one.
 
@@ -258,6 +258,17 @@ Every detector emits a structured event with severity, confidence, evidence and 
 | **HTTP Attack** | SQLi · XSS · path traversal · command injection · **Log4Shell** · webshell · scanner UAs | T1190 / T1059 | MEDIUM → CRITICAL |
 | **File Carving** | TCP reassembly → magic-byte ID → SHA-256 → **MalwareBazaar** + **YARA** | T1105 / T1204 | MEDIUM → CRITICAL |
 | **IOC Match** | External IP/CIDR/domain vs real threat-intel feeds | T1071 / T1090 | MEDIUM → CRITICAL |
+| **Kerberos User Enumeration** | AS-REQ principals paired with the KDC's own reply — `KDC_ERR_C_PRINCIPAL_UNKNOWN` means no such account, `KDC_ERR_PREAUTH_REQUIRED` means it exists. Names the accounts found | T1087.002 | MEDIUM → HIGH |
+| **Kerberos Brute Force** | `KDC_ERR_PREAUTH_FAILED` across many distinct accounts from one source: password spraying under the lockout threshold | T1110.003 | HIGH |
+| **Kerberos Roasting** | AS-REP issued to a request carrying no pre-authentication (AS-REP roasting), and service tickets requested for non-krbtgt SPNs, RC4 flagged (Kerberoasting) | T1558.003 / T1558.004 | MEDIUM → CRITICAL |
+| **Kerberos Anomaly** | Ticket requests offering only RC4 where a current Windows client negotiates AES: a deliberate downgrade to cheaper-to-crack material | T1558 / T1600 | MEDIUM |
+| **WinRM Execution** | WS-Management POSTs to `/wsman` on 5985/5986: the remote-shell channel, graded by volume and by whether the client is Microsoft's own or tooling (Evil-WinRM, Ruby/Python PSRP) | T1021.006 / T1059.001 | MEDIUM → CRITICAL |
+| **NTLM Authentication** | Account, domain and claimed workstation lifted from the NTLM type 3 message in an `Authorization` header, which stays in clear text even when the payload does not | T1557.001 | MEDIUM → HIGH |
+| **LDAP Enumeration** | Searches decoded back into the filter an operator typed, with the base object and attributes asked for; RootDSE discovery called out, and `servicePrincipalName` / `userAccountControl` named for what they hunt | T1087.002 / T1482 | MEDIUM → HIGH |
+| **SMB Lateral Movement** | Tree connects to `ADMIN$` / `C$` / `IPC$` and the named pipes behind them (`svcctl` = PsExec, `atsvc` = scheduled task), plus the account from the SPNEGO blob | T1021.002 / T1569.002 | HIGH → CRITICAL |
+| **SMB File Access** | Filenames from SMB2 Create, with bytes read and written per direction | T1570 / T1039 | MEDIUM → HIGH |
+| **DCERPC Suspect Bind** | RPC binds identified by interface UUID: `svcctl` (PsExec), `atsvc` (scheduled task), `drsuapi` (DCSync), `spoolss` (PrintNightmare), named by what they are used for even when the call is encrypted | T1021.003 / T1003.006 | MEDIUM → CRITICAL |
+| **DCERPC Recon** | Endpoint-mapper probing and rejected binds: the RPC surface being mapped before a service is chosen | T1135 / T1046 | LOW |
 | **Passive OS Fingerprint** | TTL-based OS inference (informational) | — | info |
 
 ---
@@ -517,7 +528,7 @@ dga_entropy_threshold = 3.8   # bits/char to suspect a DGA
 
 ```bash
 pip install -e ".[dev]"
-pytest                 # 2,006 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
+pytest                 # 2,221 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
 ruff check packetiq tools tests
 ```
 
@@ -620,7 +631,7 @@ PacketIQ/
 │   ├── screenshots/               # README UI screenshots — real running web app
 │   └── assets/                    # images (bot avatar)
 ├── samples/generate_sample.py     # build a demo PCAP
-├── tests/                         # 2,006 pytest tests
+├── tests/                         # 2,221 pytest tests
 ├── .github/
 │   ├── workflows/ci.yml           # CI (pytest + ruff + mypy + bandit + pip-audit)
 │   ├── ISSUE_TEMPLATE/            # bug · detection issue · feature request (+ config)

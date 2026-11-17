@@ -48,6 +48,27 @@ DEFAULTS: dict = {
         "cv_threshold_jittered": 0.50,   # upper CV bound for the jitter-tolerant check
         "periodicity_ratio": 0.70,       # fraction of intervals near the median to flag a jittered beacon
     },
+    "kerberos": {
+        # A sweep is distinguished from ordinary authentication by two things at
+        # once: many distinct principals, and the KDC disowning some of them. A
+        # workstation asks for tickets constantly, but always for its own user.
+        "user_enum_min_names": 10,
+        "user_enum_min_unknown": 3,
+        "spray_min_users": 5,
+    },
+    "winrm": {
+        # One or two WS-Management calls is a management action; a sustained
+        # exchange is a session somebody is working in.
+        "session_min_requests": 5,
+    },
+    "ldap": {
+        # Two searches is a client that looked around; a single bind-and-read is
+        # an application doing its job.
+        "enum_min_searches": 2,
+    },
+    "smb": {
+        "session_min_operations": 3,
+    },
     "dns": {
         "dga_entropy_threshold": 3.8,
         "dga_min_length": 12,

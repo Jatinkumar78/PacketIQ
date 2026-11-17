@@ -119,6 +119,61 @@ _RATIONALE: dict = {
         "why": "Self-signed, expired or abnormally long-lived certs are common on C2 and interception infrastructure.",
         "action": "Verify the endpoint's legitimacy; treat unknown self-signed external certs as suspicious.",
     },
+    EventType.KERBEROS_USER_ENUM: {
+        "what": "One host asked a domain controller about many account names at once.",
+        "why": "A KDC answers an unknown principal differently from a real one, so an attacker can sift valid accounts out of a wordlist without ever guessing a password. The accounts named in the evidence were confirmed by the KDC itself.",
+        "action": "Treat every confirmed account as targeted. Check whether any of them later authenticated from this source, and review the DC's Kerberos logging for event 4768 from this address.",
+    },
+    EventType.KERBEROS_BRUTE_FORCE: {
+        "what": "Pre-authentication failed for many different accounts from one source.",
+        "why": "One password tried across many accounts stays under per-account lockout thresholds, which is precisely why spraying is preferred to brute force. Every account named exists.",
+        "action": "Force a reset on any account that subsequently succeeded, and check for a single weak password shared across the named accounts.",
+    },
+    EventType.KERBEROS_ROASTING: {
+        "what": "Ticket material was obtained that can be cracked away from the network.",
+        "why": "An AS-REP for an account without pre-authentication, or a service ticket encrypted with RC4, hands over a hash the attacker can attack offline at their own pace with no further traffic and no failed logons.",
+        "action": "Rotate the credentials of every account and service principal named. Enable pre-authentication, and set a long random password on service accounts so an offline crack does not finish.",
+    },
+    EventType.DCERPC_SUSPECT_BIND: {
+        "what": "A bind to a remote-procedure interface that is a known attack tool.",
+        "why": "The interface UUID in a DCERPC bind says which service was asked for, in clear text even when the call is encrypted. svcctl creates a service to run a payload (PsExec); atsvc schedules a task; drsuapi replicates password hashes out of the domain (DCSync); spoolss is PrintNightmare. A bind to one of these from a host that is not its normal client is the signal.",
+        "action": "Match the client against who should be making this call. For svcctl or atsvc, check the target's service and scheduled-task logs; for drsuapi, treat it as a full domain compromise and begin credential rotation from krbtgt down.",
+    },
+    EventType.DCERPC_RECON: {
+        "what": "RPC endpoint-mapper probing, or binds the server refused.",
+        "why": "Asking the endpoint mapper what interfaces are available, or having binds rejected, is how an attacker enumerates a host's RPC surface before choosing a service to abuse. On its own it is reconnaissance, not execution.",
+        "action": "Note the source as scanning the RPC surface and watch for a follow-up bind that succeeds.",
+    },
+    EventType.LDAP_ENUMERATION: {
+        "what": "A client read the directory: which domain, which objects, which attributes.",
+        "why": "Every intrusion into Active Directory starts by asking what is there, and LDAP is how you ask. A RootDSE query works before you know anything about the domain, which is why it comes first. A search asking for servicePrincipalName is looking for kerberoastable accounts; one asking for userAccountControl is usually looking for accounts with pre-authentication disabled.",
+        "action": "Compare the filters in the evidence against what this client has any business asking. Directory reads are also normal administration, so the question is who asked, not whether LDAP was used.",
+    },
+    EventType.SMB_LATERAL_MOVEMENT: {
+        "what": "A connection to an administrative share, or to a named pipe behind one.",
+        "why": "ADMIN$, C$ and IPC$ are not browsed by users. Writing to ADMIN$ and then opening the svcctl pipe is how PsExec and its descendants run code on a remote host; atsvc is the scheduled-task equivalent. The share connection and the pipe together are remote code execution.",
+        "action": "Treat the destination as compromised. Check Windows event 7045 for a service created in this window, and the scheduled-task log, then look for the file that was written.",
+    },
+    EventType.SMB_FILE_ACCESS: {
+        "what": "Files opened, read or written over SMB.",
+        "why": "A write to an administrative share is usually a payload being staged before execution. A large read from a user share may be the data leaving. The filenames are in the evidence because the name is often the whole answer.",
+        "action": "Retrieve the named files from the destination and hash them. For reads, work out what the data was and whether it should have left.",
+    },
+    EventType.WINRM_EXECUTION: {
+        "what": "A remote-management session: commands run on the target over WS-Management.",
+        "why": "WinRM is how PowerShell Remoting and tools like Evil-WinRM get an interactive shell on a Windows host. The command text is inside SPNEGO session encryption and cannot be recovered from the capture, but the account, the client software and the volume are in clear text. A client that is not Microsoft's own WinRM client did not get there by an administrator's normal workflow.",
+        "action": "Treat the target as compromised from the first request. Pull PowerShell operational and WinRM logs on the host for this window, which do hold the command text, and disable the account named until it is cleared.",
+    },
+    EventType.NTLM_AUTHENTICATION: {
+        "what": "An account, domain and workstation name sent in an NTLM handshake.",
+        "why": "The NTLM type 3 message names the account in clear text even when the session payload is encrypted. Over plain HTTP the challenge/response travels with it, which is material for an offline crack or a relay. The workstation name is whatever the client chose to send, so it describes the client rather than proving its identity.",
+        "action": "Confirm whether this account and workstation pairing is expected. If the workstation name is unfamiliar, treat the account as compromised rather than the machine as unknown.",
+    },
+    EventType.KERBEROS_ANOMALY: {
+        "what": "Kerberos used in a way current Windows clients do not.",
+        "why": "Asking only for RC4 when AES is standard is a deliberate downgrade: RC4 ticket material is far cheaper to crack. Genuine domain members negotiate AES.",
+        "action": "Identify the client. If it is not a legacy system that genuinely needs RC4, treat the request as tooling rather than a domain member.",
+    },
 }
 
 # Findings that rest on observed fact (a feed hit / cleartext data), not a

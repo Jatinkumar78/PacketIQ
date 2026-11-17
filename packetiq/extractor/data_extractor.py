@@ -130,6 +130,24 @@ class ExtractionResult:
 
     # ── ARP / layer-2 tracking (host discovery & cache poisoning) ─
     # sender IP → set of distinct target IPs it sent ARP requests for
+    # Active Directory authentication read from Kerberos messages during the
+    # detection pass. Empty when the capture carries no Kerberos at all, which
+    # is itself the answer to "was there any directory activity here?".
+    kerberos: dict = field(default_factory=dict)
+
+    # WS-Management / PowerShell Remoting, with the NTLM identity that
+    # authenticated to it. Empty when the capture carries no WinRM.
+    winrm: dict = field(default_factory=dict)
+
+    # Directory reads over LDAP: what was asked of the domain controller.
+    ldap: dict = field(default_factory=dict)
+
+    # SMB: shares reached, files touched, and who authenticated.
+    smb: dict = field(default_factory=dict)
+
+    # DCERPC: which remote-procedure interfaces were bound (svcctl, drsuapi, …).
+    dcerpc: dict = field(default_factory=dict)
+
     arp_request_targets: dict = field(default_factory=dict)
     # sender IP → number of ARP requests it sent
     arp_request_counts: dict = field(default_factory=dict)

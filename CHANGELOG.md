@@ -24,7 +24,7 @@ re-measured on 2026-11-17 after the documentation gates below were added:
 
 | | |
 |---|---|
-| Tests | **2,006 passing**, **100.00%** line coverage of **10,132** statements |
+| Tests | **2,221 passing**, **100.00%** line coverage of **11,499** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.11 and 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean at `py311` · `mypy` clean across **83** source files |
@@ -215,6 +215,262 @@ there the floor was the only thing standing.
 from three packages to seven since the 1.0.0 baseline; it is itemised in
 SECURITY.md and `docs/security_audit/pip_audit.txt` and printed by CI's advisory
 3.9 audit on every push, rather than rounded away.
+
+### DCERPC: which RPC interface the attacker reached for
+
+The last of the Active Directory protocols. A great deal of what an intruder
+does on a Windows network is a remote procedure call, and the calls are told
+apart not by a port but by the interface UUID named in the DCERPC bind, which
+is in clear text even when the call that follows is encrypted. Creating a
+service to run a payload is svcctl (the engine inside PsExec). Scheduling a task
+is atsvc. Replicating every account hash out of the domain is drsuapi, the
+DCSync attack.
+
+**Added: `packetiq/detection/dcerpc.py`.** It reads the bind, maps the interface
+UUID to what it is used for, and grades it: drsuapi and the Zerologon/PetitPotam
+surfaces are CRITICAL credential access, svcctl and atsvc are HIGH execution,
+samr and lsarpc are MEDIUM discovery. When a request is readable it names the
+operation, so drsuapi opnum 3 is reported as DRSGetNCChanges rather than a bare
+number. Endpoint-mapper probing and refused binds are reported separately as LOW
+reconnaissance of the RPC surface. Surfaced in the terminal, the web app and the
+copilot context.
+
+**The honest result on the source capture.** It contains almost no DCERPC: one
+rejected bind on the endpoint mapper, and TCP connections to ports 135 and 593
+that were opened and refused. The attacker ran code over WinRM, not over an RPC
+named pipe, so this reports endpoint-mapper probing and a refused bind as
+reconnaissance and nothing more, because nothing more happened. The execution and
+DCSync detections are verified against binds built for the tests, naming real
+Windows interface UUIDs, rather than against traffic that is not in this capture.
+
+**Deleted, not excluded.** scapy always materialises a bind's context list, so a
+single-interface guard was unreachable and was removed under the house rule.
+
+**Tests.** `test_dcerpc.py` joins the suite. The capture now reads
+`12 events | 3 chains | 100/100 CRITICAL`.
+
+**Still unparsed:** kpasswd. The synthetic validation suite still has no Active
+Directory fixture, so `tools/validate.py --suite` does not regression-cover the
+eleven Kerberos, WinRM, LDAP, SMB and DCERPC detectors now in the pipeline.
+
+### LDAP, SMB, and answering a directory-forensics capture end to end
+
+The test case throughout this run was a TryHackMe Active Directory capture whose
+room asks six questions. With Kerberos and WinRM in place the tool could name the
+attacker and the foothold account; this change makes it answer the rest, and,
+just as importantly, say plainly which answers a packet capture cannot give.
+
+**Added: LDAP (`packetiq/detection/ldap.py`).** Search requests are decoded back
+into the filter an operator typed, so `(&(objectClass=user)(servicePrincipalName=*))`
+is reported as written and recognised for what it is. RootDSE discovery is called
+out as the query that runs before you know the domain's own names, and
+`servicePrincipalName` / `userAccountControl` in a filter are named for what they
+hunt. A simple bind on a cleartext port is a credential disclosure, reported
+without reproducing the password. An unreachable LDAPS branch was deleted after a
+test showed 636 is TLS from the first byte, so nothing LDAP-shaped ever reaches
+the parser there.
+
+**Added: SMB (`packetiq/detection/smb.py`).** Tree connects to `ADMIN$` / `C$` /
+`IPC$` and the named pipes behind them (`svcctl` = PsExec, `atsvc` = scheduled
+task) are lateral movement; the account comes from the NTLM type 3 message inside
+the SPNEGO blob of a session setup, decoded by a new shared `packetiq/detection/
+ntlm.py` that WinRM now uses too. File activity names the files and the byte
+direction. An anonymous null session (an NTLM type 3 naming nobody) and a
+negotiated SMB1 dialect are both reported. A real bug: SMB2 Write states its size
+in `DataLen`, not `Length`, so every write had been counted as zero bytes.
+
+**Added: the AS-REP roast hash (Q3/Q4).** AS-REP roasting was detected before but
+the crackable material was thrown away. The KDC's reply is now formatted as a
+hashcat `-m 18200` string and reported with the account it belongs to, in the
+terminal, the web app and the copilot context. The tool does not crack it: every
+surface states that the password is recovered offline against a wordlist, which
+this program does not do, so a responder gets the hash to rotate the account and
+never a guessed password.
+
+**Added: open ports discovered (Q1).** The services that answered a handshake,
+listed per host, lowest to highest. This was always measured in
+`service_exposure` and never surfaced; it is the measured answer to "what ports
+did the scan find open", and a port is listed only when it demonstrably replied,
+never from the port number alone.
+
+**Fixed: an AS-REP was attributed to the wrong account.** A KDC error does not
+name its account, so it is paired with the most recent request; an AS-REP *does*
+name its account in `cname`, and using the positional guess for it split one
+account's two hashes (an AES one and an RC4 one, as a roasting tool collects)
+across two usernames and invented a roastable account that never existed. The
+reply's own `cname` is now authoritative. On the capture this corrected the
+roastable set from `jr, larry.doe` to `larry.doe` alone, carrying the RC4 hash.
+
+**The honest boundary (Q5/Q6).** 1,574 of the capture's WinRM payloads are
+SPNEGO session-encrypted and 0 carry recoverable command text, so the commands
+the attacker ran, and any flag in their output, are not in the packets. The
+copilot context now says so in as many words and points the model at the host's
+PowerShell operational and WinRM event logs, which record the command text even
+when the wire is encrypted. A tool that printed a flag here would be fabricating
+it; this one says where the answer actually lives.
+
+**What the capture reads as.** `11 events | 3 chains | 100/100 CRITICAL`, with the
+chain legible end to end: a port scan finding 15 open services, 54 Kerberos
+principals probed and 8 accounts confirmed, `larry.doe` among them AS-REP
+roastable with its hash extracted, a cleartext LDAP RootDSE sweep, an anonymous
+SMB session and SMB1, and 793 WinRM requests authenticated as
+`directory.thm\larry.doe` from a client calling itself `KALI`.
+
+**Tests.** `test_ldap.py`, `test_smb.py` and `test_ntlm.py` join the suite, and
+the Kerberos tests gain the AS-REP hash. Where scapy can serialise an SMB2
+session setup or an AS-REP with an encrypted part but cannot re-dissect its own
+output, the test feeds a live object and says why; the byte-level NTLM decoding
+is round-tripped exhaustively in `test_ntlm.py`.
+
+**Still unparsed.** DCERPC (`svcctl`, `atsvc` operations in detail) and kpasswd.
+The synthetic validation suite still has no Active Directory fixture, so
+`tools/validate.py --suite` does not regression-cover the nine Kerberos, WinRM,
+LDAP and SMB detectors added across these three entries.
+
+### WinRM: 792 requests to one path, reported as a suspicious User-Agent
+
+Reading Kerberos told us who the attacker found. It did not tell us what they
+did next, and the same capture says so plainly: **792 of its 1,823 HTTP
+requests are POSTs to `/wsman` on port 5985**. That is Windows Remote
+Management, the channel PowerShell Remoting and tools like Evil-WinRM use to
+run commands on a host. PacketIQ classified one of them as a generic
+"Suspicious HTTP User-Agent" and said nothing about the other 791, so the
+single most important fact in the capture, that somebody had a shell on the
+domain controller, was never stated.
+
+**What is readable and what is not.** PowerShell Remoting wraps its payload in
+`multipart/encrypted; protocol="application/HTTP-SPNEGO-session-encrypted"`,
+so the commands are not recoverable from the packets and this release does not
+pretend otherwise. Every surface says so in those words. What stays in clear
+text is the `Authorization: Negotiate` header, whose NTLM type 3 message
+carries the account, the domain and the workstation name the client chose to
+send; the `User-Agent`, which separates Microsoft's own client from tooling;
+and the volume and duration of the exchange.
+
+**Added**
+
+* `packetiq/detection/winrm.py`, reading WS-Management request heads on 5985
+  and 5986. The HTTP head is hand-parsed rather than handed to scapy's HTTP
+  layer, which binds to port 80 and would need rebinding per port.
+* **WinRM execution** (T1021.006 / T1059.001), graded on two axes: volume, and
+  whether the client is Microsoft's own. An administrator running a management
+  task is MEDIUM; sustained tooling is CRITICAL.
+* **NTLM authentication** (T1557.001), naming the account, the domain and the
+  claimed workstation. HIGH over plain HTTP, where the challenge and response
+  travel with it, and MEDIUM over HTTPS. The workstation name is described
+  everywhere as what the client called itself, not as proof of the machine's
+  identity, because that is all it is.
+* A **Remote Management** section in the terminal, a matching block in the web
+  app, a `winrm` object on `/api/results`, and a `REMOTE MANAGEMENT` section in
+  the copilot context that tells the model in the same breath what is known and
+  that it must not speculate about which commands ran.
+* 48 tests in `tests/test_winrm.py`. NTLM messages are built with scapy's own
+  layer and base64-encoded exactly as a client puts them in a header.
+
+**Fixed**
+
+* NTLM name fields arrive as `str` only when the client negotiated Unicode and
+  as raw `bytes` otherwise, so `str()` on them produced `b'larry.doe'` in the
+  middle of a finding. Both encodings are now decoded.
+* A blanket `except` around the three NTLM name reads discarded a perfectly
+  good username whenever the domain was absent, because scapy raises for an
+  omitted field rather than returning nothing. Each field is now read on its
+  own. An account with no domain is what a local or workgroup login looks like,
+  which is exactly the login worth noticing. This is the second time in two
+  releases that a broad `except` was found hiding a real extraction.
+
+**What the capture now reads as.** From `3 events | 0 chains | 39/100 HIGH` at
+the start of this work to **`8 events | 2 chains | 100/100 CRITICAL`**, and the
+chain is legible end to end: a port scan, 54 Kerberos principals probed and
+eight accounts confirmed, `larry.doe` among them flagged as AS-REP roastable,
+then 793 WS-Management requests over two minutes authenticated as
+`directory.thm\larry.doe` from a client calling itself `KALI`, driven by a Ruby
+WinRM client. Each of those is a packet observation, not an inference.
+
+**Still unparsed,** in the order they are worth doing: LDAP (directory
+enumeration), SMB2 (shares, filenames, lateral movement), DCERPC (`svcctl` and
+`atsvc`, which are PsExec and scheduled tasks), and kpasswd. The synthetic
+validation suite still has no Active Directory fixture, so `tools/validate.py
+--suite` does not regression-cover the six detectors added in these two
+entries.
+
+### Kerberos: the tool could not read the protocol that carries Active Directory attacks
+
+A real intrusion capture went in and five words came out. PacketIQ reported a
+port scan, a stealth scan and one suspicious HTTP request on an 11,136-packet
+Active Directory capture, then declared `3 events | 0 chains | Risk 39/100`.
+What it had not read was 60 AS-REQs carrying 54 distinct usernames, of which
+the domain controller confirmed six as real accounts.
+
+The copilot could not answer questions about that capture, and it was blamed
+for it. The fault was upstream: the pipeline went `parser -> flows / DNS /
+HTTP / TCP-state` and had no Kerberos, so the model's context contained no
+directory evidence at all. The grounding guardrail then did exactly what it is
+for, redacting every account name the model guessed at. An empty context, not
+a weak model, and not a broken guardrail.
+
+**Added**
+
+* `packetiq/detection/kerberos.py`, which reads AS-REQ, TGS-REQ, AS-REP,
+  TGS-REP and KRB-ERROR with scapy's own Kerberos layer. No new dependency:
+  scapy has shipped this since 2.8.0 and the project already required it.
+* Four detections, each resting on what the KDC itself said rather than on
+  port 88 being open:
+  * **User enumeration** (T1087.002). A pre-authentication probe gets one of
+    three answers, and each is a fact about the directory:
+    `KDC_ERR_C_PRINCIPAL_UNKNOWN` means no such account,
+    `KDC_ERR_PREAUTH_REQUIRED` means it exists, and an AS-REP instead of an
+    error means it exists with pre-authentication disabled. Requires both many
+    distinct principals and the KDC disowning some of them, because a busy
+    host legitimately requests many tickets; what it does not do is ask for
+    accounts that were never created.
+  * **Password spraying** (T1110.003) from `KDC_ERR_PREAUTH_FAILED` across
+    distinct accounts, which stays under per-account lockout by design.
+  * **Roasting** (T1558.003 / T1558.004), both variants: a ticket issued to a
+    request carrying no pre-authentication, and service tickets for non-krbtgt
+    SPNs with RC4 called out separately.
+  * **Encryption downgrade** (T1558 / T1600) where only RC4 is offered and a
+    current Windows client would negotiate AES.
+* Findings name the accounts. "Six accounts were confirmed" is a count;
+  `djohn, kranith, ray, john.doe, ranith.kays, joan.ray` is an investigation.
+  The terminal gained a **Directory Services** section, the web app a
+  **Directory Services** block in Assets, and `/api/results` a `kerberos`
+  object, because the findings table truncates a description and the names
+  were being computed and then thrown away on the way to the screen.
+* An `ACTIVE DIRECTORY / KERBEROS` section in the copilot context, listing
+  each confirmed account beside the KDC reply that proves it, so an answer can
+  cite its evidence instead of asserting a name.
+* Kerberos enumeration now correlates as reconnaissance, so "scanned the host,
+  then enumerated its directory" reads as one chain rather than two unrelated
+  findings. On the capture above: `3 events | 0 chains | 39/100 HIGH` became
+  `6 events | 1 chain | 81/100 CRITICAL`.
+* 44 tests in `tests/test_kerberos.py`. Every packet is a real Kerberos
+  message built with scapy and round-tripped through bytes, so the decode path
+  under test is the one a capture takes.
+
+**Fixed**
+
+* A KDC-REP names the client realm `crealm`, not `realm`. Reading `realm`
+  raised `AttributeError`, which the accumulator counts as an undecodable
+  message, so every AS-REP was being discarded in silence and AS-REP roasting
+  could never have fired. Found by constructing a real AS-REP in a test rather
+  than by reading the RFC, which is the argument for building test packets
+  with the protocol library instead of hand-writing fixtures.
+
+  It was not a cosmetic fix. The capture above reported two undecodable
+  messages; they were not TCP fragments but those two AS-REPs, and decoding
+  them raised a **CRITICAL AS-REP roasting finding** naming `jr` and
+  `larry.doe` as accounts whose pre-authentication is disabled. The confirmed
+  account total went from six to eight and the capture's undecodable count to
+  zero. The counter that made this visible exists because a silently swallowed
+  exception is indistinguishable from a clean capture.
+
+**Honest limits.** This closes the Active Directory authentication gap, not
+every gap. The same capture also carries 792 WinRM calls to `/wsman`, LDAP
+queries, SMB2 session setup and kpasswd traffic, and none of those are parsed
+yet; they are the next protocols to read, in that order. The synthetic
+validation suite has no Kerberos fixture, so the regression gate does not yet
+cover these detectors the way it covers the other eighteen.
 
 ### The documented clone command did not work, and two links named a stranger
 

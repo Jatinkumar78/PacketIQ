@@ -792,6 +792,14 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
         "fingerprints":  [_ser_fp(f) for f in fps],
         "devices":       _devices_payload(result),
         "chassis_groups": _chassis_payload(result),
+        # Active Directory authentication. Sent whether or not a detector fired,
+        # because "which accounts exist in this realm?" is answered by the
+        # messages themselves, not only by the alerts raised over them.
+        "kerberos":      getattr(result, "kerberos", {}) or {},
+        "winrm":         getattr(result, "winrm", {}) or {},
+        "ldap":          getattr(result, "ldap", {}) or {},
+        "smb":           getattr(result, "smb", {}) or {},
+        "dcerpc":        getattr(result, "dcerpc", {}) or {},
         "sigma_rules":   [{"title": r.title, "level": r.level, "yaml": r.raw_yaml} for r in sigma],
         "attributions":  [_ser_attr(a) for a in attrs],
         "graph":         _build_graph(result, events),

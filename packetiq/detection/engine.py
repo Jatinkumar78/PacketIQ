@@ -112,6 +112,29 @@ class DetectionEngine:
             carver_acc = file_carver.FileCarverAccumulator()
         except Exception:
             carver_acc = None
+        # Kerberos rides the same pass. It needs scapy's decoded layers, which
+        # the lighter RawPacketRecord of pass 2 does not carry, and reading an
+        # 85 MB capture a fourth time to get them would be wasteful.
+        _step("kerberos_analysis")
+        # No defensive try/except around this one: it imports nothing optional,
+        # and a bare constructor that cannot fail does not need a fallback that
+        # the suite can never reach.
+        from packetiq.detection import kerberos as kerberos_detect
+        krb_acc = kerberos_detect.KerberosAccumulator()
+        # WS-Management joins the same pass: it reads TCP payload headers, which
+        # the flow-level ExtractionResult does not retain.
+        _step("winrm_analysis")
+        from packetiq.detection import winrm as winrm_detect
+        winrm_acc = winrm_detect.WinRMAccumulator()
+        _step("ldap_analysis")
+        from packetiq.detection import ldap as ldap_detect
+        ldap_acc = ldap_detect.LDAPAccumulator()
+        _step("smb_analysis")
+        from packetiq.detection import smb as smb_detect
+        smb_acc = smb_detect.SMBAccumulator()
+        _step("dcerpc_analysis")
+        from packetiq.detection import dcerpc as dcerpc_detect
+        dcerpc_acc = dcerpc_detect.DCERPCAccumulator()
         with contextlib.suppress(Exception):
             from scapy.all import PcapReader
             with PcapReader(pcap_path) as reader:
@@ -120,6 +143,29 @@ class DetectionEngine:
                         tls_acc.feed(pkt)
                     if carver_acc is not None:
                         carver_acc.feed(pkt)
+                    krb_acc.feed(pkt)
+                    winrm_acc.feed(pkt)
+                    ldap_acc.feed(pkt)
+                    smb_acc.feed(pkt)
+                    dcerpc_acc.feed(pkt)
+        with contextlib.suppress(Exception):
+            events.extend(krb_acc.finalize())
+            # Published even when nothing fired: a responder asking "which
+            # accounts exist in this realm?" needs the messages, not just
+            # the alerts.
+            result.kerberos = krb_acc.summary()
+        with contextlib.suppress(Exception):
+            events.extend(winrm_acc.finalize())
+            result.winrm = winrm_acc.summary()
+        with contextlib.suppress(Exception):
+            events.extend(ldap_acc.finalize())
+            result.ldap = ldap_acc.summary()
+        with contextlib.suppress(Exception):
+            events.extend(smb_acc.finalize())
+            result.smb = smb_acc.summary()
+        with contextlib.suppress(Exception):
+            events.extend(dcerpc_acc.finalize())
+            result.dcerpc = dcerpc_acc.summary()
         if tls_acc is not None:
             with contextlib.suppress(Exception):
                 events.extend(tls_acc.finalize())

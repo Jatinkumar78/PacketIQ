@@ -115,6 +115,61 @@ EVENT_TYPE_TECHNIQUES: dict[str, list[MitreTechnique]] = {
         MitreTechnique("TA0011", "Command and Control", "T1573",     "Encrypted Channel"),
         MitreTechnique("TA0005", "Defense Evasion",     "T1036",     "Masquerading"),
     ],
+
+    EventType.KERBEROS_USER_ENUM: [
+        MitreTechnique("TA0007", "Discovery",           "T1087.002", "Account Discovery: Domain Account"),
+        MitreTechnique("TA0043", "Reconnaissance",      "T1589.001", "Gather Victim Identity Information: Credentials"),
+    ],
+
+    EventType.KERBEROS_BRUTE_FORCE: [
+        MitreTechnique("TA0006", "Credential Access",   "T1110.003", "Brute Force: Password Spraying"),
+        MitreTechnique("TA0006", "Credential Access",   "T1110",     "Brute Force"),
+    ],
+
+    EventType.KERBEROS_ROASTING: [
+        MitreTechnique("TA0006", "Credential Access",   "T1558.003", "Steal or Forge Kerberos Tickets: Kerberoasting"),
+        MitreTechnique("TA0006", "Credential Access",   "T1558.004", "Steal or Forge Kerberos Tickets: AS-REP Roasting"),
+    ],
+
+    EventType.KERBEROS_ANOMALY: [
+        MitreTechnique("TA0006", "Credential Access",   "T1558",     "Steal or Forge Kerberos Tickets"),
+        MitreTechnique("TA0005", "Defense Evasion",     "T1600",     "Weaken Encryption"),
+    ],
+
+    EventType.WINRM_EXECUTION: [
+        MitreTechnique("TA0008", "Lateral Movement",    "T1021.006", "Remote Services: Windows Remote Management"),
+        MitreTechnique("TA0002", "Execution",           "T1059.001", "Command and Scripting Interpreter: PowerShell"),
+    ],
+
+    EventType.NTLM_AUTHENTICATION: [
+        MitreTechnique("TA0006", "Credential Access",   "T1557.001", "Adversary-in-the-Middle: LLMNR/NBT-NS Poisoning and SMB Relay"),
+        MitreTechnique("TA0006", "Credential Access",   "T1110",     "Brute Force"),
+    ],
+
+    EventType.LDAP_ENUMERATION: [
+        MitreTechnique("TA0007", "Discovery",           "T1087.002", "Account Discovery: Domain Account"),
+        MitreTechnique("TA0007", "Discovery",           "T1482",     "Domain Trust Discovery"),
+    ],
+
+    EventType.SMB_LATERAL_MOVEMENT: [
+        MitreTechnique("TA0008", "Lateral Movement",    "T1021.002", "Remote Services: SMB/Windows Admin Shares"),
+        MitreTechnique("TA0002", "Execution",           "T1569.002", "System Services: Service Execution"),
+    ],
+
+    EventType.SMB_FILE_ACCESS: [
+        MitreTechnique("TA0008", "Lateral Movement",    "T1570",     "Lateral Tool Transfer"),
+        MitreTechnique("TA0009", "Collection",          "T1039",     "Data from Network Shared Drive"),
+    ],
+
+    EventType.DCERPC_SUSPECT_BIND: [
+        MitreTechnique("TA0008", "Lateral Movement",    "T1021.003", "Remote Services: DCOM"),
+        MitreTechnique("TA0006", "Credential Access",   "T1003.006", "OS Credential Dumping: DCSync"),
+    ],
+
+    EventType.DCERPC_RECON: [
+        MitreTechnique("TA0007", "Discovery",           "T1135",     "Network Share Discovery"),
+        MitreTechnique("TA0043", "Reconnaissance",      "T1046",     "Network Service Discovery"),
+    ],
 }
 
 # ── Kill Chain phase per EventType ────────────────────────────────────────────
@@ -140,6 +195,20 @@ EVENT_TYPE_KILL_CHAIN: dict[str, str] = {
     EventType.MALICIOUS_FILE:      "Installation",
     EventType.HTTP_ATTACK:         "Exploitation",
     EventType.TLS_ANOMALY:         "Command & Control",
+    # Enumeration is reconnaissance against the directory; everything that
+    # follows it is an attempt to come away with credential material.
+    EventType.KERBEROS_USER_ENUM:  "Reconnaissance",
+    EventType.KERBEROS_BRUTE_FORCE: "Exploitation",
+    EventType.KERBEROS_ROASTING:   "Exploitation",
+    EventType.KERBEROS_ANOMALY:    "Exploitation",
+    # A remote shell on the target is the objective, not a step toward one.
+    EventType.WINRM_EXECUTION:     "Actions on Objectives",
+    EventType.NTLM_AUTHENTICATION: "Exploitation",
+    EventType.LDAP_ENUMERATION:    "Reconnaissance",
+    EventType.SMB_LATERAL_MOVEMENT: "Actions on Objectives",
+    EventType.SMB_FILE_ACCESS:     "Actions on Objectives",
+    EventType.DCERPC_SUSPECT_BIND: "Actions on Objectives",
+    EventType.DCERPC_RECON:        "Reconnaissance",
 }
 
 

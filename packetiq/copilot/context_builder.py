@@ -49,9 +49,15 @@ def build_context(
     sections.append(_protocol_distribution(result))
     sections.append(_network_topology(result))
     sections.append(_port_activity(result))
+    sections.append(_discovered_services(result))
     sections.append(_detection_events(events))
     sections.append(_attack_chains(chains))
     sections.append(_dns_intelligence(result))
+    sections.append(_directory_services(result))
+    sections.append(_directory_reads(result))
+    sections.append(_file_sharing(result))
+    sections.append(_rpc_interfaces(result))
+    sections.append(_remote_management(result))
     sections.append(_http_activity(result))
     sections.append(_ioc_summary(result, events, chains))
 
@@ -145,6 +151,34 @@ def _port_activity(result: ExtractionResult) -> str:
     return "\n".join(lines)
 
 
+def _discovered_services(result: ExtractionResult) -> str:
+    """The ports an attacker found open, stated as measured fact.
+
+    A port is listed here only when it demonstrably answered a handshake, which
+    is the difference between "a port we saw traffic to" and "a service that is
+    actually there". This is the answer to "what ports did the scan find open",
+    and it is grouped by host so the target of a scan is unambiguous.
+    """
+    exposure = getattr(result, "service_exposure", {}) or {}
+    open_by_host: dict[str, list[tuple[int, str]]] = {}
+    for (ip, port, proto), info in exposure.items():
+        if info.get("state") != "open":
+            continue
+        open_by_host.setdefault(ip, []).append((port, info.get("service", "")))
+    if not open_by_host:
+        return ""
+
+    lines = ["=== OPEN PORTS DISCOVERED (services that answered a handshake) ==="]
+    for ip in sorted(open_by_host):
+        ports = sorted(open_by_host[ip])
+        listed = ", ".join(str(p) for p, _ in ports)
+        lines.append(f"  {ip}: {listed}")
+        for port, svc in ports:
+            if svc:
+                lines.append(f"      {port:<6} {svc}")
+    return "\n".join(lines)
+
+
 def _detection_events(events: list[DetectionEvent]) -> str:
     if not events:
         return "=== DETECTION EVENTS ===\nNone detected."
@@ -221,6 +255,225 @@ def _dns_intelligence(result: ExtractionResult) -> str:
     for domain, cnt in sorted(freq.items(), key=lambda x: x[1], reverse=True)[:20]:
         lines.append(f"  {domain:<50} {cnt:>5}x")
 
+    return "\n".join(lines)
+
+
+def _directory_services(result: ExtractionResult) -> str:
+    """Active Directory authentication, stated as fact rather than inference.
+
+    This section exists because of a specific failure. On a real AD intrusion
+    capture the copilot could not say which accounts the attacker had found,
+    not because the model was weak but because nothing in its context mentioned
+    Kerberos at all -- the grounding filter then correctly stripped every name
+    it guessed. The parser now reads those messages, and this is where they
+    reach the model.
+
+    Valid accounts are listed with the KDC reply that proved them, so an answer
+    built on this section can cite why an account is known to exist instead of
+    asserting it.
+    """
+    krb = getattr(result, "kerberos", None) or {}
+    if not krb:
+        return ""
+
+    lines = ["=== ACTIVE DIRECTORY / KERBEROS ==="]
+    lines.append(f"  Messages observed : {krb.get('messages', 0)}")
+
+    types = krb.get("message_types") or {}
+    if types:
+        lines.append("  Message types     : "
+                     + ", ".join(f"{k} x{v}" for k, v in sorted(types.items())))
+
+    realms = krb.get("realms") or []
+    if realms:
+        lines.append(f"  Realm(s)          : {', '.join(realms)}")
+
+    errors = krb.get("kdc_errors") or {}
+    if errors:
+        lines.append("  KDC replies       : "
+                     + ", ".join(f"{k} x{v}" for k, v in errors.items()))
+
+    valid = krb.get("valid_accounts") or {}
+    if valid:
+        lines.append(f"  ACCOUNTS CONFIRMED TO EXIST ({len(valid)}) — the KDC answered "
+                     f"for each of these:")
+        for name, proof in valid.items():
+            lines.append(f"    {name:<24} proved by {proof}")
+
+    hashes = krb.get("asrep_hashes") or {}
+    if hashes:
+        lines.append(f"  AS-REP ROASTABLE CREDENTIAL MATERIAL ({len(hashes)}) — these "
+                     f"accounts have pre-authentication disabled, so the KDC's reply "
+                     f"carried a hash crackable offline (hashcat -m 18200):")
+        for name, digest in hashes.items():
+            lines.append(f"    {name}: {digest}")
+        lines.append("    The password is NOT in this capture. It is recovered by "
+                     "cracking the hash above against a wordlist, offline, which this "
+                     "tool does not do. Report the hash, not a guessed password.")
+
+    tried = krb.get("usernames_seen") or []
+    if tried:
+        lines.append(f"  Principals probed : {len(tried)} distinct")
+        lines.append("    " + ", ".join(tried[:40]))
+        if len(tried) > 40:
+            lines.append(f"    … and {len(tried) - 40} more")
+
+    spns = krb.get("service_principals") or []
+    if spns:
+        lines.append(f"  Service principals requested ({len(spns)}): "
+                     + ", ".join(spns[:20]))
+
+    undecodable = krb.get("undecodable_messages") or 0
+    if undecodable:
+        lines.append(f"  Not decodable     : {undecodable} message(s), typically "
+                     f"fragmented across TCP segments")
+
+    return "\n".join(lines)
+
+
+def _directory_reads(result: ExtractionResult) -> str:
+    """What was asked of the directory over LDAP, in the filter's own notation.
+
+    A filter is reported as written, because that is how it is recognised: a
+    responder reading `(&(objectClass=user)(servicePrincipalName=*))` knows at
+    once what it was for.
+    """
+    ldap = getattr(result, "ldap", None) or {}
+    if not ldap:
+        return ""
+
+    lines = ["=== DIRECTORY READS (LDAP) ==="]
+    lines.append(f"  Operations     : {ldap.get('operations', 0)}, "
+                 f"{ldap.get('searches', 0)} search(es)")
+    if ldap.get("rootdse_searches"):
+        lines.append(f"  RootDSE queries: {ldap['rootdse_searches']} "
+                     f"(the query you run before you know the domain's own names)")
+    if ldap.get("clients"):
+        lines.append(f"  Client(s)      : {', '.join(ldap['clients'])}")
+    for name, count in (ldap.get("filters") or {}).items():
+        lines.append(f"    filter  {name}  x{count}")
+    for base, count in (ldap.get("base_objects") or {}).items():
+        lines.append(f"    base    {base}  x{count}")
+    attributes = ldap.get("attributes_requested") or {}
+    if attributes:
+        lines.append("  Attributes asked for: " + ", ".join(list(attributes)[:20]))
+    notable = ldap.get("notable_attributes") or {}
+    for attribute, meaning in notable.items():
+        lines.append(f"    NOTE: {attribute} -> {meaning}")
+    if ldap.get("binds"):
+        lines.append("  Binds          : " + ", ".join(ldap["binds"]))
+    lines.append(f"  StartTLS       : {'yes' if ldap.get('starttls') else 'not observed'}")
+    return "\n".join(lines)
+
+
+def _file_sharing(result: ExtractionResult) -> str:
+    """SMB: which shares were reached, which files were touched, by whom."""
+    smb = getattr(result, "smb", None) or {}
+    if not smb:
+        return ""
+
+    lines = ["=== FILE SHARING (SMB) ==="]
+    lines.append(f"  Operations : {smb.get('operations', 0)} across "
+                 f"{smb.get('sessions', 0)} session(s)")
+    commands = smb.get("commands") or {}
+    if commands:
+        lines.append("  Commands   : " + ", ".join(f"{k} x{v}" for k, v in commands.items()))
+    for account in smb.get("accounts") or []:
+        who = "\\".join(x for x in (account.get("domain"), account.get("user")) if x)
+        lines.append(f"  AUTHENTICATED AS: {who} "
+                     f"(client called itself {account.get('workstation') or 'not sent'})")
+    if smb.get("anonymous_sessions"):
+        lines.append(f"  Anonymous sessions: {smb['anonymous_sessions']} "
+                     f"(null session: authenticated as nobody)")
+    shares = smb.get("shares") or {}
+    if shares:
+        lines.append("  Shares     : " + ", ".join(f"{k} x{v}" for k, v in shares.items()))
+    files = smb.get("files") or {}
+    if files:
+        lines.append("  Files      : " + ", ".join(list(files)[:20]))
+    pipes = smb.get("named_pipes") or {}
+    for pipe, meaning in pipes.items():
+        lines.append(f"    PIPE: {pipe} -> {meaning}")
+    lines.append(f"  Bytes      : {smb.get('bytes_written', 0)} written, "
+                 f"{smb.get('bytes_read', 0)} read")
+    if smb.get("smb1_seen"):
+        lines.append("  SMB1       : negotiated (deprecated dialect, EternalBlue surface)")
+    return "\n".join(lines)
+
+
+def _rpc_interfaces(result: ExtractionResult) -> str:
+    """Which DCERPC interfaces were bound, named by what they are used for.
+
+    The interface UUID is the whole signal: it says which remote-procedure
+    service was asked for, in clear text, even when the call that follows is
+    encrypted. A bind to drsuapi is DCSync; to svcctl, PsExec.
+    """
+    rpc = getattr(result, "dcerpc", None) or {}
+    if not rpc:
+        return ""
+
+    lines = ["=== RPC INTERFACES (DCERPC) ==="]
+    lines.append(f"  Binds      : {rpc.get('binds', 0)} across "
+                 f"{rpc.get('sessions', 0)} session(s)")
+    interfaces = rpc.get("interfaces") or {}
+    for name, meaning in interfaces.items():
+        lines.append(f"    {name}: {meaning}")
+    operations = rpc.get("operations") or []
+    for op in operations:
+        lines.append(f"    OPERATION: {op}")
+    if rpc.get("endpoint_mapper_requests") or rpc.get("rejected_binds"):
+        lines.append(f"  Surface mapping: {rpc.get('endpoint_mapper_requests', 0)} "
+                     f"endpoint-mapper bind(s), {rpc.get('rejected_binds', 0)} rejected. "
+                     f"This is reconnaissance of the RPC surface, not execution.")
+    return "\n".join(lines)
+
+
+def _remote_management(result: ExtractionResult) -> str:
+    """WS-Management sessions, and who authenticated to them.
+
+    Stated separately from the HTTP section because 792 POSTs to one path are
+    not web browsing: they are somebody working on the target. The model is
+    told plainly that the command text is unrecoverable, so it answers "a
+    remote session ran for two minutes as this account" rather than inventing
+    the commands.
+    """
+    wrm = getattr(result, "winrm", None) or {}
+    if not wrm:
+        return ""
+
+    lines = ["=== REMOTE MANAGEMENT (WinRM / WS-Management) ==="]
+    lines.append(f"  Requests to /wsman : {wrm.get('requests', 0)} "
+                 f"across {wrm.get('sessions', 0)} session(s)")
+    if wrm.get("clients"):
+        lines.append(f"  Client(s)          : {', '.join(wrm['clients'])}")
+    if wrm.get("targets"):
+        lines.append(f"  Target(s)          : {', '.join(wrm['targets'])}")
+
+    for account in wrm.get("accounts") or []:
+        who = "\\".join(x for x in (account.get("domain"), account.get("user")) if x)
+        station = account.get("workstation") or "not sent"
+        lines.append(f"  AUTHENTICATED AS   : {who}  (client called itself {station})")
+
+    agents = wrm.get("user_agents") or {}
+    if agents:
+        lines.append("  Client software    : "
+                     + ", ".join(f"{name} x{n}" for name, n in agents.items()))
+
+    actions = wrm.get("actions_seen") or {}
+    if actions:
+        lines.append("  Actions in clear   : "
+                     + ", ".join(f"{a} x{n}" for a, n in actions.items()))
+
+    lines.append(f"  Payload            : {wrm.get('payload_bytes', 0)} bytes, "
+                 f"{wrm.get('encrypted_requests', 0)} request(s) SPNEGO-encrypted")
+    lines.append("  NOTE: the command text is inside SPNEGO session encryption and "
+                 "cannot be recovered from this capture. Do not speculate about "
+                 "which commands ran, and if asked for a specific command, a flag, "
+                 "or any output of this session, say it is not present in the packets "
+                 "and point to the host's PowerShell operational and WinRM event logs, "
+                 "which record the command text even when the wire is encrypted. The "
+                 "account, workstation and client software above are read from "
+                 "unencrypted headers and are reliable.")
     return "\n".join(lines)
 
 

@@ -161,6 +161,82 @@ def _force_utf8_output(streams=None) -> None:
 # Root group
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _print_smb_section(ui, smb_data: dict, full: bool) -> None:
+    """Render the SMB forensics section of an analyze run.
+
+    Lifted out of the command body so it can be exercised with crafted data:
+    an account authenticated over SMB, and an anonymous null session, both come
+    from a session setup that scapy can read from a real capture but cannot
+    rebuild into a pcap of its own, so a round-trip test cannot reach them.
+    """
+    if not smb_data:
+        return
+    ui.print_section(
+        "FILE SHARING — SMB",
+        f"{smb_data.get('operations', 0)} operation(s) across "
+        f"{smb_data.get('sessions', 0)} session(s)")
+    shares = smb_data.get("shares", {}) or {}
+    files = smb_data.get("files", {}) or {}
+    if shares or files:
+        ui.print_table(
+            "Shares reached and files opened",
+            columns=[("Path", "bold green", "left"), ("Kind", "yellow", "left"),
+                     ("Times", "cyan", "right")],
+            rows=([[s, "share", f"{n:,}"] for s, n in shares.items()]
+                  + [[f, "file", f"{n:,}"] for f, n in files.items()]),
+            max_rows=9999 if full else 20,
+        )
+    accounts = smb_data.get("accounts", []) or []
+    if accounts:
+        ui.print_table(
+            "Accounts authenticated over SMB",
+            columns=[("Account", "bold red", "left"), ("Domain", "yellow", "left"),
+                     ("Client called itself", "cyan", "left")],
+            rows=[[a.get("user", "?"), a.get("domain", "—"),
+                   a.get("workstation", "not sent")] for a in accounts],
+            max_rows=9999,
+        )
+    pipes = smb_data.get("named_pipes", {}) or {}
+    for pipe, meaning in pipes.items():
+        ui.print_status(f"Named pipe {pipe} opened — {meaning}.", "warning")
+    if smb_data.get("anonymous_sessions"):
+        ui.print_status(
+            f"{smb_data['anonymous_sessions']} anonymous (null) session setup(s): "
+            "the NTLM message carried no username, domain or NT response at all, "
+            "which is a deliberate unauthenticated bind rather than a failed logon.",
+            "warning")
+    if smb_data.get("smb1_seen"):
+        ui.print_status(
+            "SMB1 was negotiated. It has been deprecated since 2014 and is the "
+            "dialect the EternalBlue family targets.", "warning")
+
+
+def _print_dcerpc_section(ui, rpc: dict) -> None:
+    """Render the DCERPC section: which RPC interfaces were bound, and why it matters."""
+    if not rpc:
+        return
+    ui.print_section(
+        "RPC INTERFACES — DCERPC",
+        f"{rpc.get('binds', 0)} bind(s) across {rpc.get('sessions', 0)} session(s)")
+    interfaces = rpc.get("interfaces", {}) or {}
+    if interfaces:
+        ui.print_table(
+            "Remote-procedure interfaces bound (the UUID says what was asked for)",
+            columns=[("Interface", "bold red", "left"),
+                     ("What it is used for", "yellow", "left")],
+            rows=[[name, meaning] for name, meaning in interfaces.items()],
+            max_rows=9999,
+        )
+    for op in (rpc.get("operations", []) or []):
+        ui.print_status(f"RPC operation observed: {op}", "warning")
+    if rpc.get("endpoint_mapper_requests") or rpc.get("rejected_binds"):
+        ui.print_status(
+            f"{rpc.get('endpoint_mapper_requests', 0)} endpoint-mapper bind(s) and "
+            f"{rpc.get('rejected_binds', 0)} rejected bind(s): the RPC surface being "
+            "mapped before a service is chosen. This is reconnaissance, not execution.",
+            "info")
+
+
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
 # `packetiq version` prints the banner and the full build/environment block; this
 # is the conventional one-line form that scripts and packagers reach for first,
@@ -300,6 +376,158 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
                     "interface), shown separately because the packets prove two "
                     "distinct MACs.")
             ui.print_status(note, "info")
+
+    # ── Active Directory / Kerberos ────────────────────────────────────
+    # The accounts a KDC confirmed are the answer to the first question asked
+    # of a directory capture, and they used to be invisible: the findings table
+    # truncates a description, so "six accounts were confirmed" appeared while
+    # their names did not. This section exists to print the names.
+    krb = getattr(result, "kerberos", {}) or {}
+    if krb:
+        realms = ", ".join(krb.get("realms", []) or []) or "unknown"
+        ui.print_section(
+            "DIRECTORY SERVICES — KERBEROS",
+            f"{krb.get('messages', 0)} message(s), realm {realms}")
+
+        types = krb.get("message_types", {}) or {}
+        errors = krb.get("kdc_errors", {}) or {}
+        if types or errors:
+            ui.print_table(
+                "Kerberos message flow",
+                columns=[("Message / KDC reply", "bold green", "left"),
+                         ("Count", "cyan", "right")],
+                rows=([[k, f"{v:,}"] for k, v in sorted(types.items())]
+                      + [[k, f"{v:,}"] for k, v in errors.items()]),
+                max_rows=9999,
+            )
+
+        valid = krb.get("valid_accounts", {}) or {}
+        if valid:
+            ui.print_table(
+                "Accounts the KDC confirmed exist",
+                columns=[("Account", "bold red", "left"),
+                         ("Proved by", "yellow", "left")],
+                rows=[[name, proof] for name, proof in valid.items()],
+                max_rows=9999,
+            )
+            ui.print_status(
+                f"{len(valid)} account(s) confirmed by the domain controller itself. "
+                "A KDC only answers KDC_ERR_PREAUTH_REQUIRED, KDC_ERR_PREAUTH_FAILED "
+                "or KDC_ERR_CLIENT_REVOKED for a principal it knows, so these are "
+                "observations, not guesses.", "warning")
+
+        hashes = krb.get("asrep_hashes", {}) or {}
+        if hashes:
+            ui.print_table(
+                "AS-REP roastable credential material (hashcat -m 18200)",
+                columns=[("Account", "bold red", "left"),
+                         ("Crackable hash", "yellow", "left")],
+                rows=[[name, digest] for name, digest in hashes.items()],
+                max_rows=9999,
+            )
+            ui.print_status(
+                "These accounts have pre-authentication disabled, so the KDC's reply "
+                "carried the hash above. It is the credential material that left the "
+                "network; the password is recovered by cracking it offline against a "
+                "wordlist, which this tool does not do. Treat the account as "
+                "compromised and rotate it.", "warning")
+
+        tried = krb.get("usernames_seen", []) or []
+        if tried:
+            shown = tried if full else tried[:20]
+            ui.print_status(
+                f"Principals probed ({len(tried)} distinct): " + ", ".join(shown)
+                + ("" if full or len(tried) <= 20 else f" … +{len(tried) - 20} more "
+                   "(run with --full for the list)"), "info")
+
+        spns = krb.get("service_principals", []) or []
+        if spns:
+            ui.print_status(
+                f"Service principals requested ({len(spns)}): " + ", ".join(spns[:20]),
+                "info")
+
+        undecodable = krb.get("undecodable_messages", 0) or 0
+        if undecodable:
+            ui.print_status(
+                f"{undecodable} Kerberos message(s) could not be decoded, typically "
+                "because they were fragmented across TCP segments. They are counted "
+                "rather than dropped silently.", "info")
+
+    # ── Directory reads (LDAP) ─────────────────────────────────────────
+    # Filters are printed as written, because that is how they are recognised.
+    ldp = getattr(result, "ldap", {}) or {}
+    if ldp:
+        ui.print_section(
+            "DIRECTORY READS — LDAP",
+            f"{ldp.get('operations', 0)} operation(s), {ldp.get('searches', 0)} search(es)")
+        filters = ldp.get("filters", {}) or {}
+        if filters:
+            ui.print_table(
+                "Search filters sent to the directory",
+                columns=[("Filter", "bold green", "left"), ("Times", "cyan", "right")],
+                rows=[[f, f"{n:,}"] for f, n in filters.items()],
+                max_rows=9999 if full else 12,
+            )
+        notable = ldp.get("notable_attributes", {}) or {}
+        if notable:
+            ui.print_table(
+                "Attributes asked for that say what was being hunted",
+                columns=[("Attribute", "bold red", "left"), ("What it finds", "yellow", "left")],
+                rows=[[k, v] for k, v in notable.items()],
+                max_rows=9999,
+            )
+        if ldp.get("rootdse_searches"):
+            ui.print_status(
+                f"{ldp['rootdse_searches']} RootDSE query/queries — the one search that "
+                "works before you know anything about the domain, and the usual first "
+                "step of directory enumeration.", "warning")
+        if ldp.get("binds"):
+            ui.print_status("LDAP binds: " + ", ".join(ldp["binds"]), "info")
+
+    # ── File sharing (SMB) ─────────────────────────────────────────────
+    _print_smb_section(ui, getattr(result, "smb", {}) or {}, full)
+
+    # ── RPC interfaces (DCERPC) ────────────────────────────────────────
+    _print_dcerpc_section(ui, getattr(result, "dcerpc", {}) or {})
+
+    # ── Remote management (WinRM / WS-Management) ──────────────────────
+    # 792 POSTs to one path is not web browsing, and reporting one of them as a
+    # "suspicious User-Agent" was the old behaviour. The account and the client
+    # software survive SPNEGO encryption; the commands do not, and this says so.
+    wrm = getattr(result, "winrm", {}) or {}
+    if wrm:
+        ui.print_section(
+            "REMOTE MANAGEMENT — WINRM",
+            f"{wrm.get('requests', 0)} WS-Management request(s) across "
+            f"{wrm.get('sessions', 0)} session(s)")
+
+        accounts = wrm.get("accounts", []) or []
+        if accounts:
+            ui.print_table(
+                "Accounts authenticated over WinRM (from the NTLM handshake)",
+                columns=[("Account", "bold red", "left"),
+                         ("Domain", "yellow", "left"),
+                         ("Client called itself", "cyan", "left")],
+                rows=[[a.get("user", "?"), a.get("domain", "—"),
+                       a.get("workstation", "not sent")] for a in accounts],
+                max_rows=9999,
+            )
+
+        agents = wrm.get("user_agents", {}) or {}
+        if agents:
+            ui.print_table(
+                "Client software driving the session",
+                columns=[("User-Agent", "bold green", "left"), ("Requests", "cyan", "right")],
+                rows=[[name, f"{n:,}"] for name, n in agents.items()],
+                max_rows=9999,
+            )
+
+        ui.print_status(
+            f"{wrm.get('encrypted_requests', 0):,} request(s) carried SPNEGO "
+            f"session-encrypted payloads totalling {wrm.get('payload_bytes', 0):,} bytes. "
+            "The commands themselves are NOT recoverable from this capture — pull "
+            "PowerShell operational and WinRM logs on the target for that window, "
+            "which do hold the command text.", "info")
 
     # ── Top destinations ───────────────────────────────────────────────
     ui.print_section("TOP DESTINATIONS", "destination IPs by packet volume")

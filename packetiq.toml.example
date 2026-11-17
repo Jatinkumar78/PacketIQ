@@ -27,6 +27,20 @@ cv_threshold_med     = 0.25         # CV below this => HIGH (regular)
 cv_threshold_jittered = 0.50        # upper CV bound for the jitter-tolerant check
 periodicity_ratio    = 0.70         # fraction of intervals near the median to flag a jittered beacon
 
+[kerberos]
+user_enum_min_names = 10      # distinct principals before a sweep is called a sweep
+user_enum_min_unknown = 3     # KDC_ERR_C_PRINCIPAL_UNKNOWN replies required with them
+spray_min_users = 5           # distinct accounts failing pre-auth = password spraying
+
+[winrm]
+session_min_requests = 5      # WS-Management calls before it counts as a session
+
+[ldap]
+enum_min_searches = 2         # LDAP searches before it counts as enumeration
+
+[smb]
+session_min_operations = 3    # SMB2 operations before file activity is reported
+
 [dns]
 dga_entropy_threshold = 3.8         # Shannon entropy (bits/char) to suspect a DGA
 dga_min_length        = 12          # minimum SLD length to consider for DGA

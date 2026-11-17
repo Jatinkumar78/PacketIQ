@@ -1231,6 +1231,60 @@ tbody tr:hover td{background:var(--surface2)}
         </div>
         <div id="chassis-notes" style="margin-bottom:20px"></div>
 
+        <div id="krb-block" style="display:none;margin-bottom:20px">
+          <div class="sec-head">
+            <div>
+              <div class="sec-title">Directory Services &mdash; Kerberos</div>
+              <div class="sec-sub">Active Directory authentication read from the packets. An account is listed as existing only because the domain controller answered for it &mdash; a KDC returns KDC_ERR_PREAUTH_REQUIRED, KDC_ERR_PREAUTH_FAILED or KDC_ERR_CLIENT_REVOKED only for a principal it knows.</div>
+            </div>
+            <span class="result-count" id="krb-count">0 messages</span>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden;margin-bottom:14px">
+            <div class="tbl-wrap">
+              <table>
+                <thead><tr><th>Account confirmed to exist</th><th>Proved by</th></tr></thead>
+                <tbody id="krb-accounts-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden;margin-bottom:14px">
+            <div class="tbl-wrap">
+              <table>
+                <thead><tr><th>Message / KDC reply</th><th class="num">Count</th></tr></thead>
+                <tbody id="krb-flow-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="krb-notes"></div>
+        </div>
+
+        <div id="wrm-block" style="display:none;margin-bottom:20px">
+          <div class="sec-head">
+            <div>
+              <div class="sec-title">Remote Management &mdash; WinRM</div>
+              <div class="sec-sub">WS-Management sessions: the channel PowerShell Remoting and tools such as Evil-WinRM use to run commands on a Windows host. Payloads are SPNEGO session-encrypted and the commands are <b>not</b> recoverable from the capture; the account, the workstation name the client sent and the client software are not encrypted.</div>
+            </div>
+            <span class="result-count" id="wrm-count">0 requests</span>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden;margin-bottom:14px">
+            <div class="tbl-wrap">
+              <table>
+                <thead><tr><th>Account</th><th>Domain</th><th>Client called itself</th></tr></thead>
+                <tbody id="wrm-accounts-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden;margin-bottom:14px">
+            <div class="tbl-wrap">
+              <table>
+                <thead><tr><th>Client software</th><th class="num">Requests</th></tr></thead>
+                <tbody id="wrm-agents-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="wrm-notes"></div>
+        </div>
+
         <div class="sec-title" style="margin-bottom:16px">Asset Fingerprints</div>
         <div class="card" style="padding:0;overflow:hidden">
           <div class="tbl-wrap">
@@ -2402,6 +2456,94 @@ window.addEventListener('resize', ()=>{
 
 /* ── Assets ── */
 const ROLE_BADGE = {endpoint:'INFO', gateway:'MEDIUM', infrastructure:'INFO', host:'INFO'};
+function renderKerberos(k){
+  // Hidden entirely when the capture carries no Kerberos: an empty panel reads
+  // as "we looked and found nothing", which is a different claim.
+  const block = document.getElementById('krb-block');
+  if(!block) return;
+  const msgs = k.messages||0;
+  if(!msgs){ block.style.display='none'; return; }
+  block.style.display='';
+
+  const realms = (k.realms||[]).join(', ') || 'unknown';
+  document.getElementById('krb-count').textContent =
+    msgs + ' message' + (msgs===1?'':'s') + ' \u00b7 realm ' + realms;
+
+  const accounts = k.valid_accounts||{};
+  const names = Object.keys(accounts);
+  document.getElementById('krb-accounts-tbody').innerHTML = names.length
+    ? names.map(n=>`<tr><td class="mono" style="color:var(--danger);font-weight:600">${esc(n)}</td>
+                        <td style="color:var(--text-sub)">${esc(accounts[n])}</td></tr>`).join('')
+    : `<tr><td colspan="2" style="color:var(--text-sub)">No account was confirmed by the KDC in this capture.</td></tr>`;
+
+  const flow = Object.assign({}, k.message_types||{}, k.kdc_errors||{});
+  document.getElementById('krb-flow-tbody').innerHTML = Object.keys(flow).sort()
+    .map(key=>`<tr><td class="mono">${esc(key)}</td><td class="num">${flow[key]}</td></tr>`).join('');
+
+  const notes = [];
+  const tried = k.usernames_seen||[];
+  if(tried.length){
+    notes.push('<b>'+tried.length+' distinct principal'+(tried.length===1?'':'s')+' probed:</b> '
+               + esc(tried.join(', ')));
+  }
+  const spns = k.service_principals||[];
+  if(spns.length){
+    notes.push('<b>Service principals requested:</b> ' + esc(spns.join(', ')));
+  }
+  if(k.undecodable_messages){
+    notes.push(k.undecodable_messages + ' Kerberos message(s) could not be decoded, '
+               + 'typically because they were fragmented across TCP segments. '
+               + 'They are counted rather than dropped silently.');
+  }
+  document.getElementById('krb-notes').innerHTML = notes.map(n=>`
+    <div style="border:1px solid var(--border);border-left:3px solid var(--accent2);border-radius:8px;
+                padding:12px 14px;background:var(--surface);margin-bottom:8px;
+                font-size:12.5px;color:var(--text-sub);word-break:break-word">${n}</div>`).join('');
+}
+
+function renderWinRM(w){
+  const block = document.getElementById('wrm-block');
+  if(!block) return;
+  const reqs = w.requests||0;
+  if(!reqs){ block.style.display='none'; return; }
+  block.style.display='';
+
+  const sessions = w.sessions||0;
+  document.getElementById('wrm-count').textContent =
+    reqs + ' request' + (reqs===1?'':'s') + ' \u00b7 ' + sessions + ' session' + (sessions===1?'':'s');
+
+  const accounts = w.accounts||[];
+  document.getElementById('wrm-accounts-tbody').innerHTML = accounts.length
+    ? accounts.map(a=>`<tr>
+         <td class="mono" style="color:var(--danger);font-weight:600">${esc(a.user||'?')}</td>
+         <td style="color:var(--text-sub)">${esc(a.domain||'\u2014')}</td>
+         <td class="mono" style="color:var(--text-sub)">${esc(a.workstation||'not sent')}</td></tr>`).join('')
+    : `<tr><td colspan="3" style="color:var(--text-sub)">No NTLM identity was observed on this session.</td></tr>`;
+
+  const agents = w.user_agents||{};
+  document.getElementById('wrm-agents-tbody').innerHTML = Object.keys(agents)
+    .map(a=>`<tr><td class="mono">${esc(a)}</td><td class="num">${agents[a]}</td></tr>`).join('');
+
+  const notes = [];
+  if(w.clients && w.targets){
+    notes.push('<b>'+esc((w.clients||[]).join(', '))+'</b> &rarr; <b>'+esc((w.targets||[]).join(', '))+'</b>');
+  }
+  const acts = w.actions_seen||{};
+  if(Object.keys(acts).length){
+    notes.push('<b>Actions visible before session encryption:</b> '
+               + esc(Object.keys(acts).map(a=>a+' \u00d7'+acts[a]).join(', ')));
+  }
+  notes.push((w.encrypted_requests||0).toLocaleString() + ' request(s) carried SPNEGO '
+             + 'session-encrypted payloads totalling ' + (w.payload_bytes||0).toLocaleString()
+             + ' bytes. The commands themselves are <b>not</b> recoverable here \u2014 pull '
+             + 'PowerShell operational and WinRM logs on the target for this window, which do '
+             + 'hold the command text.');
+  document.getElementById('wrm-notes').innerHTML = notes.map(n=>`
+    <div style="border:1px solid var(--border);border-left:3px solid var(--accent2);border-radius:8px;
+                padding:12px 14px;background:var(--surface);margin-bottom:8px;
+                font-size:12.5px;color:var(--text-sub);word-break:break-word">${n}</div>`).join('');
+}
+
 function renderAssets(d){
   const devs = d.devices||[];
   document.getElementById('device-count').textContent = devs.length + (devs.length===1?' device':' devices');
@@ -2430,6 +2572,9 @@ function renderAssets(d){
         <div style="font-size:12.5px;color:var(--text-sub);margin-top:4px">${esc(g.note||'')}</div>
       </div>`).join('') : '';
   }
+
+  renderKerberos(d.kerberos||{});
+  renderWinRM(d.winrm||{});
 
   const fps = d.fingerprints||[];
   document.getElementById('fp-tbody').innerHTML = fps.map(f=>`

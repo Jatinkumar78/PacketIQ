@@ -94,9 +94,17 @@ def recon_to_initial_access(events: list[DetectionEvent]) -> list[AttackChain]:
     chains: list[AttackChain] = []
     by_src = _events_by_src(events)
 
+    # Account discovery against a KDC is reconnaissance in the same sense a port
+    # scan is: it asks a service what exists and writes down the answers. Treating
+    # it as such lets "scanned the host, then enumerated its directory" correlate
+    # into one chain instead of two unrelated findings.
     recon_types  = {EventType.PORT_SCAN, EventType.HOST_SCAN, EventType.ARP_SCAN,
-                    EventType.SUSPICIOUS_FLAGS}
-    attack_types = {EventType.BRUTE_FORCE}
+                    EventType.SUSPICIOUS_FLAGS, EventType.KERBEROS_USER_ENUM,
+                    EventType.LDAP_ENUMERATION}
+    attack_types = {EventType.BRUTE_FORCE, EventType.KERBEROS_BRUTE_FORCE,
+                    EventType.KERBEROS_ROASTING, EventType.WINRM_EXECUTION,
+                    EventType.SMB_LATERAL_MOVEMENT, EventType.SMB_FILE_ACCESS,
+                    EventType.DCERPC_SUSPECT_BIND}
 
     for src_ip, src_events in by_src.items():
         recon_events  = [e for e in src_events if e.event_type in recon_types]
@@ -440,7 +448,8 @@ def reconnaissance_progression(events: list[DetectionEvent]) -> list[AttackChain
     or vantage-limited capture of a pentest looks like.
     """
     recon_types = {EventType.ARP_SCAN, EventType.PORT_SCAN, EventType.HOST_SCAN,
-                   EventType.SUSPICIOUS_FLAGS}
+                   EventType.SUSPICIOUS_FLAGS, EventType.KERBEROS_USER_ENUM,
+                   EventType.LDAP_ENUMERATION}
     chains: list[AttackChain] = []
     for src_ip, src_events in _events_by_src(events).items():
         recon = [e for e in src_events if e.event_type in recon_types]

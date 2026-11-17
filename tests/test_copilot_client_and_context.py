@@ -378,3 +378,38 @@ def test_the_ioc_summary_truncates_every_long_address_list():
     assert text.count("… and") >= 3, "attackers, targets and externals each cap"
     assert "Suspected Attacker IPs" in text
     assert "Targeted IPs" in text
+
+
+def test_the_context_lists_the_open_ports_a_scan_found():
+    """Q1 of a scan-and-pivot capture: which ports answered a handshake.
+
+    A port is listed only when service_exposure marks it "open" (it demonstrably
+    completed a handshake), grouped by host so the scan's target is unambiguous.
+    """
+    from packetiq.copilot.context_builder import _discovered_services
+
+    result = ExtractionResult()
+    result.service_exposure = {
+        ("10.0.2.75", 88, "TCP"): {"state": "open", "service": "KERBEROS"},
+        ("10.0.2.75", 445, "TCP"): {"state": "open", "service": "SMB"},
+        ("10.0.2.75", 53, "TCP"): {"state": "open", "service": "DNS"},
+        ("10.0.2.75", 23, "TCP"): {"state": "closed", "service": "TELNET"},
+        ("10.0.2.75", 9999, "TCP"): {"state": "filtered", "service": ""},
+    }
+
+    text = _discovered_services(result)
+    assert "OPEN PORTS DISCOVERED" in text
+    # listed lowest-to-highest, and only the ports that answered
+    assert "10.0.2.75: 53, 88, 445" in text
+    assert "TELNET" not in text          # closed
+    assert "9999" not in text            # filtered
+
+
+def test_the_open_ports_section_is_absent_when_nothing_answered():
+    from packetiq.copilot.context_builder import _discovered_services
+
+    result = ExtractionResult()
+    result.service_exposure = {
+        ("10.0.2.75", 23, "TCP"): {"state": "closed", "service": "TELNET"},
+    }
+    assert _discovered_services(result) == ""
