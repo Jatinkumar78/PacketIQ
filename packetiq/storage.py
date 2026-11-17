@@ -11,7 +11,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -55,7 +55,7 @@ def record(filename: str, packets: int, risk_score: int, risk_tier: str,
         conn.execute(
             "INSERT INTO analyses (analyzed_at, filename, packets, risk_score, "
             "risk_tier, event_count, chain_count, top_attacker) VALUES (?,?,?,?,?,?,?,?)",
-            (datetime.now(timezone.utc).isoformat(), filename, packets, risk_score,
+            (datetime.now(UTC).isoformat(), filename, packets, risk_score,
              risk_tier, event_count, chain_count, top_attacker),
         )
         conn.commit()
@@ -70,8 +70,11 @@ def recent(limit: int = 20) -> list[dict]:
     try:
         conn = _connect()
         conn.row_factory = sqlite3.Row
+        # Floor at 1: SQLite reads a negative LIMIT as "no limit", so `recent(-1)`
+        # silently returned the whole table instead of one row — and this is
+        # reached straight from `GET /api/history?limit=`.
         cur = conn.execute(
-            "SELECT * FROM analyses ORDER BY id DESC LIMIT ?", (int(limit),)
+            "SELECT * FROM analyses ORDER BY id DESC LIMIT ?", (max(1, int(limit)),)
         )
         rows = [dict(r) for r in cur.fetchall()]
         conn.close()

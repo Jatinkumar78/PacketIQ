@@ -14,7 +14,6 @@ import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 from packetiq.detection.models import Severity
 
@@ -87,7 +86,7 @@ class IOCStore:
     counts:      dict = field(default_factory=dict)   # feed -> entry count
 
     # ── lookups ──────────────────────────────────────────────────────────────
-    def lookup_ip(self, ip: str) -> Optional[IOCHit]:
+    def lookup_ip(self, ip: str) -> IOCHit | None:
         hit = self.bad_ips.get(ip)
         if hit:
             return hit
@@ -101,7 +100,7 @@ class IOCStore:
                     return chit
         return None
 
-    def lookup_domain(self, domain: str) -> Optional[IOCHit]:
+    def lookup_domain(self, domain: str) -> IOCHit | None:
         d = (domain or "").rstrip(".").lower()
         if not d:
             return None
@@ -115,7 +114,7 @@ class IOCStore:
                 return self.bad_domains[parent]
         return None
 
-    def lookup_hash(self, sha256: str) -> Optional[IOCHit]:
+    def lookup_hash(self, sha256: str) -> IOCHit | None:
         return self.bad_hashes.get((sha256 or "").lower())
 
     @property

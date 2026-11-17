@@ -15,9 +15,10 @@ build:
 
   3. The workflow may only invoke tooling the dev extra installs. This one is a
      regression test with a story: `types-requests` was absent, and because mypy 2.x
-     requires Python >=3.10, the 3.9 leg resolved to mypy 1.x — which, unlike 2.x,
-     fails on an installed-but-untyped import. One matrix leg went red while the
-     other three stayed green, and the config looked fine from every 3.12 desk.
+     requires Python >=3.10, the then-supported 3.9 leg resolved to mypy 1.x — which,
+     unlike 2.x, fails on an installed-but-untyped import. One matrix leg went red
+     while the other three stayed green, and the config looked fine from every 3.12
+     desk. The stubs stay pinned: the failure mode outlived the 3.9 leg.
 """
 
 import re
@@ -38,11 +39,13 @@ WORKFLOW_TOOLS = {"ruff", "mypy", "pytest"}
 
 
 def _load_pyproject() -> dict:
-    """Parse pyproject with the same stdlib-or-backport dance packetiq/config.py uses."""
-    try:
-        import tomllib  # Python 3.11+
-    except ModuleNotFoundError:  # pragma: no cover - only on 3.9/3.10
-        import tomli as tomllib  # type: ignore[no-redef]
+    """Parse pyproject with the stdlib parser packetiq/config.py also uses.
+
+    This mirrored config.py's tomllib-or-tomli fallback until the Python floor
+    reached 3.11 and made `tomllib` unconditional in both places.
+    """
+    import tomllib
+
     with open(PYPROJECT, "rb") as fh:
         return tomllib.load(fh)
 
@@ -57,32 +60,55 @@ def _key(raw: str):
     the version specifiers, and re-renders the environment marker with canonical
     quoting — so pyproject's `python_version < '3.11'` and requirements.txt's
     `python_version < "3.11"` compare equal instead of reporting a phantom drift.
+
+    The *marker* is part of the key, not of the compared value. That mattered when
+    four dependencies were declared twice — once with the patched floor for 3.10+,
+    once with the newest release 3.9 could install — because a name-only key folded
+    each pair into one entry and only the arm that came last was ever compared.
+    Raising the floor to 3.11 collapsed every split, so no requirement carries a
+    marker today; the key keeps the marker anyway, because the next version-split
+    dependency should be compared, not silently merged.
     """
     req = Requirement(raw)
     name = re.sub(r"[-_.]+", "-", req.name).lower()
-    return name, (str(req.specifier), str(req.marker or ""), tuple(sorted(req.extras)))
+    return (name, str(req.marker or "")), (str(req.specifier), tuple(sorted(req.extras)))
 
 
-def _requirements_txt() -> dict:
-    entries = {}
+def _collect(raws, where: str) -> dict:
+    """Key every requirement by (name, marker), refusing to silently merge two."""
+    entries: dict = {}
+    for raw in raws:
+        key, value = _key(raw)
+        if key in entries:  # pragma: no cover - only on a real regression
+            pytest.fail(f"{where} declares {key[0]} twice under the same marker "
+                        f"{key[1]!r}; one of them is dead weight")
+        entries[key] = value
+    return entries
+
+
+def _requirements_lines() -> list:
+    lines = []
     for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines():
         # Trailing "# CVE-..." rationales are documentation, not part of the spec.
         line = re.sub(r"\s+#.*$", "", line).strip()
         if not line or line.startswith("#"):
             continue
-        name, value = _key(line)
-        entries[name] = value
-    return entries
+        lines.append(line)
+    return lines
+
+
+def _requirements_txt() -> dict:
+    return _collect(_requirements_lines(), "requirements.txt")
 
 
 def _pyproject_runtime() -> dict:
-    return dict(_key(dep) for dep in PROJECT["dependencies"])
+    return _collect(PROJECT["dependencies"], "pyproject.toml")
 
 
 def _dev_extra_names() -> set:
     names = set()
     for dep in PROJECT["optional-dependencies"]["dev"]:
-        names.add(_key(dep)[0])
+        names.add(_key(dep)[0][0])
     return names
 
 
@@ -131,9 +157,11 @@ def test_shared_dependencies_pin_the_same_versions_and_markers():
     requirements = _requirements_txt()
 
     drift = []
-    for name in sorted(set(pyproject) & set(requirements)):
-        if pyproject[name] != requirements[name]:
-            drift.append(f"{name}: pyproject={pyproject[name]} requirements.txt={requirements[name]}")
+    for key in sorted(set(pyproject) & set(requirements)):
+        if pyproject[key] != requirements[key]:
+            name, marker = key
+            where = f"{name} [{marker}]" if marker else name
+            drift.append(f"{where}: pyproject={pyproject[key]} requirements.txt={requirements[key]}")
     if drift:  # pragma: no cover - only on a real regression
         pytest.fail(
             "same dependency, different constraint — a security floor raised in one "
@@ -167,6 +195,23 @@ def test_requires_python_floor_is_the_oldest_version_ci_tests():
     )
 
 
+def test_the_packaged_version_matches_the_one_the_code_reports():
+    """`pyproject.toml` and `packetiq.__version__` are two copies of one number.
+
+    pip reads the first; `packetiq --version`, the report headers, the web app's
+    footer and the PDF chain-of-custody block all read the second. Bump one and
+    forget the other and the wheel on PyPI disagrees with the tool inside it —
+    the kind of mismatch nobody notices until a bug report quotes a version that
+    was never released.
+    """
+    from packetiq import __version__
+
+    assert PROJECT["version"] == __version__, (
+        f"pyproject.toml says {PROJECT['version']} but packetiq.__version__ is "
+        f"{__version__}"
+    )
+
+
 # ── 3. The workflow can only run what the dev extra installs ─────────────────
 
 def test_every_tool_the_workflow_invokes_is_in_the_dev_extra():
@@ -186,13 +231,13 @@ def test_request_type_stubs_ship_with_the_dev_extra():
     """Regression guard for the matrix split described in this module's docstring.
 
     `ignore_missing_imports` covers a module mypy cannot find. It does not cover one
-    that is installed but carries no types — mypy 1.x calls that `import-untyped` and
-    fails, and the 3.9 leg is stuck on mypy 1.x forever now that 2.x requires >=3.10.
+    that is installed but carries no types — mypy calls that `import-untyped` and
+    fails the gate on it.
     """
-    assert "requests" in {_key(dep)[0] for dep in PROJECT["dependencies"]}
+    assert "requests" in {_key(dep)[0][0] for dep in PROJECT["dependencies"]}
     assert "types-requests" in _dev_extra_names(), (
         "packetiq imports `requests` in several modules; without its stubs the mypy "
-        "gate passes on 3.10+ and fails on 3.9"
+        "gate fails on an installed-but-untyped import"
     )
 
 
@@ -256,11 +301,29 @@ def test_the_readme_detector_module_count_matches_the_package():
     assert claimed == {len(_detector_modules_emitting_events())}
 
 
+def test_the_readme_states_the_real_number_of_harness_guards():
+    """The README said "Six rules" while conftest had seven autouse guards.
+
+    CI's own comment and tests/test_harness_guards.py both said seven; only the
+    README disagreed, and nothing checked it. The count is the whole point of
+    that paragraph — it is the claim that coverage is a property of the suite
+    rather than of the machine — so it gets a gate like every other figure.
+    """
+    conftest = (Path(__file__).parent / "conftest.py").read_text(encoding="utf-8")
+    real = conftest.count("@pytest.fixture(autouse=True)")
+    words = {"Five": 5, "Six": 6, "Seven": 7, "Eight": 8, "Nine": 9, "Ten": 10}
+    claimed = {words[w] for w in re.findall(r"(\w+) rules are fixed in", _readme())
+               if w in words}
+
+    assert claimed, "the README no longer states how many harness rules are fixed"
+    assert claimed == {real}, f"README claims {claimed}, conftest has {real}"
+
+
 def test_the_readme_never_claims_more_indicators_than_the_feeds_hold():
     """The README's indicator count may only ever be at or under the real one.
 
-    Both forms are accepted — a floor (`8,300+`) and the exact bundled total
-    (`8,398`) — because the README states the exact figure now that it is quoted
+    Both forms are accepted — a floor (`7,800+`) and the exact bundled total
+    (`7,855`) — because the README states the exact figure now that it is quoted
     beside a screenshot of the feeds panel. The `+` is therefore optional in the
     pattern; what is not optional is the direction of the comparison, so a
     bundled snapshot that ever shrinks fails here rather than leaving the README
@@ -302,6 +365,34 @@ def test_every_path_the_dockerfile_copies_exists():
             if not (root / src).exists():
                 missing.append(src)
     assert not missing, f"Dockerfile copies files that are not in the repo: {missing}"
+
+
+def test_the_container_copies_every_file_pyproject_declares_as_required():
+    """The reverse of the test above, which is the direction that bit.
+
+    `pyproject.toml` declares `license-files = ["LICENSE"]` (PEP 639). The
+    Dockerfile copied only `pyproject.toml`, `README.md` and the package, so
+    inside the image that pattern matched nothing: setuptools printed `Pattern
+    'LICENSE' did not match any files`, built the wheel with no licence metadata,
+    and warned that such builds stop being supported in February 2027. Every
+    local build was fine, because the repository root has the file. Only the
+    container was wrong, and only a test that reads both files can say so.
+    """
+    root = Path(__file__).resolve().parents[1]
+    declared = re.findall(r'license-files\s*=\s*\[([^\]]*)\]', (root / "pyproject.toml").read_text(encoding="utf-8"))
+    required = [p.strip().strip('"\'') for group in declared for p in group.split(",") if p.strip()]
+    assert required, "pyproject no longer declares license-files; drop this test with it"
+
+    copied = set()
+    for line in DOCKERFILE.read_text(encoding="utf-8").splitlines():
+        if line.startswith("COPY "):
+            copied.update(line.split()[1:-1])
+
+    missing = [name for name in required if name not in copied]
+    assert not missing, (
+        f"pyproject requires {missing} but the Dockerfile never copies it into the "
+        "build context, so the image's wheel is built without it"
+    )
 
 
 def test_the_container_does_not_install_the_package_editable():

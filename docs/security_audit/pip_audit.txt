@@ -1,5 +1,5 @@
 pip-audit — PacketIQ dependency audit log (append-only; newest block last)
-Latest verification: 2026-08-11 — see the final section.
+Latest verification: 2026-11-15 (two blocks; the last one raised the Python floor).
 
 ---------------------------------------------------------------------
 pip-audit — PacketIQ reference venv (Python 3.12.13) — 2026-07-15
@@ -113,3 +113,112 @@ four are not in either closure this project ships or declares.
 Takeaway for anyone re-running this: audit a freshly built closure.  An
 audit of a developer venv measures the developer's machine, and will
 over-report against what users actually install.
+
+
+=====================================================================
+Re-verified 2026-11-15 — full dependency refresh, floors raised
+---------------------------------------------------------------------
+Every declared floor was checked against the advisory database at the
+*floor version itself*, not just at whatever a fresh resolve happens to
+pick.  Two floors admitted a vulnerable release and were raised; four
+more were split on python_version because their fix needs >= 3.10.
+
+  scapy         >=2.5.0  -> >=2.7.0     2.5.0 carries GHSA-cq46-m9x9-j8w2
+  cryptography  >=44.0.1 -> >=50.0.0    44.0.1 itself carries 10 advisories
+  urllib3       >=2.6.0  -> >=2.8.0 (>=3.10) / >=2.6.3 (3.9)
+  requests      >=2.32.4 -> >=2.33.0 (>=3.10) / >=2.32.5 (3.9)
+  python-dotenv >=1.0.1  -> >=1.2.2 (>=3.10) / >=1.2.1 (3.9)
+  python-multipart >=0.0.18 -> >=0.0.31 (>=3.10) / >=0.0.20 (3.9)
+
+Neither raise costs 3.9 support: cryptography has required 3.9.2+ since
+44.0.0 (">=3.9,!=3.9.0,!=3.9.1"), and scapy 2.8.0 installs on 3.9.  The
+3.9 resolution under the new floors was re-run with pip's own resolver
+(--python-version 3.9.23, markers expanded per arm) and is identical to
+the resolution under the old floors, plus tomli, which 3.9 needs.
+
+1. Runtime closure ("pip install -e ." in a fresh venv, Python 3.12.13).
+   Blocking gate.
+
+       No known vulnerabilities found     (73 packages)
+
+   Resolved runtime versions: cryptography 50.0.2, pillow 13.0.0,
+   python-dotenv 1.2.4, python-multipart 0.0.33, requests 2.34.2,
+   scapy 2.8.0, starlette 1.10.0, urllib3 2.8.0.
+
+2. Development closure ("pip install .[dev]" in the same fresh venv).
+   Advisory only.
+
+       No known vulnerabilities found     (93 packages)
+
+   The single long-standing finding is GONE.  pySigma 2.1.0 replaced the
+   unmaintained diskcache 5.6.3 (PYSEC-2026-2447 / CVE-2025-69872, never
+   fixed upstream) with the maintained diskcache-community 5.8.5 fork.
+   The step is still marked continue-on-error in CI; that is now a
+   conservative setting rather than a necessary one, and whether to make
+   it blocking is a policy call, not a fact this log can settle.
+
+3. Oldest supported interpreter (Python 3.9).  Advisory only.
+
+   No 3.9 interpreter exists on the reference machine, so this was
+   measured by resolving requirements.txt for 3.9.23 with pip itself
+   (--target --python-version --only-binary=:all:, each marker arm
+   expanded first) and auditing the resulting pin list:
+
+       Found 111 known vulnerabilities in 7 packages
+
+       pillow           11.3.0   76   (via reportlab)   fixed in 13.0.0
+       python-multipart 0.0.20   12                     fixed in 0.0.31
+       starlette        0.49.3   10   (via fastapi)     fixed in 1.3.1
+       urllib3          2.6.3     7                     fixed in 2.8.0
+       requests         2.32.5    2                     fixed in 2.33.0
+       python-dotenv    1.2.1     2                     fixed in 1.2.2
+       anyio            4.12.1    2   (via fastapi)     fixed in 4.14.2
+
+   Every fix listed requires Python >= 3.10, so there is nothing to bump
+   on 3.9 — the versions above are the newest that exist for it.  This
+   is the same residual CI prints in its advisory 3.9 step; it has grown
+   from three packages to seven since 2026-08-11, which is the cost of
+   keeping 3.9 and is stated rather than rounded away.
+
+Front-end dependencies (not covered by pip-audit)
+---------------------------------------------------------------------
+  packetiq/webapp/static/vendor/chart.umd.min.js   4.4.0 -> 4.6.1
+  packetiq/webapp/static/vendor/marked.min.js      9.1.6 -> 18.2.0
+  dashboard template CDN pin, chart.js             4.4.0 -> 4.6.1
+  dashboard template CDN pin, three.js             r128, unchanged
+
+  Neither old version had a published advisory (checked against OSV's
+  npm ecosystem); both were simply years behind.  three.js is left at
+  r128 deliberately: the dashboard uses the global THREE namespace from
+  a UMD build, and three.js stopped publishing three.min.js after r136,
+  so moving forward is an ESM migration rather than a version bump.  All
+  13 THREE symbols the template uses were verified still present at r128
+  and both chart configurations were rebuilt under 4.6.1 in a real
+  browser before the files were replaced.
+
+=====================================================================
+Re-verified 2026-11-15 (second pass) — Python floor raised to 3.11
+---------------------------------------------------------------------
+The block above left 111 advisories on the 3.9 closure with nothing to
+upgrade to.  Rather than carry that, the floor was raised.  Which floor
+is a measurement, not a preference — requirements.txt was resolved for
+each interpreter with pip itself (--target --python-version
+--only-binary=:all:) and the resulting pin list audited:
+
+    Python 3.9   Found 111 known vulnerabilities in 7 packages
+    Python 3.10  Found  42 known vulnerabilities in 1 package  (pillow)
+    Python 3.11  No known vulnerabilities found                (54 pkgs)
+
+3.10 is the row that decided it.  It clears six of the seven packages
+stuck on 3.9 and still leaves 42, all in pillow, which reportlab pulls
+in and whose fixed release (13.0.0) declares requires-python >= 3.11.
+3.10 also reached end of life on 2026-10-01.  So requires-python is now
+">=3.11", the four python_version-split floors collapsed back to one
+patched floor each, and tomli left the dependency list because tomllib
+is stdlib from 3.11.
+
+Consequences for this log: there is no advisory-only residual on any
+supported interpreter any more, on either closure.  The CI step that
+audits the oldest supported interpreter is kept and kept advisory — it
+reports nothing today, and it is the thing that will notice the next
+time a dependency's fix ships only for a Python newer than the floor.

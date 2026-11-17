@@ -82,3 +82,83 @@ def test_file_carver_reassembles_and_hashes(tmp_path):
     # PE over cleartext from external => at least MEDIUM, correct hash
     assert events[0].evidence["sha256"] == sha
     assert "PE/EXE" in events[0].evidence["file_type"]
+
+
+# ── The live monitor must survive a busy link ────────────────────────────────
+
+def test_the_rolling_window_is_bounded_by_count_as_well_as_age(monkeypatch):
+    """The window was trimmed by age only, so its size was the packet rate.
+
+    Measured: at 1,000 pkt/s a 300s window holds 300,000 records and at
+    10,000 pkt/s three million — each holding its raw payload, which is
+    gigabytes on an ordinary busy link. `packetiq live` is built to run
+    continuously, so the window has to be bounded by count too.
+    """
+    from collections import deque
+
+    from packetiq import live as live_mod
+
+    monkeypatch.setattr(live_mod, "_MAX_WINDOW_RECORDS", 50)
+    mon = live_mod.LiveMonitor(300.0, "HIGH", lambda e: None)
+    assert mon.buf.maxlen == 50, "the cap is read when the monitor is built"
+    assert isinstance(mon.buf, deque)
+
+    class _Rec:
+        def __init__(self, ts):
+            self.timestamp = ts
+
+    for i in range(500):
+        mon.feed(_Rec(float(i)))
+
+    assert len(mon.buf) == 50
+    assert mon.dropped == 450, "overflow is counted, not swallowed"
+    assert mon.buf[-1][0] == 499.0, "the newest packets are the ones kept"
+    assert mon.buf[0][0] == 450.0
+
+
+def test_the_deduplication_set_does_not_grow_without_bound(monkeypatch):
+    """`_key` includes the destination port, so a port scan mints a key per port.
+
+    One 65,535-port scan added a measured 8.5 MB that was never released, and
+    every further scan added more — on a monitor meant to run for days.
+    """
+    from packetiq import live as live_mod
+    from packetiq.detection.models import DetectionEvent, EventType, Severity
+
+    monkeypatch.setattr(live_mod, "_MAX_SEEN_KEYS", 5)
+    monkeypatch.setattr(live_mod, "_detect", lambda records: [
+        DetectionEvent(event_type=EventType.PORT_SCAN, severity=Severity.HIGH,
+                       src_ip="45.33.32.156", dst_ip="10.0.0.5", dst_port=p,
+                       description="scan")
+        for p in range(20)
+    ])
+
+    alerts: list = []
+    mon = live_mod.LiveMonitor(300.0, "HIGH", alerts.append)
+    mon.scan()
+
+    assert len(alerts) == 20, "every distinct finding is still reported once"
+    assert len(mon.seen) == 5, "the set is capped"
+    assert len(mon.seen_order) == 5, "the eviction queue tracks it exactly"
+
+
+def test_an_evicted_finding_may_alert_again(monkeypatch):
+    """Oldest-first eviction is the trade: recurrence after that much distinct
+    activity is worth surfacing again, which is better than unbounded memory."""
+    from packetiq import live as live_mod
+    from packetiq.detection.models import DetectionEvent, EventType, Severity
+
+    monkeypatch.setattr(live_mod, "_MAX_SEEN_KEYS", 2)
+    monkeypatch.setattr(live_mod, "_detect", lambda records: [
+        DetectionEvent(event_type=EventType.PORT_SCAN, severity=Severity.HIGH,
+                       src_ip="45.33.32.156", dst_ip="10.0.0.5", dst_port=p,
+                       description="scan")
+        for p in range(5)
+    ])
+
+    alerts: list = []
+    mon = live_mod.LiveMonitor(300.0, "HIGH", alerts.append)
+    mon.scan()
+    mon.scan()
+
+    assert len(alerts) == 10, "the evicted keys are re-reported on the next scan"

@@ -15,7 +15,6 @@ for credentials transmitted in cleartext over:
 import base64
 import re
 from collections.abc import Generator
-from typing import Optional
 
 from packetiq.detection.models import DetectionEvent, EventType, Severity
 from packetiq.parser.pcap_parser import RawPacketRecord
@@ -157,12 +156,13 @@ def _check_http(record, src, dst, dport, seen, events):
         decoded = _safe_b64(b64)
         events.append(_make_event(
             src, dst, dport, "HTTP",
-            "HTTP Basic Auth credential exposed (base64 decoded in plaintext)",
+            "HTTP Basic Auth credential exposed (base64 is not encryption)",
             record.timestamp,
             evidence={
                 "protocol":      "HTTP",
                 "auth_type":     "Basic",
-                "decoded_creds": decoded if decoded else "(decode failed)",
+                "username":      decoded.partition(":")[0] if decoded else "(decode failed)",
+                "note":          "Password value redacted; visible in raw PCAP",
                 "direction":     f"{src} → {dst}:{dport}",
             },
             severity=Severity.CRITICAL,
@@ -217,7 +217,9 @@ def _check_smtp(record, src, dst, seen, events):
             evidence={
                 "protocol":      "SMTP",
                 "auth_mechanism": auth_type,
-                "decoded_creds": decoded or "(inline payload — check raw capture)",
+                "username":      _smtp_plain_username(decoded) if auth_type == "PLAIN"
+                                 else "(not recoverable from this mechanism)",
+                "note":          "Password value redacted; visible in raw PCAP",
             },
             severity=Severity.CRITICAL,
         ))
@@ -307,7 +309,13 @@ def _make_event(
     )
 
 
-def _safe_b64(data: bytes) -> Optional[str]:
+def _smtp_plain_username(decoded: str | None) -> str:
+    """Account name from an AUTH PLAIN blob: `[authzid]\\0authcid\\0passwd`."""
+    parts = (decoded or "").split("\0")
+    return parts[1] if len(parts) >= 2 else "(unknown)"
+
+
+def _safe_b64(data: bytes) -> str | None:
     """Decode base64 bytes → UTF-8 string, return None on failure."""
     try:
         if isinstance(data, bytes):

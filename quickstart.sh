@@ -15,21 +15,22 @@ GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; NC='\033[0m'
 say()  { printf "${GREEN}▸ %s${NC}\n" "$1"; }
 warn() { printf "${YELLOW}%s${NC}\n" "$1"; }
 
-# 1) Find a Python 3 to bootstrap the venv with — prefer a newer, CI-tested
-#    interpreter (3.12 → 3.10) when installed, so a fresh .venv gets fully-patched
-#    dependencies; otherwise fall back to python3 (3.9 still works).
-BOOT_PY=""
-for cand in python3.12 python3.11 python3.10 python3 python; do
-  if command -v "$cand" >/dev/null 2>&1; then BOOT_PY="$cand"; break; fi
+# 1) Find a Python to bootstrap the venv with — prefer a CI-tested interpreter
+#    (3.12 → 3.11), then whatever `python3` is, which on a current system is
+#    newer still. The loop takes the first candidate that *meets the floor*, not
+#    the first that exists: picking an installed python3.10 just because it came
+#    first in the list would reject a machine whose `python3` is perfectly fine.
+BOOT_PY=""; SEEN=""
+for cand in python3.12 python3.11 python3 python; do
+  command -v "$cand" >/dev/null 2>&1 || continue
+  HAVE=$("$cand" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) || continue
+  SEEN="${SEEN:+$SEEN, }$cand ($HAVE)"
+  if "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 11) else 1)' 2>/dev/null; then
+    BOOT_PY="$cand"; break
+  fi
 done
 if [ -z "$BOOT_PY" ]; then
-  warn "Python 3.9+ is required but was not found. Install it from https://python.org"
-  exit 1
-fi
-# Make sure it's new enough (3.9+), or the install below fails with a confusing error
-if ! "$BOOT_PY" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 9) else 1)' 2>/dev/null; then
-  HAVE=$("$BOOT_PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "unknown")
-  warn "PacketIQ needs Python 3.9 or newer, but found Python $HAVE. Install a newer one from https://python.org and re-run."
+  warn "PacketIQ needs Python 3.11 or newer.${SEEN:+ Found: $SEEN.} Install one from https://python.org and re-run."
   exit 1
 fi
 

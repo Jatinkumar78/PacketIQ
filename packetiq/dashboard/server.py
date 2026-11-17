@@ -44,6 +44,30 @@ def launch_dashboard(pcap_path: str, port: int = 8080, open_browser: bool = True
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="error")
 
 
+def _json_for_script(data: dict) -> str:
+    """Serialise analysis data for embedding inside a <script> block.
+
+    `json.dumps` does not escape `<`, `>` or `&`, and with ensure_ascii=False it
+    passes U+2028/U+2029 through as well — all legal in JSON, none of them inert
+    inside HTML or a JS string literal. Capture contents reach this payload
+    (HTTP paths and user-agents, DNS names, software banners, certificate
+    subjects, carved filenames), so a PCAP containing `</script>` closed the
+    block early and the rest of its bytes were parsed as HTML: stored XSS in the
+    analyst's own browser, delivered by the file they were asked to examine.
+    Analysing hostile input is the whole job here, so the payload is escaped
+    rather than trusted. All five replacements are valid JSON escapes that parse
+    back to the identical string.
+    """
+    return (
+        json.dumps(data, ensure_ascii=False)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
 def _build_app(data: dict) -> FastAPI:
     app = FastAPI(title="PacketIQ Dashboard", docs_url=None, redoc_url=None)
     html_template = TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -53,7 +77,7 @@ def _build_app(data: dict) -> FastAPI:
         # Inject serialized analysis data directly into the HTML
         injected = html_template.replace(
             "__PACKETIQ_DATA__",
-            json.dumps(data, ensure_ascii=False),
+            _json_for_script(data),
         )
         return HTMLResponse(injected)
 
@@ -110,6 +134,7 @@ def _run_and_serialize(pcap_path: str) -> dict:
         },
         "risk": {
             "score":     risk.score,
+            "raw_score": getattr(risk, "raw_score", 0.0),   # `score` saturates at 100
             "tier":      risk.tier,
             "breakdown": risk.by_severity,
         },
@@ -205,6 +230,8 @@ def _ser_attr(a) -> dict:
         "origin":         a.origin,
         "motivation":     a.motivation,
         "confidence":     round(a.confidence * 100),   # TTP-overlap score, not attribution confidence
+        "coverage":       round(a.coverage * 100),     # how much of the actor's profile was seen
+        "specificity":    round(a.specificity * 100),  # how much of the capture it explains
         "matched_ttps":   a.matched_ttps,
         "phases":         list(a.phases),
         "description":    a.description,

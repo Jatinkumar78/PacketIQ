@@ -4,7 +4,6 @@ Detection models — shared data types for the detection engine.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
 
 class Severity(str, Enum):
@@ -53,9 +52,9 @@ class DetectionEvent:
     src_ip:       str
     description:  str
 
-    dst_ip:       Optional[str]  = None
-    dst_port:     Optional[int]  = None
-    protocol:     Optional[str]  = None
+    dst_ip:       str | None  = None
+    dst_port:     int | None  = None
+    protocol:     str | None  = None
     timestamp:    float          = 0.0   # first occurrence
     packet_count: int            = 0
     confidence:   float          = 1.0   # 0.0–1.0

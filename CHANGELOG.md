@@ -3,6 +3,316 @@
 All notable changes to PacketIQ are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.0] — 2026-11-15
+
+A dependency and supportability release. Every declared dependency now sits on a
+patched release, the Python floor moved to **3.11**, and the front-end libraries
+the web app vendors were brought current. **No detection logic changed**: the demo
+capture still produces 39 events, 5 chains, risk 100/100 (aggregate 335.6), the same
+attribution ordering (APT41 0.840 … APT29 0.631) and the same 42 SIGMA rules as
+1.0.0 — the parity check is how each step was verified, not an afterthought.
+
+**Breaking: Python 3.9 and 3.10 are no longer supported.** Both are end-of-life, and
+on both the dependency closure resolves to releases with published advisories and
+nothing newer to install — 111 of them on 3.9, and still 42 on 3.10 because the
+`pillow` release that fixes them requires 3.11. Users on those interpreters should
+stay on 1.0.0 or upgrade Python; `pip` will not offer 1.1.0 to them.
+
+**State of the release, as measured on 2026-11-15** (macOS 26.6.1 arm64,
+CPython 3.12.13) rather than asserted, with the test and coverage figures
+re-measured on 2026-11-17 after the documentation gates below were added:
+
+| | |
+|---|---|
+| Tests | **2,006 passing**, **100.00%** line coverage of **10,132** statements |
+| Coverage gate | 100% floor enforced in CI on **Python 3.11 and 3.12** |
+| Platforms | Linux, macOS and Windows each run the suite in CI |
+| Lint / types | `ruff` clean at `py311` · `mypy` clean across **83** source files |
+| Static security | `bandit` at its strictest setting: **no issues at any severity** over **17,450** lines |
+| Dependencies | runtime closure (73 packages) **and** development closure (103): **zero** known advisories, both audited from a freshly built virtualenv |
+| Supported interpreters | **3.11, 3.12** — the oldest on which every dependency has a patched release |
+| Detection | unchanged from 1.0.0 and re-verified: synthetic suite 100% recall · 100% precision, gated on every push |
+| Throughput | **4,565 packets/s** on the 20,000-packet demo benchmark (the 12-capture aggregate in the README was measured on 1.0.0 and not re-run) |
+
+The real-world CTU-13 figures (100% recall, 90.0% precision, 94.7% F1) are carried
+forward from 1.0.0: no detector changed in this release, so they were not re-measured
+and are not re-stated as new evidence.
+
+### Bumping the version found four places it was written down twice
+
+1.0.0 → 1.1.0 should be a one-line change. It was not, and what it turned up is the
+more interesting half of this entry: four copies of the number, three of which would
+have gone on saying 1.0.0 in a 1.1.0 build.
+
+**Fixed**
+- **Every HTML report would have been stamped with the wrong version.**
+  `build_html(..., tool_version: str = "1.0.0")` — and neither caller passes the
+  argument, so the CLI's `report` command and the web app both took the default.
+  That string goes into the report header, the chain-of-custody block and the
+  footer, which is exactly the place a version number has to be right: a report is
+  evidence, and evidence that misnames the tool that produced it is a problem on a
+  different scale from a cosmetic typo. The PDF exporter never had the bug, because
+  it asks `report_style` for the number instead of defaulting to one. The default
+  is now `None` and resolves to the same source; the argument stays so a caller can
+  still override it deliberately.
+- **`report_style.tool_version()` fell back to the literal `"1.0.0"`.** Reached
+  only if importing `packetiq.__version__` fails, so it is defensive — but a
+  defensive path that answers with a *specific wrong version* is worse than one
+  that admits it cannot tell. It now tries the installed distribution's metadata
+  second and returns `"unknown"` only if both are unavailable.
+- **The package docstring repeated the version** on its own line. Deleted rather
+  than updated: `__version__` is four lines below it.
+- **Three test assertions hardcoded `"1.0.0"`,** one of them named
+  `test_version_reports_1_0_0`. That shape of test fails on a correct bump and
+  passes on a forgotten one — precisely backwards. All three now compare against
+  `packetiq.__version__`.
+
+**Two new gates, each proven by reintroducing the bug it catches**
+- `pyproject.toml`'s `version` must equal `packetiq.__version__`. Nothing checked
+  it, and they are read by different things: pip reads the first, while
+  `packetiq --version`, the report headers, the web footer and the PDF custody
+  block read the second. Verified by setting pyproject to 1.1.1 and watching the
+  gate name both values.
+- An HTML report must carry the running version in at least two of its three
+  places. Verified by restoring the `"1.0.0"` default and watching it fail.
+
+**And one regression caught on the way out.** The two-source fallback above was
+first written as `try: ... except Exception: pass`, which is bandit B110 — the
+blocking static-security gate went from 0 findings to 1. Rewritten with
+`contextlib.suppress`, which says the same thing without the silent `pass`.
+
+### Python floor raised to 3.11 — the version that has patched dependencies
+
+**Compatibility break:** installs on Python 3.9 and 3.10 are no longer supported.
+
+The previous entry left 3.9 resolving to seven packages carrying 111 published
+advisories, every fix requiring a newer interpreter. The obvious answer was "drop
+to 3.10", and measuring it showed why that is the wrong answer: 3.10 clears six of
+the seven and still leaves **42**, all in `pillow`, which `reportlab` pulls in and
+whose fixed release (13.0.0) requires 3.11. 3.10 also reached end of life on
+2026-10-01. Resolving `requirements.txt` per interpreter and auditing the result:
+
+| Floor | Advisories in the resolved closure | What blocks it |
+|---|---|---|
+| 3.9 | 111 across 7 packages | every fix needs ≥ 3.10; EOL Oct 2025 |
+| 3.10 | 42, all `pillow` via `reportlab` | `pillow` 13.0.0 needs ≥ 3.11; EOL Oct 2026 |
+| **3.11** | **0** | — |
+
+**What the floor removed, rather than what it added**
+- **Four version-split dependencies collapsed.** `urllib3`, `requests`,
+  `python-dotenv` and `python-multipart` each went back to one patched floor; no
+  requirement is version-conditional any more.
+- **`tomli` is gone from the dependency list**, because `tomllib` is stdlib from
+  3.11. With it went the `except ModuleNotFoundError` fallback in
+  `packetiq/config.py` — unreachable code is deleted here, not excluded — and
+  about 150 lines of test machinery that existed only to cover both arms: a
+  stand-in parser bound into `sys.modules` behind a patched `__import__`, because
+  no interpreter in the matrix shipped both modules and the coverage number
+  otherwise depended on which Python measured it. Two plain tests replace it.
+- **`tests/test_python39_compat.py` became `test_python311_compat.py`.** Its PEP 604
+  scanner is gone: it existed because 3.9 evaluates `int | None` in a runtime
+  annotation and raises, which from 3.10 is simply valid. The grammar check stays,
+  retargeted — verified to reject all three PEP 695 forms at `feature_version=(3,11)`
+  while still accepting `except*` and `match` — and a new test pins the guard's
+  constant to `requires-python` so raising one without the other cannot leave the
+  gate quietly testing an interpreter nobody supports.
+- **Two now-vacuous tests deleted.** The pair asserting that version-split
+  dependencies partition the CI matrix had nothing left to iterate over. The
+  marker-aware key they were written around stays, because the next split should be
+  compared rather than silently merged.
+
+**What it enabled**
+- **140 lint fixes** that `target-version = "py39"` had been suppressing:
+  `Optional[X]` → `X | None` (89), `datetime.timezone.utc` → `datetime.UTC` (12),
+  deprecated `typing` imports (3), `asyncio.TimeoutError` → `TimeoutError` (2).
+- **One rule deliberately refused.** UP042 wants `class Severity(StrEnum)` in place
+  of `class Severity(str, Enum)`, and that is an output change wearing a lint
+  fix's clothes. Measured on 3.12: `f"{member}"` is `Mixed.PORT_SCAN` for a
+  `(str, Enum)` member and `port_scan` for a `StrEnum` one. Three places would have
+  changed silently — the alert dedup key in `alerts/dispatcher.py` (existing dedup
+  state would stop matching, so suppressed alerts could fire once more), the
+  grouping key in `sigma/generator.py`, and `DetectionEvent.__str__`, which is
+  user-visible. Ignored with that reason written next to the ignore.
+- **Four `zip()` calls given an explicit `strict=`,** each decided rather than
+  auto-fixed. The Zeek TSV reader gets `strict=False` with a comment: a ragged row
+  is ordinary malformed input there and that parser is fuzz-tested against exactly
+  that. The three in tests get `strict=True`, which turns one of them into a real
+  check — a parser that dropped a packet used to shorten the loop and the test
+  still passed, having quietly stopped checking the payloads it never reached.
+
+**A bug the floor exposed.** All three launchers picked the first interpreter that
+*existed* from a fixed list that began `python3.12 python3.11 python3.10 python3`.
+Once 3.10 fell below the floor, a machine with 3.10 installed and a perfectly good
+`python3` would have selected 3.10 and aborted with "install a newer Python" —
+which the user already had. They now take the first candidate that *meets* the
+floor, and name what they found when none does. Simulated both loops against a
+fake 3.10-plus-3.13 PATH to confirm the old one picks 3.10 and the new one picks
+`python3`.
+
+Suite after this step: **1,902 tests, 100.00% of 10,132 statements** — both figures lower than the
+previous entry because deleted code and deleted tests are the point of this one.
+
+### Two "security-patched floors" admitted a vulnerable release
+
+The floors in `pyproject.toml` call themselves security-patched, so they were
+checked the way that claim deserves: against the advisory database **at the floor
+version itself**, not at whatever a fresh resolve happens to pick. Two did not hold
+up. `scapy>=2.5.0` admits 2.5.0, which carries GHSA-cq46-m9x9-j8w2 — and scapy is
+the parser, the component that touches attacker-controlled bytes first.
+`cryptography>=44.0.1` admits a release carrying **ten** advisories, one of them a
+successor to the very GHSA the floor's own comment cites as its reason. A default
+`pip install` resolves past both, so nothing that shipped was vulnerable; but a
+constrained, locked or offline install is exactly the case a floor exists for, and
+there the floor was the only thing standing.
+
+**Fixed**
+- **Two floors raised outright**, because their patched releases still install on
+  3.9: `scapy>=2.7.0` and `cryptography>=50.0.0`. cryptography has required 3.9.2+
+  since 44.0.0 (`>=3.9,!=3.9.0,!=3.9.1`), so the raise costs no supported
+  interpreter.
+- **Four floors split on `python_version`.** The fix for `urllib3`, `requests`,
+  `python-dotenv` and `python-multipart` each needs Python ≥ 3.10. One floor could
+  only have been the vulnerable 3.9 ceiling — leaving a 3.10+ user free to resolve
+  backwards onto it — or the patched version, which makes installing on 3.9 fail
+  outright. Declaring both arms states both truths instead of picking one and
+  hoping the resolver covers the gap. Verified by expanding each arm and handing it
+  to pip's own resolver for 3.9.23: the 3.9 resolution is unchanged. (Worth noting
+  against the older entry below that corrected "floors that do not exist on PyPI":
+  `python-multipart>=0.0.31`, `requests>=2.33.0` and `python-dotenv>=1.2.2` were
+  indeed unreleased then. They exist now, and they are the patched ones — which is
+  exactly why the 3.10+ arm can finally name them.)
+- **The lockstep gate was quietly half-blind.** `test_project_metadata_sync.py`
+  keyed every requirement by *name*, so the moment a package was declared twice the
+  two entries collapsed into one and only the last arm was ever compared — the
+  other could drift between `pyproject.toml` and `requirements.txt` unnoticed,
+  which is the single thing that gate exists to prevent. It now keys on
+  (name, marker), refuses to merge two entries silently, and two new tests assert
+  the arms partition every interpreter in the CI matrix and never invert. Proven by
+  drifting the 3.9 arm of `urllib3` and watching the gate name it.
+- **70 packages upgraded** in the reference environment, majors included —
+  `anthropic` 0.116 → 2.8.0, `google-genai` 2.11 → 3.3.0, `pySigma` 1.4 → 2.1.0,
+  `starlette` 1.3.1 → 1.10.0, `scapy` 2.7 → 2.8, `pillow` 12 → 13, `pytest` 9.1 →
+  9.2, `mypy` 2.3 → 2.4.1, `ruff` 0.15.21 → 0.17.5. The suite, the coverage gate,
+  ruff, mypy, bandit and the detection regression gate are all green on the new
+  set; 1,900 tests, 100.00% of 10,151 statements, unchanged at that point.
+- **The last unfixable advisory is gone.** pySigma 2.1.0 dropped the unmaintained
+  `diskcache` 5.6.3 (PYSEC-2026-2447, no upstream fix, the stated reason the dev
+  audit is advisory-only) for the maintained `diskcache-community` fork. Both
+  closures — runtime and dev — now audit clean from a freshly built virtualenv.
+- **The front end was years behind.** Chart.js 4.4.0 → 4.6.1 and marked 9.1.6 →
+  18.2.0 for the vendored copies the web app serves offline, plus the dashboard's
+  pinned CDN copy of Chart.js. Neither old version carried a published advisory;
+  both were simply stale. Verified in a real browser rather than assumed: both
+  chart configurations the app builds were reconstructed under 4.6.1 and
+  `marked.parse` checked on live markup. three.js is deliberately left at r128 —
+  the dashboard uses the global `THREE` from a UMD build and three.js stopped
+  publishing `three.min.js` after r136, so that one is an ESM migration, not a bump.
+
+**Stated, not fixed:** Python 3.9 now resolves to seven packages carrying
+**111 published advisories** between them (`pillow` 76, `python-multipart` 12,
+`starlette` 10, `urllib3` 7, and two each in `requests`, `python-dotenv` and
+`anyio`), against **zero** on 3.12. Every fix requires ≥ 3.10. That residual grew
+from three packages to seven since the 1.0.0 baseline; it is itemised in
+SECURITY.md and `docs/security_audit/pip_audit.txt` and printed by CI's advisory
+3.9 audit on every push, rather than rounded away.
+
+### The documented clone command did not work, and two links named a stranger
+
+Preparing the repository for publication started as a documentation pass and
+turned up a defect that every new reader hits before they run anything: the
+README's Quick Start told them to clone a repository that does not exist, and
+`git` answers `remote: Repository not found.` The account named in that URL is
+not an empty namespace either. It belongs to an unrelated real person, and four
+places pointed at it: the README's GitHub button, the hero banner link, the
+`[project.urls] Homepage` that PyPI renders in its sidebar, and the version line
+the CLI prints on every single run. A fifth URL, pyproject's `Changelog`, omitted
+the repository segment altogether and returned 404. The exact strings are
+recorded in the docstring of the test that now forbids them, which is the one
+place they can sit without being a live link.
+
+None of it was visible from a desk, because a wrong URL looks exactly like a
+right one.
+
+**Fixed**
+
+* Every repository URL now names `Jatinkumar78/PacketIQ`, which is the actual
+  remote: the clone command, the README buttons, the terminal banner in
+  `packetiq/display/terminal.py`, and `[project.urls]`.
+* `[project.urls]` went from two entries, one wrong and one dead, to six that
+  resolve: Homepage, Repository, Issues, Changelog, Security and Documentation.
+  These are published as the PyPI sidebar, so a wrong one ships.
+* The twelve README badges were bare images. They looked like buttons and
+  clicking one did nothing. Each is now a link to whatever substantiates it: the
+  test badge to the suite, the coverage badge to the section that explains how it
+  is measured, the version badge to this file, the licence badge to LICENSE.
+* The test-count badge said 1,900 where the suite had 1,902, disagreeing with the
+  statistics line four rows below it. Both now read 2,006, the 104 tests in this
+  entry included.
+* `MANIFEST.in` listed only README and LICENSE, so a published sdist would have
+  shipped without the changelog, the security policy or the citation metadata.
+* The container built a wheel with no licence in it. `pyproject.toml` declares
+  `license-files = ["LICENSE"]` under PEP 639, but the Dockerfile copied only
+  `pyproject.toml`, `README.md` and the package, so inside the image that
+  pattern matched nothing. setuptools said `Pattern 'LICENSE' did not match any
+  files`, built the wheel anyway without the licence, and warned that it stops
+  supporting such builds in February 2027. Every local and PyPI build was
+  correct, which is why it went unseen: only the image was wrong. The Dockerfile
+  now copies `LICENSE`, and a test reads both files so the next file pyproject
+  requires cannot go missing from the build context the same way.
+
+**Added**
+
+* `CITATION.cff` (Citation File Format 1.2.0), which GitHub renders as a
+  **Cite this repository** button offering APA and BibTeX. It carries no DOI,
+  venue or publisher, because the accompanying short paper has none and inventing
+  one would put a fabricated reference into someone else's bibliography.
+* `CONTRIBUTING.md`, documenting the eight gates CI runs verbatim and the house
+  rules that were previously only enforceable by a reviewer who already knew
+  them: 100% coverage with unreachable code deleted rather than excluded, no test
+  touching the network or the host, no unreproducible number in any document,
+  threat-actor output framed as TTP overlap, and the rule that no file may
+  contain a contiguous malware signature.
+* `CODE_OF_CONDUCT.md`, following the Contributor Covenant 2.1 in structure and
+  written in this project's own words, with two clauses specific to a forensics
+  tool: authorised defensive use only, and fabricated results treated as a
+  conduct matter rather than only a technical one.
+* `SUPPORT.md`, which routes questions to the document that already answers them
+  and asks people not to attach captures from production networks.
+* Three GitHub issue forms (bug report, detection issue, feature request) plus a
+  template chooser that disables blank issues and surfaces the private security
+  advisory form. The detection-issue form exists because a real false positive or
+  missed detection is the most valuable report this project can receive: accuracy
+  here is measured, so a counter-example moves a published number.
+* A pull-request template, `CODEOWNERS`, and a `dependabot.yml` covering the pip,
+  GitHub Actions and Docker ecosystems. The pip entry carries a warning in its
+  comments: Dependabot edits `pyproject.toml` only, so its pull requests go red
+  until `requirements.txt` is updated to match, which is the lockstep gate working
+  rather than a misconfiguration.
+* `tests/test_docs_and_community_health.py`, 103 tests that hold the documents to
+  the repository they describe. Every relative link resolves to a real path,
+  every in-page anchor matches a real heading, every repository URL names the
+  real remote, every badge is wrapped in a link, the citation version tracks
+  `packetiq.__version__` and this file's newest entry, and no document publishes
+  an email address. It makes no HTTP request, because the suite cannot open a
+  socket and link liveness is a property of the internet rather than of a commit.
+
+* Two environment variables that the code has always read but no user-facing
+  document named. `MISP_VERIFY_TLS` lived only in a module docstring, which
+  matters because setting it to 0 turns off certificate verification on the MISP
+  push; it is now in the README table with that consequence stated. And
+  `PACKETIQ_ALLOWED_HOSTS` appeared only in an earlier entry of this file, so an
+  operator putting the web app behind a reverse proxy could read the whole
+  `Host`-header guard section of SECURITY.md without learning how to extend the
+  allow-list. Both were found by comparing every `os.environ` read in `packetiq/`
+  against what the documents mention, in both directions.
+
+**Two findings worth recording, because both would have shipped a broken link.**
+A live `github/v/release` badge renders the words "no releases or repo not found"
+on a repository that has never tagged one, so the version badge stays static
+until a release is actually published. And GitHub returns 404 for a repository's
+`/stargazers` page to anyone not signed in, confirmed against `torvalds/linux` as
+a control, so the stars badge links the repository root instead.
+
 ## [1.0.0] — 2026-08-11
 
 First stable release. PacketIQ is a defensive network-forensics platform that turns
@@ -26,7 +336,7 @@ CPython 3.12.13) rather than asserted:
 | Detection (real) | **100%** recall · **90.0%** precision · **94.7%** F1 on Stratosphere CTU-13 |
 | Detection (synthetic) | 100% recall · 100% precision, gated on every push |
 | Throughput | **4,005 packets/s** aggregate over 12 captures (1,668,975 packets, 427.7 MB) |
-| Threat intel | **8,398** bundled indicators (8,301 feed entries + 97 JA3 fingerprints) |
+| Threat intel | **7,855** bundled indicators (7,758 feed entries + 97 JA3 fingerprints) — the abuse.ch / Spamhaus / Tor snapshots are refreshed from source, so this figure moves |
 | Interfaces | **24** CLI commands · FastAPI web app · local dashboard |
 
 Precision is an honest **90.0%**, not a rounded-up 100%: one benign-labelled capture

@@ -11,7 +11,8 @@ Features:
 import functools
 import inspect
 import os
-from typing import Any, Callable, Optional, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 import anthropic
 
@@ -52,7 +53,7 @@ class CopilotClient:
     Maintains the system prompt with prompt caching across the entire session.
     """
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: str | None = None):
         key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not key:
             raise ValueError(
@@ -60,9 +61,9 @@ class CopilotClient:
                 "Add it to your .env file or export it in your shell."
             )
         self._client = anthropic.Anthropic(api_key=key)
-        self._pcap_context: Optional[str] = None
+        self._pcap_context: str | None = None
         # Anthropic system blocks: plain dicts at runtime, TypedDicts to the SDK.
-        self._system: Optional[list[Any]] = None
+        self._system: list[Any] | None = None
 
     def load_context(self, pcap_context: str):
         """
@@ -141,7 +142,7 @@ class CopilotClient:
         return str(getattr(block, "text", "") or "")
 
 
-def load_api_key() -> Optional[str]:
+def load_api_key() -> str | None:
     """Load API key from environment or .env file."""
     # Try environment first
     key = os.environ.get("ANTHROPIC_API_KEY")

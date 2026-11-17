@@ -53,6 +53,24 @@ def _key(e) -> tuple:
     return (e.event_type, e.src_ip, e.dst_ip, e.dst_port)
 
 
+# `packetiq live` is built to run continuously, and both of the monitor's
+# structures grew with traffic rather than with time.
+#
+# The rolling window was trimmed by age only, so its size was the packet rate
+# times the window: measured at 1,000 pkt/s a 300s window holds 300,000
+# records, at 10,000 pkt/s three million — each one holding its raw payload,
+# which is gigabytes on an ordinary busy link.
+#
+# The de-duplication set was never trimmed at all. `_key` includes the
+# destination port, so one 65,535-port scan added a measured 8.5 MB that was
+# never released, and every further scan added more.
+#
+# Capping both trades completeness for survival, which is the right trade for a
+# monitor — but it is only honest if the monitor says so, hence `dropped`.
+_MAX_WINDOW_RECORDS = 200_000
+_MAX_SEEN_KEYS      = 100_000
+
+
 class LiveMonitor:
     """Rolling-window detector with de-duplicated alerting."""
 
@@ -60,11 +78,17 @@ class LiveMonitor:
         self.window = window_secs
         self.threshold = _SEV[Severity[threshold.upper()]]
         self.on_alert = on_alert
-        self.buf: deque = deque()        # (ts, record)
+        self.buf: deque = deque(maxlen=_MAX_WINDOW_RECORDS)   # (ts, record)
         self.seen: set = set()
+        self.seen_order: deque = deque()   # insertion order, for FIFO eviction
         self.alert_count = 0
+        self.dropped = 0                   # window records discarded under load
 
     def feed(self, record):
+        if len(self.buf) == self.buf.maxlen:
+            # The deque discards silently; count it so the caller can report
+            # that the window became rate-limited rather than time-limited.
+            self.dropped += 1
         self.buf.append((record.timestamp, record))
 
     def trim(self, now: float):
@@ -75,7 +99,13 @@ class LiveMonitor:
         records = [r for _, r in self.buf]
         for e in _detect(records):
             if _SEV.get(e.severity, 9) <= self.threshold and _key(e) not in self.seen:
-                self.seen.add(_key(e))
+                key = _key(e)
+                self.seen.add(key)
+                self.seen_order.append(key)
+                if len(self.seen_order) > _MAX_SEEN_KEYS:
+                    # Oldest-first eviction: a finding that recurs after this
+                    # much distinct activity is worth surfacing again anyway.
+                    self.seen.discard(self.seen_order.popleft())
                 self.alert_count += 1
                 self.on_alert(e)
 

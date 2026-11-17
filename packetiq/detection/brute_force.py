@@ -21,6 +21,7 @@ Real-world brute force tools (Hydra, Medusa, Ncrack, CrackMapExec) target
 SSH, RDP, FTP, VNC, Telnet — that is exactly what we monitor.
 """
 
+import statistics
 from collections import defaultdict
 
 from packetiq.detection.models import DetectionEvent, EventType, Severity
@@ -45,11 +46,20 @@ MONITORED_PORTS: dict[int, tuple[str, Severity, int]] = {
     5900: ("VNC",    Severity.HIGH,     10),
 }
 
-# Avg bytes per SYN above this → real sessions, not brute force.
+# Bytes in the *typical* connection above this → real sessions, not brute force.
 # SSH brute force: ~1-3 KB per failed attempt (banner + key negotiation + fail)
 # Legitimate SSH session: 20 KB+ (key exchange + shell + data)
 # Using 15 KB as the cutoff is conservative but avoids false positives on
 # SSH key-based auth where connections succeed quickly with little data.
+#
+# Compared against the MEDIAN, not the mean. The mean is skewed by a single
+# large connection, and the attack that produces one is the successful brute
+# force: ~22 rapid failures of ~1 KB plus one login that then transfers a few
+# hundred KB averages over 15 KB, which suppressed the entire finding. Measured
+# on a synthetic 22-attempt SSH burst, the alert vanished once the winning
+# session carried ~400 KB — so the one case an analyst must never miss was the
+# one case that was silently dropped. The median says what this guard means:
+# "the connections here are generally real sessions."
 LEGITIMATE_SESSION_BYTES = 15_000
 
 
@@ -73,15 +83,13 @@ def detect(result: ExtractionResult) -> list[DetectionEvent]:
     }
     events: list[DetectionEvent] = []
 
-    # Build index of total bytes exchanged per (src, dst, dport) direction.
-    # This lets us determine whether connections are real sessions or rapid-fail attempts.
-    flow_bytes: dict[tuple, int] = defaultdict(int)
-    flow_count: dict[tuple, int] = defaultdict(int)
+    # Per-connection byte sizes per (src, dst, dport) direction. Kept as the
+    # full distribution rather than a running sum so the legitimacy check below
+    # can use the median — one outlier connection must not speak for the rest.
+    flow_sizes: dict[tuple, list[int]] = defaultdict(list)
     for flow in result.flows.values():
         if flow.src_ip and flow.dst_ip and flow.dst_port:
-            k = (flow.src_ip, flow.dst_ip, flow.dst_port)
-            flow_bytes[k] += flow.bytes_total
-            flow_count[k] += 1
+            flow_sizes[(flow.src_ip, flow.dst_ip, flow.dst_port)].append(flow.bytes_total)
 
     for (src_ip, dst_ip, dport), timestamps in result.tcp_syn_pairs.items():
         if dport not in monitored:
@@ -98,13 +106,14 @@ def detect(result: ExtractionResult) -> list[DetectionEvent]:
             continue
 
         # ── Session legitimacy check ─────────────────────────────────────────
-        # If avg bytes per connection is high, these are real sessions (not rapid-fail).
+        # If the TYPICAL connection is large, these are real sessions (not
+        # rapid-fail). Median, not mean: see LEGITIMATE_SESSION_BYTES.
         k = (src_ip, dst_ip, dport)
-        total_bytes = flow_bytes.get(k, 0)
-        n_flows     = flow_count.get(k, 0)
-        avg_bytes   = total_bytes / n_flows if n_flows > 0 else 0
+        sizes = flow_sizes.get(k, [])
+        typical_bytes = statistics.median(sizes) if sizes else 0
+        avg_bytes     = sum(sizes) / len(sizes) if sizes else 0
 
-        if avg_bytes > legit_bytes:
+        if typical_bytes > legit_bytes:
             continue   # Long-lived sessions → not brute force
 
         span = ts_sorted[-1] - ts_sorted[0]
@@ -138,6 +147,7 @@ def detect(result: ExtractionResult) -> list[DetectionEvent]:
                 "window_secs":     window,
                 "burst_span_secs": round(span, 2),
                 "threshold":       threshold,
+                "median_bytes_per_conn": round(typical_bytes),
                 "avg_bytes_per_conn": round(avg_bytes),
             },
         ))

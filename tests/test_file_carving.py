@@ -136,6 +136,67 @@ def test_a_segment_entirely_inside_an_earlier_one_adds_nothing():
     assert file_carver._reassemble(segs) == b"AAABBBCCC"
 
 
+def test_a_stream_whose_sequence_number_wraps_is_still_ordered_correctly():
+    """TCP sequence numbers are 32-bit serial values, not plain integers.
+
+    The ISN is random, so a stream starting near 2**32 wraps through zero within
+    a few kilobytes — well inside the 8 MB this carver collects. Sorting the raw
+    values put the wrapped tail first and the file came out scrambled: the magic
+    was no longer at offset 0, so nothing was identified, hashed or scanned.
+    """
+    wrap = 2 ** 32
+    segs = [(wrap - 3, b"AAA"), (0, b"BBB"), (3, b"CCC")]
+
+    assert file_carver._reassemble(segs) == b"AAABBBCCC"
+
+
+def test_a_late_arriving_earlier_segment_is_not_pushed_four_gigabytes_back():
+    """Offsets are signed, so a segment captured out of order sorts ahead."""
+    segs = [(500, b"BBB"), (497, b"AAA"), (503, b"CCC")]
+
+    assert file_carver._reassemble(segs) == b"AAABBBCCC"
+
+
+def test_reassembling_no_segments_yields_no_bytes():
+    assert file_carver._reassemble([]) == b""
+
+
+def test_an_executable_download_is_carved_even_when_the_sequence_wraps():
+    """End-to-end: a server choosing its ISN must not be able to hide a binary.
+
+    A server picks its own initial sequence number, so straddling the 32-bit
+    wrap was an evasion and not merely a rare mis-assembly — this exact transfer
+    was reported with a normal ISN and completely invisible with a wrapping one.
+    """
+    from scapy.layers.inet import IP, TCP
+    from scapy.layers.l2 import Ether
+    from scapy.packet import Raw
+
+    body = b"MZ" + b"\x90" * 300
+    response = (b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n") + body
+    expected_sha = hashlib.sha256(body).hexdigest()
+
+    half = len(response) // 2
+    isn = 2 ** 32 - half                      # the split lands exactly on the wrap
+    acc = file_carver.FileCarverAccumulator()
+    for i, (chunk, seq) in enumerate((
+        (response[:half], isn),
+        (response[half:], 0),
+    )):
+        pkt = (Ether(src="02:00:00:00:00:01", dst="02:00:00:00:00:02")
+               / IP(src="45.33.32.156", dst="10.0.0.9")
+               / TCP(sport=80, dport=40000, flags="PA", seq=seq) / Raw(load=chunk))
+        pkt.time = 1700000000.0 + i
+        acc.feed(pkt)
+
+    events = acc.finalize()
+
+    assert [e.evidence["sha256"] for e in events] == [expected_sha], (
+        "the carved bytes must hash to the real file, not a scrambled stream"
+    )
+
+
 # ── HTTP body extraction ─────────────────────────────────────────────────────
 
 def test_a_stream_that_is_not_an_http_response_has_no_body():
@@ -324,3 +385,36 @@ def test_an_unreadable_capture_yields_no_findings(tmp_path):
     bad = tmp_path / "broken.pcap"
     bad.write_bytes(b"definitely not a pcap")
     assert file_carver.analyze(str(bad)) == []
+
+
+def test_the_number_of_carved_flows_is_bounded(monkeypatch):
+    """Bytes were capped per flow at 8 MB, but the flow count was not.
+
+    Measured at ~740 bytes of bookkeeping per flow with minimal payloads, so a
+    ~100 MB capture of a million tiny packets on an HTTP port cost roughly
+    705 MB before any file content was held. New flows past the cap are
+    declined and counted; the ones already being reassembled continue.
+    """
+    from scapy.layers.inet import IP, TCP
+    from scapy.layers.l2 import Ether
+    from scapy.packet import Raw
+
+    from packetiq.detection import file_carver as mod
+
+    monkeypatch.setattr(mod, "_MAX_FLOWS", 10)
+    acc = mod.FileCarverAccumulator()
+
+    def _pkt(client, sport):
+        p = (Ether(src="02:00:00:00:00:01", dst="02:00:00:00:00:02")
+             / IP(src="45.33.32.156", dst=client)
+             / TCP(sport=80, dport=sport, flags="PA", seq=1)
+             / Raw(load=b"MZ" + b"\x90" * 80))
+        p.time = 1700000000.0
+        return p
+
+    for i in range(100):
+        acc.feed(_pkt(f"10.0.1.{i}", 40000 + i))
+
+    assert len(acc.segments) == 10
+    assert acc.skipped_flows == 90
+    assert len(acc.sizes) == 10, "a declined flow must not leave a size entry behind"

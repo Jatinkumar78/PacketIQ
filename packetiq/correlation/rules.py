@@ -20,7 +20,6 @@ Rule catalogue:
 """
 
 from collections import defaultdict
-from typing import Optional
 
 from packetiq.correlation import mitre as mitre_db
 from packetiq.correlation.models import AttackChain
@@ -529,7 +528,7 @@ def credential_spray(events: list[DetectionEvent]) -> list[AttackChain]:
             continue
 
         # Group by destination port (service)
-        by_port: dict[Optional[int], list] = defaultdict(list)
+        by_port: dict[int | None, list] = defaultdict(list)
         for e in bf_events:
             by_port[e.dst_port].append(e)
 

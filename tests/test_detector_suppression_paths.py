@@ -320,6 +320,22 @@ def test_intervals_below_the_floor_average_out_below_it(tmp_path, monkeypatch):
                         [i * 0.5 for i in range(12)], "TCP", set()) is None
 
 
+def test_a_single_connection_cannot_crash_the_beacon_detector(tmp_path, monkeypatch):
+    """`min_connections = 1` used to abort the entire analysis.
+
+    One timestamp yields no intervals, and the `len(deltas) < min_conn - 1`
+    guard is vacuous at min_conn = 1 (len < 0 is never true), so
+    statistics.mean([]) raised StatisticsError. The eight Pass-1 detectors are
+    deliberately not wrapped by DetectionEngine, so that escaped run() and took
+    down the CLI command and the web job — from a valid config file.
+    """
+    _beacon_cfg(tmp_path, monkeypatch, "[beacon]\nmin_connections = 1\n")
+    det = beacon.BeaconDetector()
+
+    assert det._analyse("10.0.0.9", "185.199.108.153", 443,
+                        [0.0], "TCP", set()) is None
+
+
 def test_a_periodic_http_beacon_to_an_external_host_is_reported():
     """The HTTP grouping arm of detect(), which the SYN arm does not exercise."""
     res = ExtractionResult()

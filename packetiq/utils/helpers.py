@@ -6,7 +6,6 @@ import ipaddress
 import socket
 import struct
 from datetime import datetime
-from typing import Optional
 
 # The IPv4/IPv6 "unspecified" addresses. A DHCP client sends from 0.0.0.0 before
 # it owns a lease, so these show up as packet sources without ever being hosts —
@@ -302,7 +301,7 @@ def same_org_network(ip_a: str, ip_b: str, prefix: int = 16) -> bool:
     return b in ipaddress.ip_network(f"{ip_a}/{same_prefix}", strict=False)
 
 
-def _ip_network_key(ip: str) -> Optional[str]:
+def _ip_network_key(ip: str) -> str | None:
     """The L2-segment-sized network an address belongs to (/24 v4, /64 v6)."""
     try:
         addr = ipaddress.ip_address(ip)

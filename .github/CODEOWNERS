@@ -1,0 +1,6 @@
+# Every path is owned by the maintainer, who is requested for review
+# automatically on each pull request.
+#
+# Listed once with a wildcard rather than per directory: the later rule wins in
+# CODEOWNERS, so a long list of equivalent rules only invites a mistake.
+* @Jatinkumar78

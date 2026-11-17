@@ -10,6 +10,7 @@ PacketIQ report is *called*, how its sections are numbered, and what it claims
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 from datetime import datetime
 
@@ -95,11 +96,21 @@ def report_id(filename: str, sha256: str = "") -> str:
 
 
 def tool_version() -> str:
-    try:
+    """The version string a report header carries.
+
+    Two real sources, then an admission. The literal that used to be the fallback
+    read "1.0.0", which was correct exactly until 1.1.0 shipped: a report naming
+    the wrong version is worse than one saying it could not tell. The installed
+    distribution's metadata is tried second because it is the same number from a
+    different place, so the fallback is reached only when neither exists.
+    """
+    with contextlib.suppress(Exception):
         from packetiq import __version__
         return str(__version__)
-    except Exception:
-        return "1.0.0"
+    with contextlib.suppress(Exception):
+        from importlib.metadata import version
+        return version("packetiq")
+    return "unknown"
 
 
 # Tokens that must stay upper-case when an event type is turned into prose —

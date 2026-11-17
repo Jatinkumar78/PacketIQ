@@ -258,6 +258,27 @@ def test_the_smaller_chain_is_absorbed_regardless_of_ordering():
     assert len(merged) == 1
 
 
+def test_a_chain_that_grew_by_absorbing_keeps_merging_on_its_new_events():
+    """Transitive merge: A absorbs B, then the enlarged A still absorbs C.
+
+    `_merge` caches each chain's event-identity set so it is not rebuilt for
+    every pair, and `absorb` mutates a chain in place — so the cache entry for
+    whichever chain grew has to be refreshed immediately. A stale entry would
+    make the second comparison judge A on the events it held before the first
+    merge, and chains that belong to one intrusion would be reported as two.
+    """
+    events = [_event(ts=TS + i) for i in range(6)]
+
+    merged = CorrelationEngine()._merge([
+        _chain(events[0:4], "AAAA"),      # e0 e1 e2 e3
+        _chain(events[1:5], "BBBB"),      # e1 e2 e3 e4  -> absorbed into AAAA
+        _chain(events[0:5], "CCCC"),      # e0..e4       -> matches the grown AAAA
+    ])
+
+    assert len(merged) == 1
+    assert {e.timestamp for e in merged[0].events} == {TS + i for i in range(5)}
+
+
 def test_chains_from_different_attackers_are_never_merged():
     """Two unrelated attackers is the finding; merging them would erase it."""
     events_a = [_event(src="45.33.32.156", ts=TS + i) for i in range(4)]

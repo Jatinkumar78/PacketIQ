@@ -3,7 +3,6 @@ Timeline models — data structures for chronological event reconstruction.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from packetiq.detection.models import Severity
 
@@ -50,14 +49,14 @@ class TimelineEvent:
     timestamp:   float
     category:    str                   # Category constant
     description: str
-    src_ip:      Optional[str] = None
-    dst_ip:      Optional[str] = None
-    dst_port:    Optional[int] = None
-    protocol:    Optional[str] = None
+    src_ip:      str | None = None
+    dst_ip:      str | None = None
+    dst_port:    int | None = None
+    protocol:    str | None = None
     phase:       str           = ""    # Kill chain phase
-    severity:    Optional[Severity] = None
-    mitre_id:    Optional[str] = None  # e.g. "T1046"
-    chain_name:  Optional[str] = None  # which chain this belongs to
+    severity:    Severity | None = None
+    mitre_id:    str | None = None  # e.g. "T1046"
+    chain_name:  str | None = None  # which chain this belongs to
     evidence:    dict          = field(default_factory=dict)
 
     @property
@@ -106,7 +105,7 @@ class Timeline:
     events:          list[TimelineEvent]  = field(default_factory=list)
     phase_segments:  list[PhaseSegment]   = field(default_factory=list)
     pivot_points:    list[TimelineEvent]  = field(default_factory=list)
-    activity_bar:    Optional[ActivityBar] = None
+    activity_bar:    ActivityBar | None = None
     capture_start:   float = 0.0
     capture_end:     float = 0.0
 

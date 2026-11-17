@@ -132,8 +132,8 @@ def test_feed_header_stamp_is_timezone_aware_utc():
     stamped = [ln for ln in header.splitlines() if ln.startswith("# Refreshed:")][0]
     when = datetime.datetime.strptime(
         stamped.split(": ", 1)[1], "%Y-%m-%d %H:%M UTC"
-    ).replace(tzinfo=datetime.timezone.utc)
-    now = datetime.datetime.now(datetime.timezone.utc)
+    ).replace(tzinfo=datetime.UTC)
+    now = datetime.datetime.now(datetime.UTC)
     assert abs((now - when).total_seconds()) < 300
 
 

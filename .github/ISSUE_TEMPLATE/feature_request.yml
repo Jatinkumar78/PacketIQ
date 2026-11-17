@@ -1,0 +1,76 @@
+name: Feature request
+description: A new detector, input format, export, integration or UI capability.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        PacketIQ is a defensive tool. Requests for offensive tooling, detection
+        evasion, or analysis of a network you are not authorised to test are out
+        of scope and will be closed.
+
+        Please check the roadmap at the end of the README first.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - New detector
+        - New input format
+        - New export or SIEM integration
+        - Threat-intelligence source
+        - Web app or dashboard
+        - CLI
+        - AI copilot
+        - Reporting
+        - Packaging or deployment
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >-
+        What are you trying to do today, and where does PacketIQ leave you
+        stranded? Describe the analysis task, not the implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: For a new detector, what evidence would it rest on
+      description: >-
+        Every detection here carries severity, confidence, the evidence behind it
+        and a MITRE technique, and must be explainable to an analyst who
+        disagrees with it. What observable in the traffic would support this one,
+        and what would make it fire wrongly?
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or prior art
+      description: >-
+        Another tool that does this, a published technique, a SIGMA rule, a paper.
+        Links help.
+
+  - type: checkboxes
+    id: confirms
+    attributes:
+      label: Before submitting
+      options:
+        - label: This is a defensive capability and does not require access to a network I am not authorised to test.
+          required: true
+        - label: I checked the README roadmap and the open issues.
+          required: true

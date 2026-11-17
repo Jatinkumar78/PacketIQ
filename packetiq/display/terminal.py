@@ -62,7 +62,7 @@ class TerminalUI:
         tagline_text = Text(TAGLINE, style="dim green", justify="center")
         # Read the version rather than repeating it, so the banner cannot drift
         # from the package the user actually has installed.
-        version_text = Text(f"v{__version__}  |  github.com/PacketIQ  |  SOC Ready",
+        version_text = Text(f"v{__version__}  |  github.com/Jatinkumar78/PacketIQ  |  SOC Ready",
                             style="dim cyan", justify="center")
 
         self.console.print()

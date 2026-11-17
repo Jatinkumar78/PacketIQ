@@ -9,7 +9,6 @@ import contextlib
 import os
 from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import Optional
 
 from scapy.all import PcapReader
 from scapy.layers.dns import DNS
@@ -36,49 +35,49 @@ class RawPacketRecord:
     # Link layer (Ethernet/802.3) — identifies the physical NIC that sent the
     # frame, so the device inventory can tell real hosts apart from probed-but-
     # nonexistent IPs and merge a host's IPv4 + IPv6 addresses into one device.
-    eth_src: Optional[str] = None
-    eth_dst: Optional[str] = None
+    eth_src: str | None = None
+    eth_dst: str | None = None
 
     # Network layer
-    src_ip: Optional[str] = None
-    dst_ip: Optional[str] = None
+    src_ip: str | None = None
+    dst_ip: str | None = None
     ip_version: int = 4
-    ttl: Optional[int] = None
-    ip_proto: Optional[int] = None  # numeric (6=TCP, 17=UDP, 1=ICMP …)
+    ttl: int | None = None
+    ip_proto: int | None = None  # numeric (6=TCP, 17=UDP, 1=ICMP …)
     protocol: str = "UNKNOWN"       # transport/network class for detector logic (TCP/UDP/ICMP/ARP…)
-    display_protocol: Optional[str] = None  # most-specific protocol for composition (STP, DHCP, mDNS…)
+    display_protocol: str | None = None  # most-specific protocol for composition (STP, DHCP, mDNS…)
 
     # Transport layer
-    src_port: Optional[int] = None
-    dst_port: Optional[int] = None
-    service: Optional[str] = None   # well-known port service name
-    tcp_flags: Optional[str] = None # e.g. "SA", "F", "R"
-    tcp_seq: Optional[int] = None
-    tcp_ack: Optional[int] = None
+    src_port: int | None = None
+    dst_port: int | None = None
+    service: str | None = None   # well-known port service name
+    tcp_flags: str | None = None # e.g. "SA", "F", "R"
+    tcp_seq: int | None = None
+    tcp_ack: int | None = None
     payload_size: int = 0
 
     # Layer-2 ARP (host discovery / spoofing signals — populated only for ARP)
     is_arp: bool = False
-    arp_op: Optional[int] = None        # 1 = request (who-has), 2 = reply (is-at)
-    arp_src_mac: Optional[str] = None   # sender hardware address
-    arp_src_ip: Optional[str] = None    # sender protocol (IPv4) address
-    arp_dst_mac: Optional[str] = None   # target hardware address
-    arp_dst_ip: Optional[str] = None    # target protocol (IPv4) address
+    arp_op: int | None = None        # 1 = request (who-has), 2 = reply (is-at)
+    arp_src_mac: str | None = None   # sender hardware address
+    arp_src_ip: str | None = None    # sender protocol (IPv4) address
+    arp_dst_mac: str | None = None   # target hardware address
+    arp_dst_ip: str | None = None    # target protocol (IPv4) address
 
     # Application hints
     has_dns: bool = False
     has_http: bool = False
-    dns_qname: Optional[str] = None
+    dns_qname: str | None = None
     # A DNS reply echoes the question it answers, so the qname alone cannot say
     # who asked. This flag is what keeps a resolver's replies from being counted
     # as queries the resolver made.
     dns_is_response: bool = False
-    http_method: Optional[str] = None
-    http_host: Optional[str] = None
-    http_path: Optional[str] = None
-    http_status: Optional[int] = None
-    http_user_agent: Optional[str] = None
-    http_server: Optional[str] = None
+    http_method: str | None = None
+    http_host: str | None = None
+    http_path: str | None = None
+    http_status: int | None = None
+    http_user_agent: str | None = None
+    http_server: str | None = None
 
     # Raw payload reference (kept small — only first 512 bytes)
     raw_payload: bytes = field(default_factory=bytes, repr=False)
@@ -140,7 +139,7 @@ class PCAPParser:
     #  Internal parsing                                                    #
     # ------------------------------------------------------------------ #
 
-    def _parse_packet(self, pkt: Packet, index: int) -> Optional[RawPacketRecord]:
+    def _parse_packet(self, pkt: Packet, index: int) -> RawPacketRecord | None:
         """Extract a normalized record from a raw Scapy packet."""
         try:
             record = RawPacketRecord(
@@ -439,7 +438,7 @@ class PCAPParser:
             self._http_flows.add(self._flow_key(record))
 
     @staticmethod
-    def _header_value(payload: bytes, name: bytes) -> Optional[str]:
+    def _header_value(payload: bytes, name: bytes) -> str | None:
         """Return one header's value, matched case-insensitively.
 
         ``name`` must already be lowercase. Stops at the blank line ending the
@@ -476,7 +475,7 @@ class PCAPParser:
         return "".join(flag_map.get(c, c) for c in raw if c in flag_map) or raw
 
     @staticmethod
-    def _norm_mac(mac) -> Optional[str]:
+    def _norm_mac(mac) -> str | None:
         """Normalise a MAC to lowercase colon form; None for empty values."""
         if not mac:
             return None
@@ -495,7 +494,7 @@ class PCAPParser:
         return str(dport)
 
     @staticmethod
-    def _safe_decode(field) -> Optional[str]:
+    def _safe_decode(field) -> str | None:
         """Safely decode Scapy bytes fields."""
         if field is None:
             return None

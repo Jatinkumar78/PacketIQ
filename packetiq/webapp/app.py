@@ -24,7 +24,7 @@ import uuid
 import zipfile
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
@@ -55,7 +55,7 @@ def _allowed_hosts() -> set:
     return hosts
 
 
-async def _stream_upload_to(file, dest, max_mb: Optional[int] = None) -> int:
+async def _stream_upload_to(file, dest, max_mb: int | None = None) -> int:
     """Stream an UploadFile to `dest` in chunks, aborting if it exceeds the cap.
     Returns the number of bytes written. Raises HTTPException(413) when over."""
     cap = (max_mb if max_mb is not None else MAX_UPLOAD_MB) * 1024 * 1024
@@ -88,6 +88,13 @@ TEMPLATE = Path(__file__).parent / "templates" / "index.html"
 STATIC_DIR = Path(__file__).parent / "static"
 # Front-end libraries are vendored (not loaded from a CDN) so the web app works
 # with no internet at all. Served from /static/vendor via an allow-listed route.
+# The served name is the allow-list key, so refreshing a library means replacing
+# the file under the same name — the upstream paths, which do move between major
+# versions, are recorded here instead:
+#   chart.umd.min.js  Chart.js 4.6.1  npm chart.js@4.6.1/dist/chart.umd.min.js
+#   marked.min.js     marked 18.2.0   npm marked@18.2.0/lib/marked.umd.min.js
+#                                     (marked dropped root-level marked.min.js
+#                                      after v13; the UMD build moved to lib/)
 _VENDOR_ASSETS = {
     "chart.umd.min.js": "application/javascript",
     "marked.min.js": "application/javascript",
@@ -309,6 +316,8 @@ def _ser_attr(a) -> dict:
         "origin":         a.origin,
         "motivation":     a.motivation,
         "confidence":     round(a.confidence * 100),   # TTP-overlap score, not attribution confidence
+        "coverage":       round(a.coverage * 100),     # how much of the actor's profile was seen
+        "specificity":    round(a.specificity * 100),  # how much of the capture it explains
         "matched_ttps":   a.matched_ttps,
         "description":    a.description,
         "color":          a.color,
@@ -358,7 +367,7 @@ def _build_graph(result, events) -> dict:
     from packetiq.utils.helpers import get_service_name, is_private_ip, monitored_network
 
     ip_to_device: dict = getattr(result, "ip_to_device", {}) or {}
-    transmitted: Optional[set] = getattr(result, "transmitted_ips", None)
+    transmitted: set | None = getattr(result, "transmitted_ips", None)
 
     def node_of(ip: str) -> str:
         """Collapse an address to its physical-device node id."""
@@ -754,6 +763,9 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
         },
         "risk": {
             "score": risk.score, "tier": risk.tier, "summary": risk.summary,
+            # Undamped magnitude: `score` saturates at 100, so this is what
+            # distinguishes a bad capture from a catastrophic one.
+            "raw_score": getattr(risk, "raw_score", 0.0),
             "breakdown": risk.by_severity, "event_count": risk.event_count,
             "top_sources": risk.top_sources[:5], "top_targets": risk.top_targets[:5],
         },
@@ -822,7 +834,7 @@ def _merge_results(results: list):
     return m
 
 
-def _run_fuse(job_id: str, pcap_paths: list, loop: asyncio.AbstractEventLoop) -> Optional[dict]:
+def _run_fuse(job_id: str, pcap_paths: list, loop: asyncio.AbstractEventLoop) -> dict | None:
     """Campaign analysis across multiple captures — dedup events, merge, re-correlate."""
     from packetiq.correlation.engine import CorrelationEngine
     from packetiq.detection.engine import DetectionEngine
@@ -906,7 +918,7 @@ def _looks_like_netflow(path: str) -> bool:
     return struct.unpack("!H", head)[0] in (5, 9, 10)
 
 
-def _run_analysis(job_id: str, pcap_path: str, loop: asyncio.AbstractEventLoop) -> Optional[dict]:
+def _run_analysis(job_id: str, pcap_path: str, loop: asyncio.AbstractEventLoop) -> dict | None:
     """Full PacketIQ pipeline — blocking, call via run_in_executor."""
     from packetiq.correlation.engine import CorrelationEngine
     from packetiq.detection.engine import DetectionEngine
@@ -1074,6 +1086,44 @@ def _evict_old_jobs(max_jobs: int = 12):
                 with contextlib.suppress(Exception):
                     Path(p).unlink(missing_ok=True)
         _jobs.pop(job_id, None)
+
+
+def _session_running(sess) -> bool:
+    """True only while the capture thread is alive.
+
+    Deliberately forgiving about the object it is handed: reclaiming memory must
+    never be the thing that fails a request. An object that cannot answer counts
+    as stopped, which at worst retains a session one round longer than needed.
+    """
+    alive = getattr(sess, "alive", None)
+    if not callable(alive):
+        return False
+    return bool(alive())
+
+
+def _evict_old_live_sessions(max_sessions: int = 6):
+    """Keep disk/memory bounded: drop the oldest stopped sessions and their PCAPs.
+
+    `_jobs` has had `_evict_old_jobs` from the start; `_live_sessions` had no
+    eviction at all — no `del`, `pop` or `clear` anywhere. A stopped session is
+    deliberately retained so `/api/live/{sid}/analyze` can still run the full
+    pipeline over what it recorded, but nothing removed it afterwards, so every
+    `POST /api/live/start` leaked a session object, its alert and
+    packet-summary buffers, and the recorded capture — up to
+    `_LiveSession._MAX_PKTS` (300,000) packets on disk — for the lifetime of
+    the process.
+
+    A session whose sniffer thread is still running is never evicted.
+    """
+    stopped = [sid for sid, sess in _live_sessions.items() if not _session_running(sess)]
+    if len(stopped) <= max_sessions:
+        return
+    for sid in stopped[:-max_sessions]:
+        sess = _live_sessions.pop(sid, None)
+        path = getattr(sess, "pcap_path", None)
+        if path:
+            with contextlib.suppress(Exception):
+                Path(path).unlink(missing_ok=True)
 
 
 # ── Chat helpers ──────────────────────────────────────────────────────────────
@@ -1248,7 +1298,9 @@ def _build_chat_context(result: dict) -> str:
         for a in attrs:
             lines += [
                 f"\n  Actor       : {a.get('name','')}",
-                f"  Confidence  : {a.get('confidence',0)}%",
+                f"  TTP overlap : {a.get('confidence',0)}% "
+                f"(profile coverage {a.get('coverage',0)}%, "
+                f"explains {a.get('specificity',0)}% of observed TTPs)",
                 f"  Origin      : {a.get('origin','')}",
                 f"  Motivation  : {a.get('motivation','')}",
                 f"  Matched TTPs: {', '.join(a.get('matched_ttps',[]))}",
@@ -1394,7 +1446,7 @@ def _ram_bytes_windows() -> int:
     return 0
 
 
-def _system_ram_bytes() -> Optional[int]:
+def _system_ram_bytes() -> int | None:
     """Total physical RAM in bytes, or None when the platform will not say.
 
     Read from the OS rather than guessed, because it is the number that decides
@@ -1420,7 +1472,7 @@ def _system_ram_bytes() -> Optional[int]:
     return None
 
 
-def _ram_budget_bytes() -> Optional[int]:
+def _ram_budget_bytes() -> int | None:
     """How much RAM a local model may reasonably use, or None if RAM is unknown."""
     total = _system_ram_bytes()
     return int(total * _RAM_BUDGET_FRACTION) if total else None
@@ -1529,7 +1581,7 @@ def _ollama_keep_alive() -> str:
             or "30m").strip()
 
 
-def _ollama_seed() -> Optional[int]:
+def _ollama_seed() -> int | None:
     """Fixed sampling seed so identical evidence yields identical prose.
 
     Ollama seeds randomly by default, so re-running the same analysis reworded
@@ -1615,7 +1667,7 @@ def _ollama_warm(model: str, host: str) -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
-def _provider_key(name: str) -> Optional[str]:
+def _provider_key(name: str) -> str | None:
     if name == "ollama":
         # No API key — carry the daemon host so downstream code has a truthy value.
         return _ollama_host()
@@ -1868,7 +1920,7 @@ def _model_options(provider: str) -> list:
     return out
 
 
-def _detect_provider(skip: Optional[set] = None) -> dict:
+def _detect_provider(skip: set | None = None) -> dict:
     """
     Pick the AI provider to use. Honours a manual GUI override (_AI_FORCED) and,
     in automatic mode, performs *sticky* switching: providers that recently
@@ -2779,7 +2831,7 @@ def create_app() -> FastAPI:
                 await websocket.send_text(json.dumps(msg))
                 if msg.get("type") in ("complete", "error"):
                     break
-        except (asyncio.TimeoutError, WebSocketDisconnect):
+        except (TimeoutError, WebSocketDisconnect):
             pass
         finally:
             with contextlib.suppress(Exception):
@@ -2841,6 +2893,8 @@ def create_app() -> FastAPI:
     @app.get("/api/history")
     async def history(limit: int = 50):
         from packetiq.storage import recent
+        # Bounded like /api/packets, which already clamps its own `limit`.
+        limit = max(1, min(limit, 1000))
         return {"analyses": recent(limit)}
 
     @app.delete("/api/history")
@@ -3003,6 +3057,7 @@ def create_app() -> FastAPI:
                 "Click \"Enable live capture (one-time)\" above (or run `packetiq setup-capture`) to fix it.")
         sid = str(uuid.uuid4())
         _live_sessions[sid] = sess
+        _evict_old_live_sessions()
         return {"session_id": sid, "interface": iface, "threshold": threshold, "status": "running"}
 
     @app.get("/api/live/{sid}")

@@ -16,7 +16,6 @@ first bytes of each packet, which is too little for multi-KB files).
 
 import hashlib
 from collections import defaultdict
-from typing import Optional
 
 from scapy.all import PcapReader
 from scapy.layers.inet import IP, TCP
@@ -28,6 +27,17 @@ from packetiq.utils.helpers import is_private_ip
 _HTTP_PORTS = {80, 8080, 8000, 8888}
 _FTP_DATA_PORTS = {20}
 _MAX_STREAM_BYTES = 8 * 1024 * 1024     # cap reassembly per flow (8 MB)
+# Distinct flows tracked at once. Each accumulator already caps the bytes it
+# reassembles *per flow*, but nothing capped the number of flows, and the
+# per-flow bookkeeping is the amplifier: measured at 740 bytes per flow with
+# minimal payloads, so a ~100 MB capture of a million tiny packets on these
+# ports cost ~705 MB before any payload was stored. Capping the flow count
+# bounds that; new flows past the cap are ignored and counted in
+# `skipped_flows`, flows already being reassembled are unaffected.
+#
+# Set high enough that reaching it is already an extraordinary capture, so this
+# is a backstop against exhaustion rather than a routine truncation.
+_MAX_FLOWS = 200_000
 _MIN_FILE_BYTES = 64
 
 # magic bytes -> (file type, is_executable)
@@ -55,6 +65,7 @@ class FileCarverAccumulator:
         self.segments: dict[tuple, list] = defaultdict(list)
         self.sizes: dict[tuple, int] = defaultdict(int)
         self.meta: dict[tuple, dict] = {}
+        self.skipped_flows = 0
 
     def feed(self, pkt) -> None:
         if not pkt.haslayer(TCP):
@@ -73,6 +84,9 @@ class FileCarverAccumulator:
         if not payload:
             return
         key = (src, tcp.sport, dst, tcp.dport)
+        if key not in self.segments and len(self.segments) >= _MAX_FLOWS:
+            self.skipped_flows += 1
+            return
         if self.sizes[key] >= _MAX_STREAM_BYTES:
             return
         self.segments[key].append((int(tcp.seq), payload))
@@ -170,31 +184,53 @@ def _load_store():
 
 
 def _reassemble(segs: list) -> bytes:
-    """Order TCP segments by sequence number and concatenate (best-effort)."""
-    segs.sort(key=lambda s: s[0])
+    """Order TCP segments by sequence number and concatenate (best-effort).
+
+    Sequence numbers are compared as 32-bit serial numbers (RFC 1982), not as
+    plain integers. A TCP initial sequence number is random, so a stream whose
+    ISN sits near 2**32 wraps through zero within a few kilobytes — well inside
+    the 8 MB this carver collects. Sorting the raw values then placed the
+    wrapped tail of the file first: the reassembled bytes came out scrambled, so
+    the magic was no longer at offset 0, `_identify` returned None, and the
+    download was never hashed, reputation-checked or YARA-scanned. A server
+    picks its own ISN, so that was an evasion rather than a rare mis-assembly —
+    a cleartext PE/EXE transfer went from detected to invisible purely by
+    choosing where the sequence space wrapped.
+
+    Offsets are signed distances from the first segment *as captured*, which
+    also keeps a late-arriving earlier segment ahead of its successors instead
+    of 4 GB behind them.
+    """
+    base = segs[0][0] if segs else 0
+
+    def _offset(seq: int) -> int:
+        return ((seq - base + 2 ** 31) % 2 ** 32) - 2 ** 31
+
+    ordered = sorted(((_offset(seq), payload) for seq, payload in segs),
+                     key=lambda s: s[0])
     out = bytearray()
-    last_seq = None
-    for seq, payload in segs:
-        if last_seq is None:
+    last_end = None
+    for start, payload in ordered:
+        if last_end is None:
             out += payload
-            last_seq = seq + len(payload)
+            last_end = start + len(payload)
             continue
-        if seq == last_seq:
+        if start == last_end:
             out += payload
-            last_seq = seq + len(payload)
-        elif seq > last_seq:
+            last_end = start + len(payload)
+        elif start > last_end:
             out += payload          # gap (missing segment) — append anyway
-            last_seq = seq + len(payload)
+            last_end = start + len(payload)
         else:
             # overlap / retransmit: append only the new tail
-            overlap = last_seq - seq
+            overlap = last_end - start
             if overlap < len(payload):
                 out += payload[overlap:]
-                last_seq = seq + len(payload)
+                last_end = start + len(payload)
     return bytes(out)
 
 
-def _http_body(stream: bytes) -> Optional[bytes]:
+def _http_body(stream: bytes) -> bytes | None:
     """Return the body of the first HTTP response in the stream."""
     if not stream.startswith(b"HTTP/"):
         return None

@@ -1,7 +1,17 @@
+# Files the source distribution carries. `python -m build` makes an sdist from
+# this list, so anything absent here is simply missing from the published
+# tarball even though it is in the repository.
 include README.md
 include LICENSE
+include CHANGELOG.md
+include SECURITY.md
+include CONTRIBUTING.md
+include CODE_OF_CONDUCT.md
+include SUPPORT.md
+include CITATION.cff
 include requirements.txt
 include .env.example
+include packetiq.toml.example
 
 # Bundled threat-intel feeds, YARA rules, and web templates
 recursive-include packetiq/detection/data *.csv

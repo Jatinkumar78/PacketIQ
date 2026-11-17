@@ -110,15 +110,8 @@ def test_no_events_yields_no_coverage():
 
 # ── Report style helpers ─────────────────────────────────────────────────────
 
-def test_the_tool_version_is_read_from_the_package():
-    assert report_style.tool_version() == "1.0.0"
-
-
-def test_the_tool_version_falls_back_when_the_package_metadata_is_missing(monkeypatch):
-    """Reports must still carry a version string if the import fails.
-
-    A report header reading `None` is worse than a slightly stale constant.
-    """
+def _break_packetiq_version_import(monkeypatch):
+    """Make `from packetiq import __version__` raise, nothing else."""
     import builtins
     real_import = builtins.__import__
 
@@ -128,7 +121,45 @@ def test_the_tool_version_falls_back_when_the_package_metadata_is_missing(monkey
         return real_import(name, *a, **kw)
 
     monkeypatch.setattr(builtins, "__import__", no_packetiq)
-    assert report_style.tool_version() == "1.0.0"
+
+
+def test_the_tool_version_is_read_from_the_package():
+    """Compared against the source of truth, not a literal.
+
+    This asserted `== "1.0.0"`, which made it a test of a constant: it would have
+    failed on the 1.1.0 bump while the code was right, and passed if the code had
+    kept reporting 1.0.0 while the package moved on.
+    """
+    from packetiq import __version__
+
+    assert report_style.tool_version() == __version__
+
+
+def test_the_tool_version_falls_back_to_the_installed_distribution(monkeypatch):
+    """Second source, same number from a different place."""
+    import importlib.metadata
+
+    _break_packetiq_version_import(monkeypatch)
+    monkeypatch.setattr(importlib.metadata, "version", lambda _name: "9.9.9")
+    assert report_style.tool_version() == "9.9.9"
+
+
+def test_the_tool_version_admits_it_cannot_tell_rather_than_guessing(monkeypatch):
+    """With neither source available the answer is "unknown", not a literal.
+
+    The literal that used to live here was "1.0.0" — correct right up until the
+    next release, after which every report produced on that path would have named
+    a version that never produced it. A report header that says it does not know
+    is worth more than one that is confidently wrong.
+    """
+    import importlib.metadata
+
+    def missing(_name):
+        raise importlib.metadata.PackageNotFoundError("packetiq")
+
+    _break_packetiq_version_import(monkeypatch)
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    assert report_style.tool_version() == "unknown"
 
 
 def test_a_report_id_is_stable_for_the_same_capture():

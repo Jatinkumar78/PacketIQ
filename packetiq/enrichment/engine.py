@@ -8,7 +8,6 @@ abuse.ch Feodo Tracker").
 """
 
 from collections import defaultdict
-from typing import Optional
 
 from packetiq.detection.models import DetectionEvent, EventType
 from packetiq.enrichment.feeds import IOCStore, load_store
@@ -16,7 +15,7 @@ from packetiq.extractor.data_extractor import ExtractionResult
 from packetiq.utils.helpers import is_private_ip
 
 
-def enrich(result: ExtractionResult, store: Optional[IOCStore] = None) -> list[DetectionEvent]:
+def enrich(result: ExtractionResult, store: IOCStore | None = None) -> list[DetectionEvent]:
     """Cross-reference external IPs and DNS domains against threat-intel feeds."""
     store = store if store is not None else load_store()
     if store.total == 0:

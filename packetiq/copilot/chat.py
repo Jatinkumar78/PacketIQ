@@ -10,9 +10,10 @@ Supports:
 """
 
 import os
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional, Protocol
+from typing import Protocol
 
 from rich import box
 from rich.console import Console
@@ -53,7 +54,7 @@ class InteractiveChat:
         self,
         client:     CopilotLike,
         pcap_name:  str = "capture.pcap",
-        report_dir: Optional[str] = None,
+        report_dir: str | None = None,
     ):
         self.client     = client
         self.pcap_name  = pcap_name
@@ -160,7 +161,7 @@ class InteractiveChat:
         # flush the underlying stream directly.
         console.file.flush()
 
-    def _stream_response(self) -> Optional[str]:
+    def _stream_response(self) -> str | None:
         """Stream Claude's response, printing each chunk as it arrives.
 
         Returns the full text, or None when the turn failed — in which case the
@@ -189,7 +190,7 @@ class InteractiveChat:
 
         return full_text
 
-    def _handle_report(self, filename: Optional[str]):
+    def _handle_report(self, filename: str | None):
         """Generate a full SOC report and save to file."""
         console.print("[bold cyan]Generating SOC report (non-streaming)...[/bold cyan]")
 

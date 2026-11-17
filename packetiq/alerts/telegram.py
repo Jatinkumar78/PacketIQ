@@ -13,13 +13,35 @@ Telegram Bot API limits:
 
 import html
 import time
-from typing import Optional
 
 import requests
 
 BASE_URL   = "https://api.telegram.org/bot{token}/{method}"
 MAX_LENGTH = 4096       # Telegram hard limit per message
 MIN_DELAY  = 1.1        # seconds between successive sends (rate safety)
+
+
+def _without_token(exc: Exception, token: str) -> str:
+    """Exception text with the bot token removed.
+
+    `requests` embeds the request URL in ConnectionError, SSLError and
+    ProxyError, and the Telegram API carries the bot token *in the URL path*
+    (`/bot<TOKEN>/getMe`) — so the raw exception string is a credential:
+
+        Network error: HTTPSConnectionPool(host='api.telegram.org', port=443):
+        Max retries exceeded with url: /bot<TOKEN>/getMe (Caused by ProxyError...)
+
+    These strings are returned by `test_connection` straight to the terminal
+    (cli.py) and to the browser (webapp), and written to logs on the way, so one
+    transient network failure disclosed the bot token to anyone who could read
+    either. Redact rather than swallow: the operator still needs to know what
+    went wrong.
+    """
+    text = str(exc)
+    tok = (token or "").strip()
+    if tok:
+        text = text.replace(tok, "<token redacted>")
+    return text
 
 
 class TelegramSender:
@@ -75,7 +97,7 @@ class TelegramSender:
                 return True, ""
             return False, data.get("description", "Unknown error")
         except Exception as e:
-            return False, str(e)
+            return False, _without_token(e, self.token)
 
     def test_connection(self) -> tuple[bool, str]:
         """
@@ -88,7 +110,7 @@ class TelegramSender:
             resp = requests.get(url, timeout=self.timeout)
             data = resp.json()
         except Exception as e:
-            return False, f"Network error: {e}"
+            return False, f"Network error: {_without_token(e, self.token)}"
 
         if not data.get("ok"):
             return False, f"Invalid bot token: {data.get('description', 'unknown')}"
@@ -123,7 +145,7 @@ class TelegramSender:
         except requests.ConnectionError:
             return False, "Network unreachable"
         except Exception as e:
-            return False, str(e)
+            return False, _without_token(e, self.token)
 
     def _rate_limit(self):
         """Enforce minimum delay between sends."""
@@ -161,7 +183,7 @@ def detect_chat_ids(token: str, timeout: int = 10) -> tuple[bool, object]:
         resp = requests.get(url, timeout=timeout)
         data = resp.json()
     except Exception as e:
-        return False, f"Network error: {e}"
+        return False, f"Network error: {_without_token(e, token)}"
     if not data.get("ok"):
         return False, data.get("description", "Invalid bot token")
 
@@ -183,7 +205,7 @@ def detect_chat_ids(token: str, timeout: int = 10) -> tuple[bool, object]:
 
 # ── Credential loading ────────────────────────────────────────────────────────
 
-def load_credentials() -> tuple[Optional[str], Optional[str]]:
+def load_credentials() -> tuple[str | None, str | None]:
     """
     Load TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from environment or .env file.
     Returns (token, chat_id) — either may be None if not found.

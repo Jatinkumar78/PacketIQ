@@ -37,6 +37,15 @@ class RiskReport:
     by_type:      dict          # event_type → count
     top_sources:  list[str]     # most active attacker IPs
     top_targets:  list[str]     # most targeted IPs
+    # The dampened aggregate before the 0-100 clamp. `score` saturates: six
+    # distinct CRITICAL findings already reach 100, and a catastrophic capture
+    # measuring 1800 reports the same 100 — a 12x range of real severity read as
+    # one number, which is the clamp flattening the top end exactly as it did
+    # for the attribution score. `score` and `tier` are deliberately unchanged
+    # (every report, threshold and stored history row depends on them), so the
+    # magnitude is carried alongside instead, letting captures be ranked against
+    # each other once they have all pinned the ceiling.
+    raw_score:    float = 0.0
 
 
 def score(events: list[DetectionEvent]) -> RiskReport:
@@ -100,6 +109,7 @@ def score(events: list[DetectionEvent]) -> RiskReport:
 
     return RiskReport(
         score       = final_score,
+        raw_score   = round(raw_score, 1),
         tier        = tier_label,
         color       = tier_color,
         summary     = tier_summary,

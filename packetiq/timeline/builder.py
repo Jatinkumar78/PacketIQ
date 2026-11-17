@@ -14,7 +14,6 @@ Pipeline:
   9. Build activity density bar
 """
 
-from typing import Optional
 
 from packetiq.correlation import mitre as mitre_db
 from packetiq.correlation.models import AttackChain
@@ -329,7 +328,7 @@ class TimelineBuilder:
         events: list[TimelineEvent],
         start_ts: float,
         end_ts: float,
-    ) -> Optional[ActivityBar]:
+    ) -> ActivityBar | None:
         duration = end_ts - start_ts
         if duration <= 0 or not events:
             return None

@@ -18,7 +18,6 @@ Usage:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from packetiq.alerts import formatter
 from packetiq.alerts.telegram import TelegramSender
@@ -73,7 +72,7 @@ class AlertDispatcher:
         events:      list[DetectionEvent],
         chains:      list[AttackChain],
         result:      ExtractionResult,
-        report_path: Optional[str] = None,
+        report_path: str | None = None,
     ) -> DispatchResult:
         """
         Send the full alert sequence. Returns a DispatchResult.

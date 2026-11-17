@@ -453,3 +453,91 @@ def test_a_send_after_a_long_gap_does_not_wait(monkeypatch):
     s._rate_limit()
 
     assert slept == [], "no need to throttle when the last send was ages ago"
+
+
+# ── The bot token must never reach an error string ───────────────────────────
+
+_FAKE_TOKEN = "1234567890:AAFAKEtokenFORtestingONLY_abcdefghij"
+
+
+def _connection_error_naming_the_url(token: str):
+    """What `requests` actually raises: the request URL inside the message."""
+    import requests
+
+    def _boom(url, *args, **kwargs):
+        raise requests.ConnectionError(
+            "HTTPSConnectionPool(host='api.telegram.org', port=443): "
+            f"Max retries exceeded with url: /bot{token}/getMe "
+            "(Caused by NewConnectionError('Failed to establish a new connection'))"
+        )
+    return _boom
+
+
+def test_test_connection_never_echoes_the_bot_token(monkeypatch):
+    """The Telegram API carries the token in the URL path, so the URL is a secret.
+
+    `requests` embeds that URL in ConnectionError, SSLError and ProxyError, and
+    this message is returned straight to the terminal by `packetiq` and to the
+    browser by the webapp's "Test connection" button — and written to logs on
+    the way. One failed connection disclosed the bot credential to anyone who
+    could read either.
+    """
+    monkeypatch.setattr(tg.requests, "get",
+                        _connection_error_naming_the_url(_FAKE_TOKEN))
+
+    ok, msg = tg.TelegramSender(_FAKE_TOKEN, "123").test_connection()
+
+    assert ok is False
+    assert _FAKE_TOKEN not in msg
+    assert "<token redacted>" in msg
+    assert "api.telegram.org" in msg, "the operator still needs the real cause"
+
+
+def test_chat_id_detection_never_echoes_the_bot_token(monkeypatch):
+    """Same failure, reached from the module-level helper the UI calls."""
+    monkeypatch.setattr(tg.requests, "get",
+                        _connection_error_naming_the_url(_FAKE_TOKEN))
+
+    ok, msg = tg.detect_chat_ids(_FAKE_TOKEN)
+
+    assert ok is False
+    assert _FAKE_TOKEN not in str(msg)
+    assert "<token redacted>" in str(msg)
+
+
+def test_an_unexpected_send_failure_never_echoes_the_bot_token(monkeypatch):
+    """`_post` names Timeout and ConnectionError, but its catch-all stays open.
+
+    SSLError and ProxyError subclass ConnectionError, so those already return
+    the fixed "Network unreachable". TooManyRedirects, InvalidURL and the
+    decode errors do not, and they reach the bare `except` carrying the URL.
+    """
+    import requests
+
+    def _redirect_boom(url, *args, **kwargs):
+        raise requests.exceptions.TooManyRedirects(
+            f"Exceeded 30 redirects for url: /bot{_FAKE_TOKEN}/sendMessage"
+        )
+
+    monkeypatch.setattr(tg.requests, "post", _redirect_boom)
+
+    ok, msg = tg.TelegramSender(_FAKE_TOKEN, "123").send("hello")
+
+    assert ok is False
+    assert _FAKE_TOKEN not in msg
+    assert "<token redacted>" in msg
+
+
+def test_a_connection_failure_reports_a_fixed_message_with_no_url(monkeypatch):
+    """ConnectionError (and so SSLError/ProxyError) never reaches the catch-all."""
+    import requests
+
+    def _boom(url, *args, **kwargs):
+        raise requests.exceptions.SSLError(
+            f"certificate verify failed for url: /bot{_FAKE_TOKEN}/sendMessage")
+
+    monkeypatch.setattr(tg.requests, "post", _boom)
+
+    ok, msg = tg.TelegramSender(_FAKE_TOKEN, "123").send("hello")
+
+    assert (ok, msg) == (False, "Network unreachable")

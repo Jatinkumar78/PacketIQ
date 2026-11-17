@@ -8,7 +8,6 @@ endpoint, port set membership on either endpoint, and timestamp in range).
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from scapy.all import PcapReader, PcapWriter
 from scapy.layers.inet import IP, TCP, UDP
@@ -19,8 +18,8 @@ from scapy.layers.inet6 import IPv6
 class PcapFilter:
     ips:        set = field(default_factory=set)     # match if src or dst in this set
     ports:      set = field(default_factory=set)     # match if sport or dport in this set
-    start_ts:   Optional[float] = None               # inclusive
-    end_ts:     Optional[float] = None               # inclusive
+    start_ts:   float | None = None               # inclusive
+    end_ts:     float | None = None               # inclusive
 
     def matches(self, pkt) -> bool:
         # Time window

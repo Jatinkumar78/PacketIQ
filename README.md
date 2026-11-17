@@ -5,25 +5,29 @@
 
 
 
-<a href="https://github.com/PacketIQ">
+<a href="https://github.com/Jatinkumar78/PacketIQ">
   <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=18&duration=3000&pause=800&color=3B82F6&center=true&vCenter=true&multiline=false&width=760&lines=Detect+threats+in+seconds+%F0%9F%94%8D;Real+threat-intel+enrichment+%E2%80%94+no+fabricated+data+%E2%9C%85;JA3%2FJA4+%C2%B7+YARA+%C2%B7+file+carving+%C2%B7+SIGMA+%C2%B7+STIX+%C2%B7+MISP;Map+MITRE+ATT%26CK+%2B+kill+chains+%F0%9F%8E%AF;PCAP+%C2%B7+Zeek+logs+%C2%B7+live+capture+%E2%9A%A1" alt="Typing SVG" />
 </a>
 
 <br/><br/>
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-3b82f6?style=for-the-badge&logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-![Scapy](https://img.shields.io/badge/Scapy-packet%20engine-ef4444?style=for-the-badge&logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-1846%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
-![Coverage](https://img.shields.io/badge/coverage-100%25-22c55e?style=for-the-badge&logo=pytest&logoColor=white)
-![GUI](https://img.shields.io/badge/100%25-GUI%20web%20app-3b82f6?style=for-the-badge&logo=googlechrome&logoColor=white)
-![Ruff](https://img.shields.io/badge/lint-ruff%20clean-000000?style=for-the-badge&logo=ruff&logoColor=white)
+[![CI](https://img.shields.io/github/actions/workflow/status/Jatinkumar78/PacketIQ/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/Jatinkumar78/PacketIQ/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3b82f6?style=for-the-badge&logo=python&logoColor=white)](https://github.com/Jatinkumar78/PacketIQ/blob/main/pyproject.toml)
+[![Tests](https://img.shields.io/badge/tests-2%2C006%20passing-22c55e?style=for-the-badge&logo=pytest&logoColor=white)](https://github.com/Jatinkumar78/PacketIQ/tree/main/tests)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-22c55e?style=for-the-badge&logo=pytest&logoColor=white)](#-testing--quality)
+[![Ruff](https://img.shields.io/badge/lint-ruff%20clean-000000?style=for-the-badge&logo=ruff&logoColor=white)](https://github.com/Jatinkumar78/PacketIQ/blob/main/.github/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Jatinkumar78/PacketIQ?style=for-the-badge&color=8b5cf6)](https://github.com/Jatinkumar78/PacketIQ/blob/main/LICENSE)
+[![Version](https://img.shields.io/badge/Version-1.1.0-60a5fa?style=for-the-badge)](https://github.com/Jatinkumar78/PacketIQ/blob/main/CHANGELOG.md)
 
-![MITRE ATT&CK](https://img.shields.io/badge/MITRE-ATT%26CK%20mapped-eab308?style=for-the-badge&logo=target&logoColor=white)
-![SIGMA](https://img.shields.io/badge/SIGMA-pySigma%20valid-f97316?style=for-the-badge&logo=shield&logoColor=white)
-![Threat Intel](https://img.shields.io/badge/Threat%20Intel-abuse.ch%20feeds-10b981?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-8b5cf6?style=for-the-badge)
-![Version](https://img.shields.io/badge/Version-1.0.0-60a5fa?style=for-the-badge)
+[![Detections](https://img.shields.io/badge/detections-18%20types-dc2626?style=for-the-badge&logo=shield&logoColor=white)](#-detection-capabilities)
+[![MITRE ATT&CK](https://img.shields.io/badge/MITRE-ATT%26CK%20mapped-eab308?style=for-the-badge&logo=target&logoColor=white)](https://attack.mitre.org/)
+[![SIGMA](https://img.shields.io/badge/SIGMA-pySigma%20valid-f97316?style=for-the-badge&logo=yaml&logoColor=white)](https://github.com/SigmaHQ/sigma)
+[![Threat Intel](https://img.shields.io/badge/Threat%20Intel-abuse.ch%20feeds-10b981?style=for-the-badge)](#-threat-intelligence)
+[![GUI](https://img.shields.io/badge/100%25-GUI%20web%20app-3b82f6?style=for-the-badge&logo=googlechrome&logoColor=white)](#-web-interface)
+[![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?style=for-the-badge&logo=fastapi&logoColor=white)](#-web-interface)
+[![Scapy](https://img.shields.io/badge/Scapy-packet%20engine-ef4444?style=for-the-badge&logo=python&logoColor=white)](#-inputs)
+[![Security](https://img.shields.io/badge/security-policy-0ea5e9?style=for-the-badge&logo=openssf&logoColor=white)](https://github.com/Jatinkumar78/PacketIQ/blob/main/SECURITY.md)
+[![Contributing](https://img.shields.io/badge/PRs-welcome-22c55e?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Jatinkumar78/PacketIQ/blob/main/CONTRIBUTING.md)
 
 <br/>
 
@@ -45,7 +49,7 @@
 
 <br/><br/>
 
-**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`8,398`** threat-intel indicators · **`1,846`** tests · **`100%`** coverage · **`ruff`-clean**
+**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`18`** detection types · **`7,855`** threat-intel indicators · **`2,006`** tests · **`100%`** coverage · **`ruff`-clean**
 
 </div>
 
@@ -126,7 +130,7 @@
 <td width="50%" valign="top">
 <img src="docs/screenshots/10-threat-intel.png" alt="Real OSINT threat-intelligence feeds panel with provenance"/>
 <b>📡 Real OSINT Threat Intel</b><br/>
-<sub><b>8,398 indicators</b> across six abuse.ch / Spamhaus / Tor feeds ship in the box and refresh from source on demand (shown here freshly updated), each carrying <b>its provenance and age</b>. <b>Nothing fabricated</b> — and when a capture matches nothing, it says exactly that.</sub>
+<sub><b>7,855 indicators</b> across six abuse.ch / Spamhaus / Tor feeds ship in the box and refresh from source on demand (shown here freshly updated), each carrying <b>its provenance and age</b>. <b>Nothing fabricated</b> — and when a capture matches nothing, it says exactly that.</sub>
 </td>
 <td width="50%" valign="top">
 <img src="docs/screenshots/11-attribution.png" alt="Threat-actor TTP overlap panel with disclaimers"/>
@@ -158,7 +162,7 @@
 | Output | a wall of text | SIGMA (pySigma-valid), STIX, MISP, HTML report, evidence PCAP |
 | Inputs | PCAP only | **PCAP · Zeek conn.log · NetFlow/IPFIX · live capture** |
 | Detections | a few heuristics | **18 detection types** incl. JA4, TLS certs, YARA, file carving |
-| Trust | unverifiable claims | **1,846 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
+| Trust | unverifiable claims | **2,006 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
 | Interface | terminal | **100% GUI web app — double-click to launch** |
 
 ---
@@ -190,7 +194,7 @@ If a scanner on a managed machine still queries it: nothing here is an executabl
 ### Alternative — one command
 
 ```bash
-git clone https://github.com/PacketIQ/PacketIQ.git
+git clone https://github.com/Jatinkumar78/PacketIQ.git
 cd PacketIQ
 ./quickstart.sh                 # creates venv, installs, builds a demo capture, opens the web app
 ```
@@ -211,16 +215,18 @@ Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` — `
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev,yara,geoip]"                   # everything (tests, YARA, GeoIP)
-pytest                                                # run the 1,846-test suite
+pytest                                                # run the 2,006-test suite
 pytest --cov=packetiq --cov-report=term-missing      # with line-coverage report
 ```
 The CLI (`packetiq …`) is the same engine the web app uses — handy for scripting/CI, but not required.
 
-**Test coverage: 100%** — every one of the 10,050 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for **every supported interpreter, 3.9 through 3.12**, so a line can never ship untested.
+**Test coverage: 100%** — every one of the 10,132 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for **every supported interpreter, 3.11 and 3.12**, so a line can never ship untested.
 
-Coverage here is a property of the *suite*, not of the machine that runs it, and that distinction is enforced rather than assumed. Six rules are fixed in `tests/conftest.py`, and `tests/test_harness_guards.py` asserts each one still holds: a test gets its own history database, may not open a socket, may not open a real capture device, never sees the machine's own list of network interfaces, never resolves a link-layer address on the wire (neither the destination nor its own), and renders every table at one fixed width. Without those guards a workstation quietly flatters the number — a Mac with capture privileges really does start a live capture, a machine running `ollama serve` really does find an AI provider, a laptop with four Thunderbolt bridge adapters really does exercise the branch that ranks them, a Mac whose account may capture really does put the ARP request on the wire that scapy needs to finish building a packet, and a frame built with no source MAC really does carry the address of whichever NIC the host has. Every OS-specific and host-specific path — the macOS/Linux/Windows capture-privilege checks, the interface enumerator, the `tomllib`/`tomli` split, the whole `/api/live/*` lifecycle — is therefore driven from a fixture, so a line is covered on every matrix leg or on none. Verified by measuring the suite under simulated runner environments (Linux dispatch, denied capture socket, denied `/dev/bpf`, no local model, no external tools) on 3.9, 3.11 and 3.12: 100.00% in every one.
+Coverage here is a property of the *suite*, not of the machine that runs it, and that distinction is enforced rather than assumed. Seven rules are fixed in `tests/conftest.py`, and `tests/test_harness_guards.py` asserts each one still holds: a test gets its own history database, may not open a socket, may not open a real capture device, never sees the machine's own list of network interfaces, never resolves a link-layer address on the wire (neither the destination nor its own), is told the machine has one fixed amount of RAM (the local-model picker branches on it), and renders every table at one fixed width. Without those guards a workstation quietly flatters the number — a Mac with capture privileges really does start a live capture, a machine running `ollama serve` really does find an AI provider, a laptop with four Thunderbolt bridge adapters really does exercise the branch that ranks them, a Mac whose account may capture really does put the ARP request on the wire that scapy needs to finish building a packet, and a frame built with no source MAC really does carry the address of whichever NIC the host has. Every OS-specific and host-specific path — the macOS/Linux/Windows capture-privilege checks, the interface enumerator, the whole `/api/live/*` lifecycle — is therefore driven from a fixture, so a line is covered on every matrix leg or on none. Verified by measuring the suite under simulated runner environments (Linux dispatch, denied capture socket, denied `/dev/bpf`, no local model, no external tools) on 3.11 and 3.12: 100.00% in every one.
 
-The 3.9 leg is held at 100% like the rest, and it is the strictest of them. CPython 3.9 threads the conditional jump for each operand of a short-circuit guard straight past the `continue` that follows it, so the line is recorded only when the *last* operand is the one that fires. That is not a quirk to work around: the twelve lines it reported unhit were twelve guards whose second half nothing tested — a Zeek record with an originator but no responder, a `Server:` banner naming a product with no version, a commented-out `.env` assignment, a NetFlow template whose fields declare zero width. 3.10 and later record the line whichever operand fired and called all twelve covered. (3.9 also parses to 5 fewer statements than 3.11/3.12, which is why its total differs.)
+The floor is **Python 3.11**. 3.9 reached end of life in October 2025 and 3.10 in October 2026, and on both of them the dependency closure resolved to releases with published advisories and no newer version to install — 111 of them on 3.9, and still 42 on 3.10, because the `pillow` release that fixes them requires 3.11. Support was dropped rather than that residual being carried quietly; [SECURITY.md](SECURITY.md) records what each floor cost.
+
+The 3.9 leg left something behind, though, and it is worth recording why the suite is shaped the way it is. CPython 3.9 threaded the conditional jump for each operand of a short-circuit guard straight past the `continue` that followed it, so the line was recorded only when the *last* operand fired. That was never a quirk to work around: the twelve lines it reported unhit were twelve guards whose second half nothing tested — a Zeek record with an originator but no responder, a `Server:` banner naming a product with no version, a commented-out `.env` assignment, a NetFlow template whose fields declare zero width. 3.10 and later record the line whichever operand fires and called all twelve covered. The twelve tests written to answer 3.9 are still here; the leg that exposed them is not.
 
 **Platforms.** The suite runs in CI on Linux (all four interpreters), macOS and Windows. The coverage gate stays on the Linux legs deliberately: coverage of the platform branches is necessarily different on each OS, so one number measured three ways would be three different claims.
 </details>
@@ -500,7 +506,8 @@ dga_entropy_threshold = 3.8   # bits/char to suspect a DGA
 | `GEMINI_API_KEY` / `GROQ_API_KEY` / `ANTHROPIC_API_KEY` | AI copilot |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Telegram alerts |
 | `SLACK_WEBHOOK_URL` / `ALERT_WEBHOOK_URL` / `SMTP_*` / `ALERT_EMAIL_TO` | Slack / webhook / email alerts |
-| `MISP_URL` / `MISP_KEY` | MISP push |
+| `MISP_URL` / `MISP_KEY` / `MISP_VERIFY_TLS` | MISP push (`MISP_VERIFY_TLS=0` skips cert verification, for self-signed lab instances only) |
+| `PACKETIQ_ALLOWED_HOSTS` | extra hostnames the web app's `Host`-header guard accepts, comma separated (loopback is always allowed) |
 | `PACKETIQ_CONFIG` / `PACKETIQ_FEED_DIR` | config + feed cache paths |
 | `PACKETIQ_JA3_BLOCKLIST` / `PACKETIQ_YARA_RULES` / `PACKETIQ_GEOIP_DB` | custom intel sources |
 
@@ -510,11 +517,11 @@ dga_entropy_threshold = 3.8   # bits/char to suspect a DGA
 
 ```bash
 pip install -e ".[dev]"
-pytest                 # 1,846 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
+pytest                 # 2,006 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
 ruff check packetiq tools tests
 ```
 
-CI (GitHub Actions) runs **pytest + ruff + mypy across Python 3.9–3.12** on every push/PR. The parser is fuzz-tested against malformed/truncated captures, and generated SIGMA rules are validated with the real `pysigma` toolkit.
+CI (GitHub Actions) runs **pytest + ruff + mypy across Python 3.11 and 3.12** on every push/PR. The parser is fuzz-tested against malformed/truncated captures, and generated SIGMA rules are validated with the real `pysigma` toolkit.
 
 ### Validation harnesses
 
@@ -613,13 +620,18 @@ PacketIQ/
 │   ├── screenshots/               # README UI screenshots — real running web app
 │   └── assets/                    # images (bot avatar)
 ├── samples/generate_sample.py     # build a demo PCAP
-├── tests/                         # 1,846 pytest tests
-├── .github/workflows/ci.yml       # CI (pytest + ruff + mypy)
+├── tests/                         # 2,006 pytest tests
+├── .github/
+│   ├── workflows/ci.yml           # CI (pytest + ruff + mypy + bandit + pip-audit)
+│   ├── ISSUE_TEMPLATE/            # bug · detection issue · feature request (+ config)
+│   ├── PULL_REQUEST_TEMPLATE.md · dependabot.yml · CODEOWNERS
 ├── PacketIQ.command · PacketIQ.bat · quickstart.sh   # double-click / one-command launchers
 ├── Dockerfile · docker-compose.yml
 ├── pyproject.toml · requirements.txt · MANIFEST.in   # PEP 621 packaging
 ├── packetiq.toml.example · .env.example
+├── CITATION.cff                   # "Cite this repository" metadata (CFF 1.2.0)
 └── LICENSE · CHANGELOG.md · README.md · SECURITY.md
+    CONTRIBUTING.md · CODE_OF_CONDUCT.md · SUPPORT.md
 ```
 
 ---
@@ -651,12 +663,57 @@ PacketIQ/
 
 ```bash
 git checkout -b feature/my-detector
-pip install -e ".[dev]"
+pip install -e ".[dev,yara,geoip]"
 # add code + tests
-pytest && ruff check packetiq tests
+ruff check packetiq tools tests && mypy packetiq && pytest -q
 ```
 
-Great places to contribute: new detectors (`packetiq/detection/`), YARA rules (`packetiq/detection/data/yara_rules/`), threat-actor TTP profiles (`packetiq/attribution/actors.py`), and SIEM backend export.
+**[CONTRIBUTING.md](CONTRIBUTING.md)** has the full guide: the eight gates CI runs verbatim, the house rules a review will hold you to (100% coverage with unreachable code deleted rather than excluded, no test touching the network or the host, no unreproducible number in any document), and a seven-step walkthrough for adding a detector. Please read the **[Code of Conduct](CODE_OF_CONDUCT.md)** too.
+
+Great places to start: new detectors (`packetiq/detection/`), YARA rules (`packetiq/detection/data/yara_rules/`), threat-actor TTP profiles (`packetiq/attribution/actors.py`), and SIEM backend export.
+
+| | |
+|---|---|
+| Something is broken, or a detector is wrong | [open an issue](https://github.com/Jatinkumar78/PacketIQ/issues/new/choose) |
+| A question about using it | [SUPPORT.md](SUPPORT.md) |
+| A security vulnerability | [SECURITY.md](SECURITY.md), privately |
+
+---
+
+## 📚 Citation
+
+If PacketIQ supports academic or published work, please cite it. GitHub renders a
+**Cite this repository** button from [`CITATION.cff`](CITATION.cff), which offers
+APA and BibTeX directly.
+
+```bibtex
+@software{kumar_packetiq_2026,
+  author  = {Kumar, Jatin},
+  title   = {{PacketIQ: an offline-first network forensics and SOC triage
+              platform with deterministic output grounding}},
+  version = {1.1.0},
+  year    = {2026},
+  license = {MIT},
+  url     = {https://github.com/Jatinkumar78/PacketIQ}
+}
+```
+
+For the grounding guarantee specifically, cite the short paper that documents the
+method and the multi-model ablation, held in this repository at
+[`docs/paper/deterministic_output_grounding.md`](docs/paper/deterministic_output_grounding.md):
+
+```bibtex
+@techreport{kumar_grounding_2026,
+  author      = {Kumar, Jatin},
+  title       = {{Deterministic Output Grounding: A Post-Generation Guarantee
+                  Against Entity Hallucination in LLM Security Copilots}},
+  institution = {Birmingham City University},
+  year        = {2026},
+  url         = {https://github.com/Jatinkumar78/PacketIQ/blob/main/docs/paper/deterministic_output_grounding.md}
+}
+```
+
+It has no venue or DOI yet, so none is claimed in either entry.
 
 ---
 
@@ -671,7 +728,8 @@ MIT © 2025 Jatin Kumar — see [`LICENSE`](LICENSE).
 <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=15&duration=2500&pause=1000&color=60A5FA&center=true&vCenter=true&width=560&lines=Jatin+Kumar+%E2%80%94+Cybersecurity+Researcher;Threat+Hunting+%C2%B7+Network+Forensics+%C2%B7+SOC+Tooling;Building+real-world+defensive+intelligence" alt="Developer"/>
 
 [![Portfolio](https://img.shields.io/badge/🌐%20Portfolio-ogxodin.netlify.app-3b82f6?style=for-the-badge)](https://ogxodin.netlify.app)
-[![GitHub](https://img.shields.io/badge/GitHub-PacketIQ-171515?style=for-the-badge&logo=github&logoColor=white)](https://github.com/PacketIQ)
+[![GitHub](https://img.shields.io/badge/GitHub-Jatinkumar78-171515?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Jatinkumar78)
+[![Stars](https://img.shields.io/github/stars/Jatinkumar78/PacketIQ?style=for-the-badge&color=eab308)](https://github.com/Jatinkumar78/PacketIQ)
 
 <br/>
 
@@ -680,6 +738,6 @@ MIT © 2025 Jatin Kumar — see [`LICENSE`](LICENSE).
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:3b82f6,100:0b0f1a&height=100&section=footer&animation=fadeIn" width="100%" alt="Footer"/>
 
-<sub>Made with ❤️ and a lot of PCAP files · PacketIQ v1.0.0, released 2026-08-11 · <a href="CHANGELOG.md">Release notes</a> · MIT License</sub>
+<sub>Made with ❤️ and a lot of PCAP files · PacketIQ v1.1.0, released 2026-11-15 · <a href="CHANGELOG.md">Release notes</a> · MIT License</sub>
 
 </div>

@@ -28,7 +28,6 @@ import struct
 from collections.abc import Generator
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 from packetiq.detection.models import DetectionEvent, EventType, Severity
 from packetiq.parser.pcap_parser import RawPacketRecord
@@ -51,7 +50,7 @@ _CRITICAL_FAMILIES = {
 
 
 @lru_cache(maxsize=4)
-def load_blocklist(path: Optional[str] = None) -> dict[str, str]:
+def load_blocklist(path: str | None = None) -> dict[str, str]:
     """
     Load JA3 md5 → listing-reason from a CSV feed (abuse.ch SSLBL format).
 
@@ -168,7 +167,7 @@ class JA3Detector:
 
 # ── TLS ClientHello parser ────────────────────────────────────────────────────
 
-def _parse_client_hello(payload: bytes) -> Optional[dict]:
+def _parse_client_hello(payload: bytes) -> dict | None:
     """Parse TLS ClientHello from raw TCP payload bytes."""
     if len(payload) < 43:
         return None

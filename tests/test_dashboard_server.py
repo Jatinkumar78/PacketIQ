@@ -12,6 +12,8 @@ injection would otherwise hit at request time.
 """
 
 import json
+import os
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -194,3 +196,59 @@ def test_launch_can_skip_the_browser(attack_pcap, monkeypatch):
 
     launch_dashboard(attack_pcap, port=9124, open_browser=False)
     assert opened == []
+
+
+# --------------------------------------------------------------------------- #
+#  Script-context escaping                                                      #
+# --------------------------------------------------------------------------- #
+
+def test_capture_contents_cannot_break_out_of_the_data_script_block():
+    """A hostile PCAP must not execute script in the analyst's browser.
+
+    The payload is injected into `const D = __PACKETIQ_DATA__;` inside a
+    <script> block, and `json.dumps` escapes none of `<`, `>`, `&`, U+2028 or
+    U+2029. Capture contents reach that payload — HTTP paths and user-agents,
+    DNS names, software banners, certificate subjects, carved filenames — so a
+    capture carrying `</script>` closed the block early and the remainder of its
+    bytes were parsed as HTML. Analysing untrusted input is the entire purpose
+    of this tool, which makes the capture the attacker here.
+    """
+    from scapy.layers.inet import IP, TCP
+    from scapy.layers.l2 import Ether
+    from scapy.packet import Raw
+    from scapy.utils import wrpcap
+
+    breakout = '</script><img src=x onerror=alert(1)>'
+    request = (
+        f"GET /{breakout} HTTP/1.1\r\n"
+        f"Host: evil.example\r\n"
+        f"User-Agent: {breakout}\r\n\r\n"
+    ).encode()
+    pkt = (Ether(src="02:00:00:00:00:01", dst="02:00:00:00:00:02")
+           / IP(src="10.0.0.9", dst="10.0.0.5")
+           / TCP(sport=40000, dport=80, flags="PA") / Raw(load=request))
+    pkt.time = 1700000000.0
+
+    import tempfile
+    path = os.path.join(tempfile.mkdtemp(), "hostile.pcap")
+    wrpcap(path, [pkt])
+
+    data = dash._run_and_serialize(path)
+    html = TestClient(dash._build_app(data)).get("/").text
+
+    assert "</script><img" not in html, "capture contents closed the script block"
+    assert "u003c/script" in html, "the sequence must survive, escaped"
+
+    # Escaping must be lossless: what the browser parses is the real data.
+    blob = re.search(r"const D = (.*?);\n", html, re.S).group(1)
+    assert json.loads(blob) == json.loads(json.dumps(data, ensure_ascii=False))
+
+
+def test_the_script_escaper_neutralises_every_unsafe_sequence():
+    """`<`, `>`, `&` and the two JS line terminators, all still valid JSON."""
+    raw = {"v": "<&>  "}
+    out = dash._json_for_script(raw)
+
+    for ch in ("<", ">", "&", " ", " "):
+        assert ch not in out
+    assert json.loads(out) == raw

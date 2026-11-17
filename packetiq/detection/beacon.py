@@ -15,7 +15,6 @@ Algorithm:
 
 import statistics
 from collections import defaultdict
-from typing import Optional
 
 from packetiq.detection.models import DetectionEvent, EventType, Severity
 from packetiq.extractor.data_extractor import ExtractionResult
@@ -69,8 +68,8 @@ class BeaconDetector:
         dport: int,
         timestamps: list[float],
         proto: str,
-        local: Optional[set] = None,
-    ) -> Optional[DetectionEvent]:
+        local: set | None = None,
+    ) -> DetectionEvent | None:
         # C2 beacons phone home *out* to an external server. Regular connections
         # arriving at one of our own hosts are the opposite direction: an inbound
         # client session against a service we run (RDP/SSH keep-alives, agents,
@@ -102,6 +101,16 @@ class BeaconDetector:
         ]
 
         if len(deltas) < min_conn - 1:
+            return None
+
+        # `min_connections = 1` in packetiq.toml makes the guard above vacuous
+        # (len(deltas) < 0 is never true) while a single timestamp produces no
+        # intervals at all, and statistics.mean([]) raises StatisticsError. The
+        # eight Pass-1 detectors are deliberately not wrapped in the engine, so
+        # that propagated out of DetectionEngine.run() and aborted the whole
+        # analysis — CLI and web job alike — from a valid config file. A beacon
+        # is a statement about intervals, so no intervals is simply no beacon.
+        if not deltas:
             return None
 
         mean_d = statistics.mean(deltas)

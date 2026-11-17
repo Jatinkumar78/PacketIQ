@@ -79,21 +79,89 @@ def _flow(src, dst, sport, dport, flags=(), **kw):
     return f
 
 
-@pytest.mark.parametrize("token", ["SYNACK", "ACKSYN"])
-def test_a_replied_syn_is_not_counted_as_half_open(token):
-    """A flow carrying SYN-ACK proves the port answered, so it is not a stealth probe.
+def test_a_source_whose_every_syn_was_answered_is_not_a_stealth_scan():
+    """A legitimate client completes its handshakes, so nothing is half-open.
 
-    Both spellings matter: the flag tokenizer has emitted each ordering, and only
-    recognising one would let real scans through as 'replied'.
+    Replaces a test that asserted only `isinstance(stealth, list)` — always true,
+    so it covered the branch while pinning no behaviour at all.
     """
+    src, dst = "45.33.32.156", "10.0.0.5"
     res = ExtractionResult()
-    res.flows = {("f", i): _flow("10.0.0.5", "45.33.32.156", 22, 40000 + i, [token])
-                 for i in range(3)}
-    # Every SYN this source sent came back with a SYN-ACK.
-    res.tcp_syn_pairs = {("45.33.32.156", "10.0.0.5", p): [1.0] for p in range(1, 40)}
+    res.tcp_syn_pairs = {(src, dst, p): [1.0] for p in range(1, 41)}
+    res.tcp_synack_pairs = set(res.tcp_syn_pairs)
 
-    stealth = port_scan._stealth_syn_scan(res)
-    assert isinstance(stealth, list)
+    assert port_scan._stealth_syn_scan(res) == []
+
+
+def test_only_the_answered_port_is_excluded_from_the_half_open_count():
+    """Port-exactness: a SYN-ACK proves *that port* answered, not the whole host.
+
+    The answered set used to be rebuilt from flow flag sets and then compared
+    without the port, so a single open port on a target marked every probe
+    against that host as answered. A 60-port scan went from detected to
+    invisible the moment one port replied — and since a real host almost always
+    has something listening, the realistic case was the undetected one. A
+    scanner only had to include one known-open port to erase the finding.
+    """
+    src, dst = "45.33.32.156", "10.0.0.5"
+    res = ExtractionResult()
+    res.tcp_syn_pairs = {(src, dst, p): [1.0] for p in range(1, 41)}
+    res.tcp_synack_pairs = {(src, dst, 22)}          # exactly one port answered
+
+    events = port_scan._stealth_syn_scan(res)
+
+    assert len(events) == 1, "39 unanswered probes is still a stealth scan"
+    ev = events[0]
+    assert ev.evidence["half_open_count"] == 39
+    assert ev.evidence["distinct_ports"] == 39
+    assert f"{dst}:22" not in ev.evidence["sample_targets"], (
+        "the one port that answered must not be reported as half-open"
+    )
+
+
+def test_the_answered_syn_map_shares_the_key_space_of_the_syn_map(tmp_path):
+    """The port-exact comparison is only meaningful if both maps key alike.
+
+    A SYN-ACK travels in the opposite direction to the SYN it answers, so the
+    extractor has to transpose it back onto the SYN's (src, dst, dport) key. Get
+    that wrong and the two sets are disjoint: every probe looks half-open and
+    the detector fires on ordinary completed traffic.
+
+    Built from packets rather than the shared `attack_pcap` fixture because that
+    fixture contains no SYN-ACK at all — only S, FPU and PA flags. Nothing in
+    the suite exercised an *answered* SYN, which is exactly how the port-blind
+    comparison this replaces survived.
+    """
+    from scapy.layers.inet import IP, TCP
+    from scapy.layers.l2 import Ether
+    from scapy.utils import wrpcap
+
+    from packetiq.extractor.data_extractor import DataExtractor
+    from packetiq.parser.pcap_parser import PCAPParser
+
+    client, server = "10.0.0.9", "10.0.0.5"
+    mac_a, mac_b = "02:00:00:00:00:01", "02:00:00:00:00:02"
+    syn = Ether(src=mac_a, dst=mac_b) / IP(src=client, dst=server) / TCP(
+        sport=40000, dport=22, flags="S")
+    synack = Ether(src=mac_b, dst=mac_a) / IP(src=server, dst=client) / TCP(
+        sport=22, dport=40000, flags="SA")
+    syn.time, synack.time = 1700000000.0, 1700000000.5
+
+    path = tmp_path / "handshake.pcap"
+    wrpcap(str(path), [syn, synack])
+
+    extractor = DataExtractor()
+    for rec in PCAPParser(str(path)).stream():
+        extractor.feed(rec)
+    res = extractor.finalize()
+
+    key = (client, server, 22)
+    assert key in res.tcp_syn_pairs, "the SYN must be recorded under its own key"
+    assert res.tcp_synack_pairs == {key}, (
+        "the SYN-ACK must be transposed onto the key of the SYN it answers"
+    )
+    assert res.completed_connections == 1
+    assert port_scan._stealth_syn_scan(res) == []
 
 
 def test_stealth_scan_needs_no_flows_at_all():
@@ -156,6 +224,34 @@ def test_high_byte_sessions_are_treated_as_real_logins():
                                  bytes_total=200_000) for i in range(40)}
 
     assert brute_force.detect(res) == []
+
+
+def test_a_successful_brute_force_is_not_hidden_by_the_winning_session():
+    """One large connection must not speak for the whole burst.
+
+    The legitimacy guard compared the MEAN bytes per connection against the
+    cutoff, so a brute force that succeeded and then moved a few hundred KB
+    over the winning session averaged above 15 KB and was suppressed outright —
+    the one outcome an analyst must never miss, hidden by the very activity that
+    proves compromise. The median is unmoved by that single outlier.
+    """
+    src, dst = "45.33.32.156", "10.0.0.5"
+    res = ExtractionResult()
+    res.tcp_syn_pairs = {(src, dst, 22): [float(i) for i in range(23)]}
+    flows = {("f", i): _flow(src, dst, 50000 + i, 22, bytes_total=1_000)
+             for i in range(22)}
+    # The attempt that got in, then carried a session.
+    flows[("f", "win")] = _flow(src, dst, 49999, 22, bytes_total=900_000)
+    res.flows = flows
+
+    events = brute_force.detect(res)
+
+    assert [e.event_type for e in events] == [EventType.BRUTE_FORCE]
+    evidence = events[0].evidence
+    assert evidence["median_bytes_per_conn"] == 1_000
+    assert evidence["avg_bytes_per_conn"] > 15_000, (
+        "the mean really is above the cutoff — that is why it must not decide"
+    )
 
 
 def test_a_rapid_burst_of_failed_logins_still_fires():

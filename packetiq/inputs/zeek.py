@@ -11,7 +11,6 @@ and are skipped for log input — the engine handles their absence gracefully.
 """
 
 import json
-from typing import Optional
 
 from packetiq.extractor.data_extractor import ExtractionResult, FlowKey, FlowStats
 
@@ -50,7 +49,7 @@ def _iter_records(path: str):
             return
 
         # TSV with Zeek '#fields' header
-        fields: Optional[list] = None
+        fields: list | None = None
         for line in fh:
             if line.startswith("#fields"):
                 fields = line.rstrip("\n").split("\t")[1:]
@@ -60,7 +59,11 @@ def _iter_records(path: str):
             if fields is None:
                 continue
             values = line.rstrip("\n").split("\t")
-            yield dict(zip(fields, values))
+            # strict=False on purpose: a truncated or over-wide row is ordinary
+            # malformed input here, not a programming error, and this parser is
+            # fuzz-tested against exactly that. Pairing up to the shorter of the
+            # two keeps the row's usable columns instead of raising.
+            yield dict(zip(fields, values, strict=False))
 
 
 def load_conn_log(path: str) -> ExtractionResult:

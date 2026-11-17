@@ -16,7 +16,7 @@ TCP segments — larger than the per-packet payload the main parser keeps.
 """
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Optional
 
 from scapy.all import PcapReader
@@ -28,6 +28,17 @@ from packetiq.utils.helpers import is_private_ip
 
 _TLS_PORTS = {443, 8443, 4443, 993, 995, 465, 990, 5061}
 _MAX_FLOW_BYTES = 32 * 1024     # cap reassembly per flow
+# Distinct flows tracked at once. Each accumulator already caps the bytes it
+# reassembles *per flow*, but nothing capped the number of flows, and the
+# per-flow bookkeeping is the amplifier: measured at 611 bytes per flow with
+# minimal payloads, so a ~100 MB capture of a million tiny packets on these
+# ports cost ~580 MB before any payload was stored. Capping the flow count
+# bounds that; new flows past the cap are ignored and counted in
+# `skipped_flows`, flows already being reassembled are unaffected.
+#
+# Set high enough that reaching it is already an extraordinary capture, so this
+# is a backstop against exhaustion rather than a routine truncation.
+_MAX_FLOWS = 200_000
 _LONG_VALIDITY_DAYS = 825
 
 
@@ -41,6 +52,7 @@ class TLSCertAccumulator:
         self.buffers: dict[tuple, bytearray] = defaultdict(bytearray)
         self.done: set = set()
         self.meta: dict[tuple, dict] = {}
+        self.skipped_flows = 0
 
     def feed(self, pkt) -> None:
         if not pkt.haslayer(TCP):
@@ -62,6 +74,9 @@ class TLSCertAccumulator:
             return
         payload = bytes(tcp.payload)
         if not payload:
+            return
+        if key not in self.buffers and len(self.buffers) >= _MAX_FLOWS:
+            self.skipped_flows += 1
             return
         buf = self.buffers[key]
         buf += payload
@@ -105,7 +120,7 @@ def analyze(pcap_path: str) -> list[DetectionEvent]:
     return acc.finalize()
 
 
-def _extract_leaf_cert(server_bytes: bytes) -> Optional[bytes]:
+def _extract_leaf_cert(server_bytes: bytes) -> bytes | None:
     """Reassemble TLS handshake records and return the leaf certificate DER."""
     # 1) collect handshake-record (0x16) fragments
     hs = bytearray()
@@ -132,7 +147,7 @@ def _extract_leaf_cert(server_bytes: bytes) -> Optional[bytes]:
     return None
 
 
-def _first_cert(body: bytes) -> Optional[bytes]:
+def _first_cert(body: bytes) -> bytes | None:
     """Extract the first cert DER from a Certificate message (TLS 1.2 or 1.3)."""
     for offset in (0, 1):           # TLS1.2 (no context) / TLS1.3 (1-byte ctx len = 0)
         if len(body) < offset + 6:
@@ -144,7 +159,7 @@ def _first_cert(body: bytes) -> Optional[bytes]:
     return None
 
 
-def _analyze_cert(der: bytes, key: tuple, ts: float, seen: set) -> Optional[DetectionEvent]:
+def _analyze_cert(der: bytes, key: tuple, ts: float, seen: set) -> DetectionEvent | None:
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes
     try:
@@ -168,10 +183,10 @@ def _analyze_cert(der: bytes, key: tuple, ts: float, seen: set) -> Optional[Dete
         not_before = cert.not_valid_before_utc
         not_after = cert.not_valid_after_utc
     except AttributeError:                     # older cryptography
-        not_before = cert.not_valid_before.replace(tzinfo=timezone.utc)
-        not_after = cert.not_valid_after.replace(tzinfo=timezone.utc)
+        not_before = cert.not_valid_before.replace(tzinfo=UTC)
+        not_after = cert.not_valid_after.replace(tzinfo=UTC)
 
-    ref = datetime.fromtimestamp(ts, tz=timezone.utc) if ts else datetime.now(timezone.utc)
+    ref = datetime.fromtimestamp(ts, tz=UTC) if ts else datetime.now(UTC)
 
     flags = []
     severity = Severity.LOW

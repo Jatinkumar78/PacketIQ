@@ -7,9 +7,9 @@ Resolution order (first found wins):
   2. ./packetiq.toml                 (current working directory)
   3. built-in defaults below
 
-Reading TOML uses the stdlib `tomllib` (Python 3.11+) or `tomli` if installed.
-If neither is available and no config file is present, the built-in defaults
-are used — configuration is always optional.
+Reading TOML uses the stdlib `tomllib` (Python 3.11+, which is the floor). A
+missing, unreadable or malformed file falls back to the built-in defaults —
+configuration is always optional and must never stop the tool starting.
 
 Usage:
     from packetiq import config
@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import os
+import tomllib
 from functools import lru_cache
 from pathlib import Path
 
@@ -60,17 +61,16 @@ DEFAULTS: dict = {
 
 
 def _load_toml(path: Path) -> dict:
+    """Parse a config file, treating anything unreadable as "no config".
+
+    This used to branch on `tomllib` with a `tomli` backport fallback, because no
+    interpreter in the matrix had both: `tomllib` arrived in 3.11 and `tomli` was
+    a dependency only below it. Raising the floor to 3.11 made the backport arm
+    unreachable, so it is deleted rather than excluded from coverage.
+    """
     try:
-        import tomllib  # Python 3.11+
         with open(path, "rb") as fh:
             return tomllib.load(fh)
-    except ModuleNotFoundError:
-        try:
-            import tomli  # backport
-            with open(path, "rb") as fh:
-                return tomli.load(fh)
-        except Exception:
-            return {}
     except Exception:
         return {}
 

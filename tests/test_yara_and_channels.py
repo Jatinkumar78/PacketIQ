@@ -444,3 +444,117 @@ def test_broadcast_sends_email_when_smtp_is_configured(monkeypatch):
     assert captured["msg"]["To"] == "soc@example.com"
     assert captured["msg"]["From"] == "alerts@example.com"
     assert captured["msg"]["Subject"] == "Critical finding"
+
+
+# ── A webhook URL is itself a credential ─────────────────────────────────────
+
+_FAKE_HOOK = "https://hooks.slack.com/services/T000FAKE/B000FAKE/SENTINELsecret123"
+
+
+def _connection_error_naming_the_path(url: str):
+    """What `requests` actually raises: the request PATH inside the message.
+
+    Note it reports the path it requested, not the URL it was handed — which is
+    why redacting only the full URL matched nothing.
+    """
+    from urllib.parse import urlsplit
+
+    import requests
+
+    def _boom(target, *args, **kwargs):
+        raise requests.ConnectionError(
+            f"HTTPSConnectionPool(host='{urlsplit(url).netloc}', port=443): "
+            f"Max retries exceeded with url: {urlsplit(url).path} "
+            "(Caused by NewConnectionError('Failed to establish a new connection'))"
+        )
+    return _boom
+
+
+def test_a_slack_webhook_url_is_never_echoed_in_an_error(monkeypatch):
+    """Anyone holding the webhook URL can post to the channel, so it is a secret.
+
+    `requests` embeds the requested path in ConnectionError, SSLError and
+    ProxyError, and the secret is the last path segment. The message is returned
+    to the caller and surfaces in the CLI and the webapp, so one unreachable
+    network disclosed the webhook.
+    """
+    from packetiq.alerts import channels
+
+    monkeypatch.setattr(channels.requests, "post",
+                        _connection_error_naming_the_path(_FAKE_HOOK))
+
+    ok, msg = channels.SlackWebhook(_FAKE_HOOK).send("hello")
+
+    assert ok is False
+    assert "SENTINELsecret123" not in msg
+    assert "<redacted>" in msg
+    assert "hooks.slack.com" in msg, "the operator still needs the real cause"
+
+
+def test_a_generic_webhook_url_is_never_echoed_in_an_error(monkeypatch):
+    from packetiq.alerts import channels
+
+    monkeypatch.setattr(channels.requests, "post",
+                        _connection_error_naming_the_path(_FAKE_HOOK))
+
+    ok, msg = channels.GenericWebhook(_FAKE_HOOK).send({"text": "hello"})
+
+    assert ok is False
+    assert "SENTINELsecret123" not in msg
+    assert "<redacted>" in msg
+
+
+def test_an_smtp_failure_never_echoes_the_mail_password(monkeypatch):
+    """smtplib echoes the server's response, which can quote what it was sent."""
+    import smtplib
+
+    from packetiq.alerts import channels
+
+    def _boom(*args, **kwargs):
+        raise smtplib.SMTPAuthenticationError(
+            535, b"5.7.8 Authentication failed for password SENTINELpw999")
+
+    monkeypatch.setattr(channels.smtplib, "SMTP", _boom)
+
+    ok, msg = channels.EmailSender(
+        "smtp.example.test", 587, "user", "SENTINELpw999", "a@b.test", "c@d.test",
+    ).send("subject", "body")
+
+    assert ok is False
+    assert "SENTINELpw999" not in msg
+    assert "<redacted>" in msg
+
+
+def test_a_webhook_query_string_is_redacted_too(monkeypatch):
+    """Discord and Teams hooks carry parameters, so the query is part of the secret."""
+    from packetiq.alerts import channels
+
+    hook = "https://discord.com/api/webhooks/123/SENTINELtok?wait=true&token=SENTINELq"
+    monkeypatch.setattr(channels.requests, "post",
+                        _connection_error_naming_the_path(hook))
+
+    ok, msg = channels.GenericWebhook(hook).send({"text": "hello"})
+
+    assert ok is False
+    assert "SENTINELtok" not in msg
+    assert "<redacted>" in msg
+
+
+def test_an_smtp_sender_without_a_password_still_reports_its_error(monkeypatch):
+    """An unauthenticated relay has no secret to redact, so nothing is stripped."""
+    import smtplib
+
+    from packetiq.alerts import channels
+
+    def _boom(*args, **kwargs):
+        raise smtplib.SMTPConnectError(421, b"4.7.0 service not available")
+
+    monkeypatch.setattr(channels.smtplib, "SMTP", _boom)
+
+    ok, msg = channels.EmailSender(
+        "smtp.example.test", 25, "", "", "a@b.test", "c@d.test",
+    ).send("subject", "body")
+
+    assert ok is False
+    assert "service not available" in msg
+    assert "<redacted>" not in msg, "there was no secret to remove"

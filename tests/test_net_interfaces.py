@@ -66,7 +66,7 @@ def test_the_ranking_weights_order_the_kinds_a_user_expects():
     order = ["ethernet", "wifi", "bridge", "other", "wwan",
              "vpn", "loopback", "system", "virtual"]
     keys = [ni._score(_rec(kind=k)) for k in order]
-    assert keys == sorted(keys), f"kind ranking is out of order: {list(zip(order, keys))}"
+    assert keys == sorted(keys), f"kind ranking is out of order: {list(zip(order, keys, strict=True))}"
     assert keys[0] == keys[1], "ethernet and wifi are equally good capture targets"
     assert keys[-2] == keys[-1], "system and virtual plumbing rank equally last"
 

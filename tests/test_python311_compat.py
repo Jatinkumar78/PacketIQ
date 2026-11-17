@@ -1,21 +1,21 @@
 """
-Guards the `requires-python = ">=3.9"` promise in pyproject.toml.
+Guards the `requires-python = ">=3.11"` promise in pyproject.toml.
 
-The CI matrix runs the suite on 3.9, but nothing checked that the *source* stays
-3.9-compatible on the developer's machine — and mypy can no longer help: mypy 2.x
-refuses to target anything below 3.10, so `python_version = "3.9"` was silently
-ignored while it checked 3.10 semantics.
+The suite runs on 3.11 and 3.12 in CI, but a grammar or stdlib feature newer than
+the floor is easy to add on a 3.12 developer machine and only discovered when the
+3.11 leg runs — or, for a release cut between CI runs, by a user. Two different
+gates cover the two halves of that risk:
 
-Two things break a 3.9 install in practice, and both are caught here:
+  * mypy owns the *library* half. `python_version = "3.11"` in pyproject makes
+    typeshed reject a 3.12-only stdlib symbol (`itertools.batched`,
+    `typing.override`) used without a guard.
+  * This file owns the *grammar* half, which mypy's config does not police as
+    directly: PEP 695 type parameters (`class Box[T]`, `type Alias = ...`) parse
+    fine on 3.12 and are a SyntaxError on 3.11.
 
-  1. Grammar the 3.9 parser cannot read (`match` statements, PEP 695 generics).
-  2. PEP 604 unions (`int | None`) in an annotation that Python *evaluates* at
-     runtime. Under `from __future__ import annotations` every annotation is a
-     lazy string and is therefore safe; without it, 3.9 raises TypeError on
-     import — which no amount of test coverage on 3.12 would reveal.
-
-PEP 585 builtin generics (`list[str]`, `dict[str, int]`) are deliberately NOT
-flagged: those are valid at runtime on 3.9.
+The PEP 604 scanner this file used to carry is gone. It existed because Python 3.9
+evaluates `int | None` in a runtime-reachable annotation and raises TypeError; from
+3.10 that is valid, so the scan could only ever pass.
 """
 
 import ast
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-MIN_VERSION = (3, 9)
+MIN_VERSION = (3, 11)
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_DIRS = ("packetiq", "tools", "tests")
 
@@ -45,7 +45,7 @@ def test_source_tree_is_not_empty():
     assert len(ALL_FILES) > 50, f"only found {len(ALL_FILES)} python files under {PACKAGE_DIRS}"
 
 
-def test_parses_under_python_39_grammar():
+def test_parses_under_the_oldest_supported_grammar():
     offenders = []
     for path in ALL_FILES:
         try:
@@ -54,53 +54,25 @@ def test_parses_under_python_39_grammar():
         except SyntaxError as exc:
             offenders.append(f"{_rel(path)}:{exc.lineno}: {exc.msg}")
     if offenders:  # pragma: no cover - only on a real regression
-        pytest.fail("not valid Python 3.9:\n  " + "\n  ".join(offenders))
-
-
-def _runtime_pep604_unions(path: Path):
-    """Yield (lineno, context) for PEP 604 unions Python 3.9 would evaluate."""
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(path))
-
-    # With this future import every annotation stays an unevaluated string.
-    for node in tree.body:
-        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
-            if any(alias.name == "annotations" for alias in node.names):
-                return
-
-    def unions_in(annotation):
-        if annotation is None:
-            return
-        for sub in ast.walk(annotation):
-            if isinstance(sub, ast.BinOp) and isinstance(sub.op, ast.BitOr):
-                yield sub.lineno
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AnnAssign):
-            for lineno in unions_in(node.annotation):
-                yield lineno, "variable annotation"
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = node.args
-            every = [*args.posonlyargs, *args.args, *args.kwonlyargs]
-            if args.vararg:
-                every.append(args.vararg)
-            if args.kwarg:
-                every.append(args.kwarg)
-            for arg in every:
-                for lineno in unions_in(arg.annotation):
-                    yield lineno, f"parameter of {node.name}()"
-            for lineno in unions_in(node.returns):
-                yield lineno, f"return type of {node.name}()"
-
-
-def test_no_runtime_evaluated_pep604_unions():
-    offenders = []
-    for path in ALL_FILES:
-        for lineno, where in _runtime_pep604_unions(path):
-            offenders.append(f"{_rel(path)}:{lineno}: {where}")
-    if offenders:  # pragma: no cover - only on a real regression
         pytest.fail(
-            "`X | Y` in an annotation Python 3.9 evaluates at import time — add "
-            "`from __future__ import annotations` or use typing.Optional/Union:\n  "
-            + "\n  ".join(offenders)
-        )
+            f"not valid Python {MIN_VERSION[0]}.{MIN_VERSION[1]}, which is the "
+            "`requires-python` floor:\n  " + "\n  ".join(offenders))
+
+
+def test_the_guard_is_pinned_to_the_declared_floor():
+    """The check above is only worth anything if MIN_VERSION tracks pyproject.
+
+    Raising `requires-python` and forgetting this constant leaves the gate
+    testing an interpreter nobody supports any more — it would keep passing and
+    stop meaning anything.
+    """
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - impossible at the 3.11 floor
+        pytest.skip("no tomllib")
+    with open(ROOT / "pyproject.toml", "rb") as fh:
+        requires = tomllib.load(fh)["project"]["requires-python"]
+    declared = tuple(int(part) for part in requires.lstrip(">=").split("."))
+    assert declared == MIN_VERSION, (
+        f"pyproject declares {requires} but this guard checks "
+        f"{MIN_VERSION[0]}.{MIN_VERSION[1]}")

@@ -1,11 +1,14 @@
 """
 PacketIQ - AI PCAP Forensics & SOC Copilot
-Version: 1.0.0
+
+The version lives in `__version__` below and nowhere else in this file: the
+docstring used to repeat it, and a repeated version number is a version number
+that goes stale.
 """
 import logging as _logging
 import warnings as _warnings
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __author__ = "PacketIQ"
 
 

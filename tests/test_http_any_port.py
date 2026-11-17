@@ -272,13 +272,16 @@ def test_non_http_payloads_are_never_labelled_http(not_http_pcap):
     assert len(records) == len(NOT_HTTP)
 
     false_positives = [
-        name for name, r in zip(NOT_HTTP, records) if r.has_http
+        name for name, r in zip(NOT_HTTP, records, strict=True) if r.has_http
     ]
     assert not false_positives, f"falsely detected as HTTP: {false_positives}"
 
 
 def test_non_http_payloads_leave_every_http_field_unset(not_http_pcap):
-    for name, r in zip(NOT_HTTP, list(PCAPParser(not_http_pcap).stream())):
+    # strict=True: one record per payload is the premise of the test. Without it a
+    # parser that dropped a packet would shorten the loop and the test would still
+    # pass, having silently stopped checking the payloads it never reached.
+    for name, r in zip(NOT_HTTP, list(PCAPParser(not_http_pcap).stream()), strict=True):
         assert r.http_method is None, name
         assert r.http_host is None, name
         assert r.http_status is None, name

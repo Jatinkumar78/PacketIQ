@@ -56,9 +56,15 @@ def test_help_flag_lists_every_command(run):
         assert cmd in out, f"{cmd} missing from help"
 
 
-def test_version_reports_1_0_0(run):
+def test_version_reports_the_package_version(run):
+    """Named for what it checks, not for the number it expects.
+
+    This asserted the literal "1.0.0", so the 1.1.0 bump turned a passing test
+    into a failing one with nothing wrong — and had the banner been the thing
+    left behind instead, the test would have agreed with the stale value.
+    """
     out = _ok(run("version"))
-    assert "1.0.0" in out
+    assert __version__ in out
 
 
 @pytest.mark.parametrize("flag", ["--version", "-V"])

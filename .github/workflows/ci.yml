@@ -35,8 +35,11 @@ jobs:
       fail-fast: false
       matrix:
         # Every supported interpreter, on the OS that carries the coverage gate.
+        # The floor is 3.11: 3.9 went end-of-life in October 2025 and 3.10 in
+        # October 2026, and on both of them the dependency closure resolved to
+        # releases with published advisories and no newer version to install.
         os: [ubuntu-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12"]
         # PacketIQ is installed and run on all three desktop platforms, and the
         # parts that differ between them are exactly the parts that break: the
         # capture-privilege model, the interface enumerator, path handling and
@@ -50,10 +53,10 @@ jobs:
             python-version: "3.12"
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -113,16 +116,17 @@ jobs:
       # only way its coverage means the same thing on every host.
       # tests/test_harness_guards.py asserts all seven are still in effect.
       #
-      # 3.9 is held at 100 like every other leg, and it is the strictest of them.
-      # CPython 3.9 threads the conditional jump for each operand of a
-      # short-circuit guard straight past the `continue` that follows it, so the
-      # line is only recorded when the *last* operand is the one that fires. That
-      # is not a measurement artifact to be worked around: it named twelve real
-      # gaps, each a guard whose second half no test exercised — a Zeek record
-      # with an originator but no responder, a banner naming a product with no
-      # version, a commented-out `.env` assignment, a NetFlow template whose
-      # fields have no width. 3.10+ record the line whichever operand fired and
-      # reported all twelve as covered.
+      # Worth knowing why some of those fixtures exist. The 3.9 leg, retired when
+      # the floor moved to 3.11, was the strictest of them: CPython 3.9 threaded
+      # the conditional jump for each operand of a short-circuit guard straight
+      # past the `continue` that followed it, so the line was recorded only when
+      # the *last* operand fired. That was never a measurement artifact to work
+      # around — it named twelve real gaps, each a guard whose second half no test
+      # exercised: a Zeek record with an originator but no responder, a banner
+      # naming a product with no version, a commented-out `.env` assignment, a
+      # NetFlow template whose fields have no width. 3.10+ record the line
+      # whichever operand fires, so they had reported all twelve as covered. The
+      # twelve tests are still here; the leg that found them is not.
       - name: Unit + integration tests (with coverage gate)
         run: |
           # The gate belongs to the Linux matrix. Coverage of the platform
@@ -156,22 +160,23 @@ jobs:
     # if that hangs, fail the job rather than burn a 6-hour default timeout.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
 
       # Blocking, because this is the closure `pip install packetiq` actually
       # produces — anything found here reaches every user. It is clean as of
-      # 2026-08-11 ("No known vulnerabilities found", re-verified that day from a
-      # freshly built virtualenv), so a finding is a real regression rather than
-      # pre-existing debt, and it should fail the build instead of scrolling past
-      # in a green log. Audit a fresh closure, never a developer venv: the same
-      # command inside a long-lived dev venv reports drift in packages this
-      # project neither ships nor declares. See docs/security_audit/pip_audit.txt.
+      # 2026-11-15 ("No known vulnerabilities found" over 73 packages, re-verified
+      # that day from a freshly built virtualenv), so a finding is a real
+      # regression rather than pre-existing debt, and it should fail the build
+      # instead of scrolling past in a green log. Audit a fresh closure, never a
+      # developer venv: the same command inside a long-lived dev venv reports
+      # drift in packages this project neither ships nor declares. See
+      # docs/security_audit/pip_audit.txt.
       - name: pip-audit (the dependencies users install)
         run: |
           python -m pip install --upgrade pip pip-audit
@@ -179,13 +184,15 @@ jobs:
           pip-audit
 
       # Advisory only, and deliberately a separate step so it cannot be confused
-      # with the one above. The dev extra pulls pySigma, which pins
-      # diskcache>=5.6.3,<6.0.0; 5.6.3 is simultaneously the newest release that
-      # exists and the one carrying PYSEC-2026-2447 / CVE-2025-69872 (pickle
-      # deserialisation, CVSS 4.0 AV:L — it needs an attacker who can already
-      # write to the cache directory). There is no version to upgrade to,
-      # PacketIQ imports neither package, and neither ships to a user, so an
-      # unfixable test-tooling advisory must not be able to wedge the pipeline.
+      # with the one above. It was advisory because pySigma pinned the
+      # unmaintained diskcache 5.6.3, which was simultaneously the newest release
+      # that existed and the one carrying PYSEC-2026-2447 / CVE-2025-69872 with no
+      # fix to upgrade to. pySigma 2.1.0 moved to the maintained
+      # diskcache-community fork, so as of 2026-11-15 this closure audits clean
+      # too (93 packages, no known vulnerabilities). The step is left advisory on
+      # purpose: contributor tooling is a wider and faster-moving closure than the
+      # one users install, and a new advisory in it should not wedge the pipeline
+      # for everyone. Promote it to blocking only as a deliberate policy change.
       - name: pip-audit (development tooling)
         continue-on-error: true
         run: |
@@ -199,18 +206,18 @@ jobs:
           python -m pip install bandit
           bandit -r packetiq --severity-level low --confidence-level low
 
-      # The audit above runs on 3.12, where every floor resolves to a patched
-      # release. It says nothing about the *oldest* interpreter this project
-      # supports, and that is where the risk actually lives: pillow 12.x,
-      # python-dotenv 1.2.2 and python-multipart 0.0.3x all require >=3.10, so a
-      # 3.9 install resolves to the newest 3.9-compatible versions — which carry
-      # published advisories with nowhere to upgrade to. Advisory-only for that
-      # reason, and run so the residual is visible in every log instead of being
-      # a sentence in SECURITY.md that nobody re-checks.
-      - name: Set up Python 3.9
-        uses: actions/setup-python@v6
+      # The audit above runs on 3.12. The oldest supported interpreter resolves a
+      # different closure, and that is where a residual hides: while the floor was
+      # 3.9 this step reported 111 advisories across 7 packages, every fix needing
+      # a newer Python. Raising the floor to 3.11 cleared all of them — pillow
+      # 13.0.0, the release that fixes the 42 reachable through reportlab, requires
+      # >=3.11, which is why 3.10 was not far enough. Kept, and kept advisory, so
+      # the day a dependency's fix outruns the floor again it shows up in the log
+      # rather than in a user's install.
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7
         with:
-          python-version: "3.9"
+          python-version: "3.11"
 
       - name: pip-audit (oldest supported interpreter — advisory)
         continue-on-error: true

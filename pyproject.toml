@@ -12,10 +12,10 @@ build-backend = "setuptools.build_meta"
 # ─────────────────────────────────────────────────────────────────────────────
 [project]
 name = "packetiq"
-version = "1.0.0"
+version = "1.1.0"
 description = "AI PCAP Forensics & SOC Copilot"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 # PEP 639 form. The old `{ file = "LICENSE" }` table and the matching
 # "License :: OSI Approved" classifier are both deprecated, and each one emitted a
 # SetuptoolsDeprecationWarning on every build.
@@ -26,30 +26,37 @@ keywords = ["pcap", "forensics", "network-security", "soc", "threat-intel", "dfi
 
 # Security-patched floors are intentional and verified to exist on PyPI; do not
 # lower them (see CHANGELOG Security). Kept in lockstep with requirements.txt.
+# Every floor here is a *patched* release, verified against the advisory database
+# at the floor version itself rather than at whatever a fresh resolve happens to
+# pick, and the whole closure resolves clean on every supported interpreter.
+#
+# That is a property of the Python floor, not of luck. While 3.9 was supported,
+# four of these had to be declared twice — the patched floor for 3.10+, and the
+# newest release 3.9 could install, which carried open advisories with nowhere to
+# upgrade to. 3.10 removed most of that but not all: pillow 13.0.0 (the release
+# that fixes 42 advisories reachable through reportlab) requires >= 3.11, so 3.10
+# was still stuck on pillow 12.3.0. At >= 3.11 there is no residual and no split.
 dependencies = [
-    "scapy>=2.5.0",
+    "scapy>=2.7.0",                  # GHSA-cq46-m9x9-j8w2 (2.5.0 and 2.6.x affected)
     "click>=8.1.0",
     "rich>=13.0.0",
-    "python-dotenv>=1.0.1",
+    "python-dotenv>=1.2.2",          # GHSA-mf9w-mj56-hr94 / PYSEC-2026-2270
     "tabulate>=0.9.0",
     "colorama>=0.4.6",
-    "requests>=2.32.4",              # CVE-2024-47081 (.netrc credential leak)
-    "urllib3>=2.6.0",                # decompression-bomb DoS fix
+    "requests>=2.33.0",              # GHSA-gc5v-m9x4-r6x2 / PYSEC-2026-2275
+    "urllib3>=2.8.0",                # PYSEC-2026-4175/4176/4177 and prior
     "anthropic>=0.40.0",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
-    "python-multipart>=0.0.18",      # CVE-2024-53981 (parser DoS)
+    "python-multipart>=0.0.31",      # 12 advisories through 0.0.30
     "google-genai>=1.0.0",
     "groq>=0.11.0",
-    "tomli>=2.0.0; python_version < '3.11'",
-    "cryptography>=44.0.1",          # GHSA-537c-gmf6-5ccf and prior
+    "cryptography>=50.0.0",          # 44.0.1 itself carries 10 advisories; 50.0.0 is clean
     "reportlab>=4.0.0",              # professional PDF SOC reports (offline, pure-Python)
 ]
 
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
@@ -59,7 +66,7 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",                 # GHSA-6w46-j5rx-g56g / PYSEC-2026-1845
     "pytest-cov>=4.0.0",
     "pyyaml>=6.0.0",
     "pysigma>=0.11.0",
@@ -67,10 +74,8 @@ dev = [
     "ruff",
     "mypy",
     # Real stubs for `requests`, not a suppression. `ignore_missing_imports` covers a
-    # module mypy cannot find; it does not cover one that is installed but untyped —
-    # mypy 1.x reports that as `import-untyped` and fails the gate. Python 3.9 resolves
-    # to mypy 1.x (2.x requires >=3.10), so omitting this failed only the 3.9 CI leg
-    # while 3.10-3.12 passed, which is exactly the kind of split that hides for weeks.
+    # module mypy cannot find; it does not cover one that is installed but untyped,
+    # which mypy reports as `import-untyped` and fails the gate on.
     "types-requests",
 ]
 yara = ["yara-python>=4.3.0"]
@@ -80,8 +85,19 @@ geoip = ["geoip2>=4.7.0"]
 packetiq = "packetiq.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/PacketIQ"
-Changelog = "https://github.com/PacketIQ/blob/main/CHANGELOG.md"
+# These render as the sidebar links on the PyPI project page, so a wrong one is
+# published rather than merely wrong in a file. Homepage used to name an account
+# that belongs to an unrelated person (a plausible-looking typo for this
+# project's own name), and Changelog omitted the repository segment entirely and
+# returned 404. tests/test_docs_and_community_health.py now asserts the shape of
+# every one of these, which is also why the old URL is described here rather
+# than quoted: that gate refuses the literal string anywhere in the file.
+Homepage = "https://github.com/Jatinkumar78/PacketIQ"
+Repository = "https://github.com/Jatinkumar78/PacketIQ"
+Issues = "https://github.com/Jatinkumar78/PacketIQ/issues"
+Changelog = "https://github.com/Jatinkumar78/PacketIQ/blob/main/CHANGELOG.md"
+Security = "https://github.com/Jatinkumar78/PacketIQ/blob/main/SECURITY.md"
+Documentation = "https://github.com/Jatinkumar78/PacketIQ#readme"
 
 # ── Packaging: discover the package and ship its bundled data files ──────────
 [tool.setuptools.packages.find]
@@ -139,7 +155,7 @@ exclude_also = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py311"
 extend-exclude = [".venv", "venv", "samples", "build", "dist"]
 
 [tool.ruff.lint]
@@ -153,20 +169,25 @@ ignore = [
     "F841",   # unused locals — kept for readability in some report builders
     "B007",   # loop control var not used (regex .finditer presence checks)
     "B008",   # function calls in argument defaults (FastAPI Depends/File patterns)
+    # UP042 wants `class Severity(StrEnum)` instead of `class Severity(str, Enum)`,
+    # and that is not a refactor — it changes what these two enums *print*. Measured
+    # on 3.12: f"{Mixed.PORT_SCAN}" is "Mixed.PORT_SCAN" for a (str, Enum) member and
+    # "port_scan" for a StrEnum one. Three places would change silently with it: the
+    # alert dedup key in alerts/dispatcher.py (existing dedup state would stop
+    # matching, so every suppressed alert could fire once more), the grouping key in
+    # sigma/generator.py, and DetectionEvent.__str__, which is user-visible output.
+    # Switching is a deliberate output change for a release to make, not a lint fix.
+    "UP042",
 ]
 
 [tool.mypy]
-# mypy 2.x refuses to target anything below 3.10, so this cannot mirror
-# requires-python (">=3.9"). The 3.9 floor the CI matrix actually tests is
-# enforced by tests/test_python39_compat.py instead; leaving "3.9" here only
-# produced an "unsupported" warning while silently checking 3.10 semantics.
-#
-# Consequence worth remembering: because mypy 2.x needs >=3.10, the 3.9 matrix leg
-# installs mypy 1.x. Everything below has to satisfy *both* majors, and the two do
-# not agree on defaults — 1.x fails on an installed-but-untyped import that 2.x lets
-# through, which is why the type stubs are pinned into the dev extra rather than
-# papered over here. Check a config change against 1.x before trusting a green run.
-python_version = "3.10"
+# Mirrors `requires-python` exactly, which it could not do while 3.9 was
+# supported: mypy 2.x refuses to target anything below 3.10, so "3.9" here was
+# silently ignored and 3.10 semantics were checked against a 3.9 promise. With the
+# floor at 3.11 the type gate checks the oldest interpreter that is actually
+# shipped, and typeshed rejects a 3.12+ stdlib symbol used without a guard.
+# tests/test_python311_compat.py covers the grammar side, which mypy does not own.
+python_version = "3.11"
 ignore_missing_imports = true
 warn_unused_ignores = false
 check_untyped_defs = false

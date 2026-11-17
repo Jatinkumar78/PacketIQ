@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import ipaddress
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from packetiq.detection.models import EventType
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _is_ip(value: str) -> str | None:

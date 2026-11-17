@@ -3,6 +3,15 @@
 
 Reuses the curated findings/controls/steps data from make_security_pdf.py so the
 Word and PDF versions never drift.
+
+Needs `python-docx`, which is deliberately NOT in the `dev` extra: this script is
+run by hand when the audit report is regenerated, and putting it there would make
+every contributor install python-docx and lxml to run the test suite. Install it
+for the occasion:
+
+    pip install python-docx
+
+(The PDF sibling needs nothing extra — reportlab is already a runtime dependency.)
 """
 from __future__ import annotations
 

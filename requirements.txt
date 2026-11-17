@@ -1,19 +1,24 @@
 # Runtime dependencies — kept in lockstep with pyproject.toml [project.dependencies].
 # Security-patched floors are intentional and verified to exist on PyPI; do not lower.
-scapy>=2.5.0
+#
+# Every floor is a patched release and the closure resolves clean on every
+# supported interpreter (>= 3.11). No entry is version-conditional any more:
+# the four that used to be split on `python_version` were only split because
+# their fix needed a Python newer than 3.9, and `tomli` is gone because
+# `tomllib` is stdlib from 3.11.
+scapy>=2.7.0                 # GHSA-cq46-m9x9-j8w2 (2.5.0 and 2.6.x affected)
 click>=8.1.0
 rich>=13.0.0
-python-dotenv>=1.0.1
+python-dotenv>=1.2.2         # GHSA-mf9w-mj56-hr94 / PYSEC-2026-2270
 tabulate>=0.9.0
 colorama>=0.4.6
-requests>=2.32.4              # CVE-2024-47081 (.netrc credential leak)
-urllib3>=2.6.0               # decompression-bomb DoS fix
+requests>=2.33.0             # GHSA-gc5v-m9x4-r6x2 / PYSEC-2026-2275
+urllib3>=2.8.0               # PYSEC-2026-4175/4176/4177 and prior
 anthropic>=0.40.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
-python-multipart>=0.0.18     # CVE-2024-53981 (parser DoS)
+python-multipart>=0.0.31     # 12 advisories through 0.0.30
 google-genai>=1.0.0
 groq>=0.11.0
-tomli>=2.0.0; python_version < "3.11"
-cryptography>=44.0.1         # GHSA-537c-gmf6-5ccf and prior
+cryptography>=50.0.0         # 44.0.1 itself carries 10 advisories; 50.0.0 is clean
 reportlab>=4.0.0            # professional PDF SOC reports (offline, pure-Python)

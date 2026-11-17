@@ -204,32 +204,33 @@ def _horizontal_scan(result: ExtractionResult) -> list[DetectionEvent]:
 
 def _stealth_syn_scan(result: ExtractionResult) -> list[DetectionEvent]:
     """
-    tcp_syn_pairs tracks SYNs sent. synack_set tracks which got a reply.
-    Half-open = SYN sent, no SYN-ACK received → stealthy Nmap-style scan.
+    tcp_syn_pairs tracks SYNs sent; tcp_synack_pairs is the subset that was
+    answered. Half-open = SYN sent with no SYN-ACK *for that port* → a stealthy
+    Nmap-style scan.
+
+    Both maps are keyed (src, dst, dport) by the extractor, so this comparison
+    is port-exact. It used to rebuild the answered set from flow flag sets and
+    then compare it ignoring the port, which meant one open port on a target
+    marked every probe against that host as answered: a 60-port scan went from
+    detected to invisible the moment a single port replied. Since a real host
+    almost always has something listening, the realistic case was the
+    undetected one, and a scanner only had to include one known-open port to
+    erase the finding entirely.
 
     Groups half-open connections by src_ip. If a single src has many
     half-open SYNs → stealth scan.
     """
     events: list[DetectionEvent] = []
-
-    # Reconstruct synack_set from the flows (flows that have SYNACK in their flags)
-    synack_set: set[tuple] = set()
-    for flow in result.flows.values():
-        if "SYNACK" in flow.tcp_flags_seen or "ACKSYN" in flow.tcp_flags_seen:
-            synack_set.add((flow.dst_ip, flow.src_ip, flow.src_port))
+    answered = result.tcp_synack_pairs
 
     # Find half-open SYNs per source IP
     half_open_by_src: dict[str, list[tuple]] = defaultdict(list)
 
-    for (src, dst, dport), tss in result.tcp_syn_pairs.items():
-        rkey = (dst, src, None)  # we don't have sport in syn_pairs, approximate
-        # Check any synack returned to this src
-        replied = any(
-            s == src and t == dst
-            for (t, s, _) in synack_set
-        )
-        if not replied:
-            half_open_by_src[src].append((dst, dport, len(tss)))
+    for key, tss in result.tcp_syn_pairs.items():
+        if key in answered:
+            continue
+        src, dst, dport = key
+        half_open_by_src[src].append((dst, dport, len(tss)))
 
     from packetiq import config
     stealth_threshold = config.get("port_scan", "stealth_halfopen_threshold", STEALTH_HALFOPEN_THRESHOLD)

@@ -87,3 +87,21 @@ def test_web_endpoints(tmp_path, monkeypatch):
         # history endpoint records the run
         hist = client.get("/api/history")
         assert any(a["filename"] == "bf.pcap" for a in hist.json()["analyses"])
+
+
+def test_a_negative_history_limit_does_not_return_the_whole_table(tmp_path, monkeypatch):
+    """SQLite reads a negative LIMIT as "no limit", which is the opposite ask.
+
+    `recent(limit)` is reached straight from `GET /api/history?limit=`, so a
+    caller asking for fewer rows than zero silently received every row the
+    table held — while the sibling `/api/packets` endpoint has always clamped
+    its own `limit`.
+    """
+    monkeypatch.setenv("PACKETIQ_DB", str(tmp_path / "hist.db"))
+    for i in range(5):
+        storage.record(f"capture{i}.pcap", 10, 50, "MEDIUM", 2, 1)
+
+    assert len(storage.recent(2)) == 2
+    assert len(storage.recent(-1)) == 1, "a negative limit must not mean unlimited"
+    assert len(storage.recent(0)) == 1
+    assert len(storage.recent(10 ** 9)) == 5, "a large limit still returns what exists"

@@ -73,6 +73,32 @@ def test_report_has_court_ready_sections():
         assert marker in html, f"report missing: {marker}"
 
 
+def test_the_report_is_stamped_with_the_version_that_produced_it():
+    """`build_html`'s `tool_version` default was the literal "1.0.0".
+
+    Neither caller — the CLI's `report` command nor the web app — passes the
+    argument, so every HTML report stamped that string into its header, its
+    chain-of-custody block and its footer regardless of the version that produced
+    it, and would have gone on saying 1.0.0 after 1.1.0 shipped. The PDF exporter
+    never had the bug because it asks `report_style` for the number.
+    """
+    from packetiq import __version__
+
+    html = build_html({"filename": "case.pcap"}, _Res(),
+                      [_ev(EventType.IOC_MATCH, Severity.CRITICAL)], [], _Risk())
+    assert f"PacketIQ v{__version__}" in html
+    assert html.count(f"v{__version__}") >= 2, "header, custody block and footer all carry it"
+
+
+def test_a_caller_can_still_override_the_stamped_version():
+    """The argument stays useful — a re-render of an old case should be able to
+    say which version actually produced it."""
+    html = build_html({"filename": "case.pcap"}, _Res(),
+                      [_ev(EventType.IOC_MATCH, Severity.CRITICAL)], [], _Risk(),
+                      tool_version="0.9.1-rc3")
+    assert "v0.9.1-rc3" in html
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @pytest.fixture()

@@ -559,6 +559,8 @@ def _attribution_html(attrs) -> str:
     for a in attrs[:5]:
         name = getattr(a, "actor_name", "?")
         conf = round((getattr(a, "confidence", 0.0) or 0.0) * 100)
+        cov = round((getattr(a, "coverage", 0.0) or 0.0) * 100)
+        spec = round((getattr(a, "specificity", 0.0) or 0.0) * 100)
         origin = getattr(a, "origin", "") or ""
         motive = getattr(a, "motivation", "") or ""
         desc = getattr(a, "description", "") or ""
@@ -574,6 +576,8 @@ def _attribution_html(attrs) -> str:
             + (f"<p class='muted'>{_esc(meta)}</p>" if meta else "")
             + (f"<p>{_esc(desc)}</p>" if desc else "")
             + (f"<p class='muted'>Matched techniques: {_esc(ttps)}</p>" if ttps else "")
+            + f"<p class='muted'>Basis: {cov}% of this actor's documented TTPs were observed; "
+              f"the profile explains {spec}% of the distinct techniques seen in this capture.</p>"
             + "</div>"
         )
     return "\n".join(out)
@@ -884,7 +888,12 @@ def _exec_summary(file_meta, result, events, chains, risk) -> str:
         f"{format_duration(max(0.0, result.capture_end - result.capture_start))}). "
         f"Traffic was predominantly {_esc(proto_str)} across {len(getattr(result, 'flows', {}) or {}):,} "
         f"conversation(s) with {len(ext):,} external host(s). "
-        f"The overall risk is <b>{risk.score}/100 ({_esc(risk.tier)})</b>. "
+        f"The overall risk is <b>{risk.score}/100 ({_esc(risk.tier)})</b>"
+        + (f" — the score is capped at 100; the undamped aggregate for this "
+           f"capture is <b>{getattr(risk, 'raw_score', 0.0):.0f}</b>, which is "
+           f"what separates it from a less severe capture that also reads 100"
+           if risk.score >= 100 else "")
+        + ". "
         f"A total of <b>{len(events)} finding(s)</b> were raised "
         f"({sev.get('CRITICAL',0)} critical, {sev.get('HIGH',0)} high, "
         f"{sev.get('MEDIUM',0)} medium, {sev.get('LOW',0)} low), correlated into "
@@ -923,8 +932,16 @@ def _vulns_html(vulns: dict) -> str:
 
 
 def build_html(file_meta: dict, result, events, chains, risk, attrs=None,
-               *, pcap_sha256: str | None = None, tool_version: str = "1.0.0",
+               *, pcap_sha256: str | None = None, tool_version: str | None = None,
                analyst: str | None = None, vulns: dict | None = None) -> str:
+    # The default used to be the literal "1.0.0". Neither caller passes this
+    # argument, so every HTML report — header, chain-of-custody block and footer —
+    # stamped that string no matter what version produced it, and would have gone
+    # on saying 1.0.0 after 1.1.0 shipped. The PDF exporter never had the bug: it
+    # asks report_style for the version. This now does the same, and the argument
+    # stays so a caller can still override it.
+    from packetiq.export import report_style as st
+    tool_version = tool_version or st.tool_version()
     risk_color = _SEV_COLOR.get(risk.tier, "#94a3b8")
     dur = max(0.0, result.capture_end - result.capture_start)
     generated = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z").strip()

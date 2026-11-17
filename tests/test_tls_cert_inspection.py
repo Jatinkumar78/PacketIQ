@@ -7,7 +7,7 @@ is stubbed except the two failure modes that cannot be produced on a machine
 where the library is installed and current.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -20,7 +20,7 @@ from scapy.layers.l2 import ARP, Ether
 from packetiq.detection import tls_inspect
 from packetiq.detection.models import EventType, Severity
 
-NOW = datetime(2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc)   # 1700000000.0
+NOW = datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)   # 1700000000.0
 TS = NOW.timestamp()
 
 
@@ -379,3 +379,42 @@ def test_an_unreadable_capture_yields_no_findings(tmp_path):
     bad = tmp_path / "truncated.pcap"
     bad.write_bytes(b"not a pcap at all")
     assert tls_inspect.analyze(str(bad)) == []
+
+
+def test_the_number_of_reassembled_flows_is_bounded(monkeypatch):
+    """Bytes were capped per flow, but the flow count was not.
+
+    The per-flow bookkeeping is the amplifier: measured at ~611 bytes per flow
+    with minimal payloads, so a ~100 MB capture of a million tiny packets on a
+    TLS port cost roughly 580 MB before a single certificate byte was stored.
+    Flows already being reassembled are unaffected — only new ones past the cap
+    are declined, and they are counted rather than dropped quietly.
+    """
+    from scapy.layers.inet import IP, TCP
+    from scapy.layers.l2 import Ether
+    from scapy.packet import Raw
+
+    from packetiq.detection import tls_inspect as mod
+
+    monkeypatch.setattr(mod, "_MAX_FLOWS", 10)
+    acc = mod.make_accumulator()
+
+    def _pkt(client):
+        p = (Ether(src="02:00:00:00:00:01", dst="02:00:00:00:00:02")
+             / IP(src="45.33.32.156", dst=client)
+             / TCP(sport=443, dport=40000, flags="PA", seq=1)
+             / Raw(load=b"\x16\x03\x03\x00\x10" + b"A" * 11))
+        p.time = 1700000000.0
+        return p
+
+    for i in range(100):
+        acc.feed(_pkt(f"10.0.0.{i}"))
+
+    assert len(acc.buffers) == 10
+    assert acc.skipped_flows == 90, "declined flows are counted, not silently lost"
+
+    # A flow already under reassembly must keep accumulating.
+    key = ("45.33.32.156", 443, "10.0.0.0")
+    before = len(acc.buffers[key])
+    acc.feed(_pkt("10.0.0.0"))
+    assert len(acc.buffers[key]) > before

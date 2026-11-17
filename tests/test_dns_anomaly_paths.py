@@ -233,3 +233,58 @@ def test_the_sliding_window_finds_the_densest_burst():
 
 def test_the_sliding_window_counts_everything_inside_one_window():
     assert dns_anomaly._max_window_count([float(i) for i in range(10)], 60.0) == 10
+
+
+# ── Cost must not scale with capture diversity ───────────────────────────────
+
+class _CountingQueryLog(list):
+    """A query log that records how many times it is walked end-to-end."""
+
+    passes = 0
+
+    def __iter__(self):
+        type(self).passes += 1
+        return super().__iter__()
+
+
+def _traversals(n_domains: int, per: int = 25, tunneling_sources: int = 0) -> int:
+    from packetiq.detection import dns_anomaly
+    from packetiq.extractor.data_extractor import ExtractionResult
+
+    _CountingQueryLog.passes = 0
+    queries = [{"ts": float(i), "src": "10.0.0.9", "dst": "10.0.0.1",
+                "qname": f"poll{d}.zone.test"}
+               for d in range(n_domains) for i in range(per)]
+    for k in range(tunneling_sources):
+        queries.append({"ts": 1.0, "src": f"10.1.0.{k}", "dst": "10.0.0.1",
+                        "qname": "x" * 60 + ".tunnel.test"})
+
+    result = ExtractionResult()
+    result.dns_queries = _CountingQueryLog(queries)
+    dns_anomaly.detect(result)
+    return _CountingQueryLog.passes
+
+
+def test_the_rate_arm_does_not_rescan_the_query_log_for_every_domain():
+    """Analysis cost must not grow with how many distinct names a capture holds.
+
+    The rate arm re-walked every DNS query twice for each qualifying domain, so
+    the work was O(domains x queries): measured at 0.09s for 6k queries but
+    8.6s for 96k, which extrapolates to roughly 37 minutes for the ~1.5M
+    queries a 120 MB capture carries — spent entirely on LOW-severity context
+    that never drives a verdict. Analysing an untrusted capture is the whole
+    job, so its diversity must not set the cost.
+
+    Counted as traversals rather than wall-clock so it stays deterministic on a
+    shared runner, which is also what makes it a statement about the algorithm.
+    """
+    assert _traversals(10) == _traversals(1000)
+
+
+def test_the_tunneling_arm_does_not_rescan_the_query_log_for_every_source():
+    """Same shape, bounded per distinct source instead of per domain.
+
+    A capture with many spoofed source addresses drove one full scan of the
+    query log per source.
+    """
+    assert _traversals(2, tunneling_sources=10) == _traversals(2, tunneling_sources=500)

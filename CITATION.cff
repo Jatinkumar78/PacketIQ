@@ -1,0 +1,66 @@
+# Citation metadata (Citation File Format 1.2.0).
+#
+# GitHub reads this file and renders a "Cite this repository" button in the
+# sidebar, which offers APA and BibTeX. Zenodo and the CFF tooling read the same
+# file, so the version and release date below must track the actual release;
+# tests/test_docs_and_community_health.py holds them to `packetiq.__version__`
+# and to the newest CHANGELOG entry so this cannot quietly go stale.
+#
+# No contact address is published here on purpose: `pyproject.toml` declares the
+# author by name only, and this file keeps that posture. Add an `email:` line
+# under `authors` if you want one on the citation.
+cff-version: 1.2.0
+message: "If you use PacketIQ in academic or published work, please cite it as below."
+type: software
+title: "PacketIQ: an offline-first network forensics and SOC triage platform with deterministic output grounding"
+abstract: >-
+  PacketIQ is a defensive network forensics platform for SOC analysts, threat
+  hunters and incident responders. It ingests packet captures, Zeek conn.log
+  files, NetFlow and IPFIX exports, or a live interface, and produces an
+  evidence-backed analysis: 18 detection types across 12 detector modules,
+  enrichment against verbatim snapshots of public OSINT threat-intelligence
+  feeds, attack-chain correlation mapped to MITRE ATT&CK and the
+  Lockheed Martin kill chain, and deployable output as pySigma-valid SIGMA
+  rules, STIX 2.1 bundles, MISP events and evidence PCAP slices. Threat-actor
+  output is reported as behavioural TTP overlap rather than confirmed
+  attribution. An optional LLM copilot is constrained by a deterministic
+  post-generation grounding filter that redacts every entity absent from the
+  evidence the model was given, which holds entity hallucination at zero
+  independently of the model used.
+authors:
+  - family-names: Kumar
+    given-names: Jatin
+    affiliation: "Birmingham City University"
+version: 1.1.0
+date-released: "2026-11-15"
+license: MIT
+repository-code: "https://github.com/Jatinkumar78/PacketIQ"
+url: "https://github.com/Jatinkumar78/PacketIQ"
+keywords:
+  - network forensics
+  - intrusion detection
+  - packet capture
+  - pcap
+  - threat intelligence
+  - MITRE ATT&CK
+  - SIGMA
+  - STIX
+  - digital forensics and incident response
+  - security operations centre
+  - large language models
+  - hallucination mitigation
+
+# The methods write-up that accompanies the grounding guardrail. It is a short
+# paper held in this repository at docs/paper/deterministic_output_grounding.md
+# and has no venue, DOI or publisher, so none is claimed here.
+preferred-citation:
+  type: report
+  title: "Deterministic Output Grounding: A Post-Generation Guarantee Against Entity Hallucination in LLM Security Copilots"
+  authors:
+    - family-names: Kumar
+      given-names: Jatin
+      affiliation: "Birmingham City University"
+  institution:
+    name: "Birmingham City University"
+  year: 2026
+  url: "https://github.com/Jatinkumar78/PacketIQ/blob/main/docs/paper/deterministic_output_grounding.md"

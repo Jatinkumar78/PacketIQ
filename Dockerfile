@@ -11,7 +11,13 @@ WORKDIR /app
 # Packaging is PEP 621 / pyproject-only — there has been no setup.py since the
 # move off setuptools scripts, so the previous COPY failed on the first build
 # step. Dependencies and package data both come from pyproject.
-COPY pyproject.toml README.md ./
+#
+# LICENSE is copied because pyproject declares `license-files = ["LICENSE"]`
+# under PEP 639. Without it setuptools reports `Pattern 'LICENSE' did not match
+# any files`, builds the wheel anyway with no licence metadata in it, and warns
+# that it stops supporting the build in February 2027. The image was therefore
+# shipping an unlicensed-looking package with an expiry date on its own build.
+COPY pyproject.toml README.md LICENSE ./
 COPY packetiq ./packetiq
 # Not editable: an editable install is silently skipped by some Python 3.12+
 # builds, which leaves the `packetiq` entry point missing at runtime.

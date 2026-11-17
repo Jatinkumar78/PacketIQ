@@ -13,7 +13,6 @@ Reference: https://github.com/SigmaHQ/sigma
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 from packetiq.correlation.models import AttackChain
 from packetiq.detection.models import DetectionEvent, EventType, Severity
@@ -39,6 +38,29 @@ _LEVEL_MAP = {
     Severity.MEDIUM:   "medium",
     Severity.LOW:      "low",
 }
+
+
+def _sq(value) -> str:
+    """Render a value as a YAML single-quoted scalar.
+
+    In single-quoted style the only escape is `''` for a literal quote, and a
+    newline terminates the scalar — so both are handled here rather than
+    trusted. These values come off the wire: a DNS label is a length-prefixed
+    byte string, so a query name may legally contain a quote or a newline, and
+    a capture carrying one made the exported rule unparseable
+    (`yaml.safe_load` raised ParserError). SIGMA export exists to hand rules to
+    a SIEM, so a rule that will not load is the feature failing on exactly the
+    capture that provoked it. Applied to every interpolated value rather than
+    only the ones that look risky — deciding which inputs are "safe enough" is
+    the judgement that rots.
+    """
+    text = str(value).replace("\r", " ").replace("\n", " ")
+    return "'" + text.replace("'", "''") + "'"
+
+
+def _folded(value) -> str:
+    """A value for a `>` block scalar, where a newline would end the block."""
+    return str(value).replace("\r", " ").replace("\n", " ")
 
 
 class SigmaGenerator:
@@ -71,7 +93,7 @@ class SigmaGenerator:
 
     # ── Per-event type templates ──────────────────────────────────────────
 
-    def _rule_for_event(self, ev: DetectionEvent) -> Optional[SigmaRule]:
+    def _rule_for_event(self, ev: DetectionEvent) -> SigmaRule | None:
         dispatch = {
             EventType.PORT_SCAN:           self._port_scan,
             EventType.HOST_SCAN:           self._host_scan,
@@ -102,7 +124,7 @@ class SigmaGenerator:
             tags        = ["attack.reconnaissance", "attack.t1046"],
             detection_yaml = f"""\
     selection:
-        src_ip: '{ev.src_ip}'
+        src_ip: {_sq(ev.src_ip)}
     condition: selection""",
             falsepositives = ["Legitimate network scanners", "IT asset discovery tools", "Security auditing"],
         )
@@ -118,7 +140,7 @@ class SigmaGenerator:
             tags        = ["attack.reconnaissance", "attack.t1018"],
             detection_yaml = f"""\
     selection:
-        src_ip: '{ev.src_ip}'
+        src_ip: {_sq(ev.src_ip)}
         dst_port: {ev.dst_port or 0}
     condition: selection""",
             falsepositives = ["Network monitoring", "Load balancer health checks"],
@@ -137,7 +159,7 @@ class SigmaGenerator:
             tags        = ["attack.credential_access", "attack.t1110", "attack.t1110.001"],
             detection_yaml = f"""\
     selection:
-        src_ip: '{ev.src_ip}'
+        src_ip: {_sq(ev.src_ip)}
         dst_port: {ev.dst_port or 22}
         event_type: 'authentication_failure'
     condition: selection""",
@@ -158,8 +180,8 @@ class SigmaGenerator:
             tags        = ["attack.command_and_control", "attack.t1071", "attack.t1071.001", "attack.t1132"],
             detection_yaml = f"""\
     selection:
-        src_ip: '{ev.src_ip}'
-        dst_ip: '{ev.dst_ip or "*"}'
+        src_ip: {_sq(ev.src_ip)}
+        dst_ip: {_sq(ev.dst_ip or "*")}
         dst_port: {ev.dst_port or 443}
     condition: selection""",
             falsepositives = ["Heartbeat / keepalive traffic", "NTP synchronization", "Update checks"],
@@ -175,8 +197,8 @@ class SigmaGenerator:
             tags        = ["attack.command_and_control", "attack.t1573", "attack.t1573.002"],
             detection_yaml = f"""\
     selection:
-        src_ip: '{ev.src_ip}'
-        tls.ja3: '{ja3_hash}'
+        src_ip: {_sq(ev.src_ip)}
+        tls.ja3: {_sq(ja3_hash)}
     condition: selection""",
             falsepositives = ["Custom TLS libraries that coincidentally match this hash"],
         )
@@ -190,8 +212,8 @@ class SigmaGenerator:
             tags        = ["attack.command_and_control", "attack.t1071.004"],
             detection_yaml = f"""\
     selection:
-        src_ip: '{ev.src_ip}'
-        dns.question.name|contains: '{domain[:40]}'
+        src_ip: {_sq(ev.src_ip)}
+        dns.question.name|contains: {_sq(domain[:40])}
     condition: selection""",
             falsepositives = ["CDN domains", "Tracking pixels", "DNSSEC records"],
         )
@@ -204,7 +226,7 @@ class SigmaGenerator:
             tags        = ["attack.exfiltration", "attack.t1048", "attack.t1071.004"],
             detection_yaml = f"""\
     selection:
-        src_ip: '{ev.src_ip}'
+        src_ip: {_sq(ev.src_ip)}
         dns.question.name|re: '.{{50,}}'
     condition: selection""",
             falsepositives = ["Legitimate long domain names", "DNSSEC/DANE validation"],
@@ -219,9 +241,9 @@ class SigmaGenerator:
             tags        = ["attack.credential_access", "attack.t1552", "attack.t1552.001"],
             detection_yaml = f"""\
     selection:
-        src_ip: '{ev.src_ip}'
+        src_ip: {_sq(ev.src_ip)}
         dst_port: {ev.dst_port or 80}
-        protocol: '{(ev.protocol or "HTTP").lower()}'
+        protocol: {_sq((ev.protocol or "HTTP").lower())}
     filter:
         dst_ip|cidr: '10.0.0.0/8'
     condition: selection and not filter""",
@@ -236,7 +258,7 @@ class SigmaGenerator:
             tags        = ["attack.exfiltration", "attack.t1048.003", "attack.t1095"],
             detection_yaml = f"""\
     selection:
-        src_ip: '{ev.src_ip}'
+        src_ip: {_sq(ev.src_ip)}
         protocol: 'ICMP'
     condition: selection""",
             falsepositives = ["Network diagnostic tools", "Ping sweeps"],
@@ -250,7 +272,7 @@ class SigmaGenerator:
             tags        = ["attack.lateral_movement", "attack.t1021", "attack.defense_evasion", "attack.t1036"],
             detection_yaml = f"""\
     selection:
-        src_ip: '{ev.src_ip}'
+        src_ip: {_sq(ev.src_ip)}
         dst_port: {ev.dst_port or 445}
     filter:
         dst_ip|cidr: '10.0.0.0/8'
@@ -268,8 +290,8 @@ class SigmaGenerator:
             tags        = ["attack.reconnaissance", "attack.t1046", "attack.defense_evasion"],
             detection_yaml = f"""\
     selection:
-        src_ip: '{ev.src_ip}'
-        tcp.flags: '{flags}'
+        src_ip: {_sq(ev.src_ip)}
+        tcp.flags: {_sq(flags)}
     condition: selection""",
             falsepositives = ["Network testing tools", "Buggy TCP stacks"],
         )
@@ -291,7 +313,7 @@ class SigmaGenerator:
             tags        = ["attack.lateral_movement", *technique_tags],
             detection_yaml = f"""\
     selection:
-        src_ip: '{attacker}'
+        src_ip: {_sq(attacker)}
     condition: selection""",
             falsepositives = ["Penetration testing", "Red team exercises"],
         )
@@ -319,6 +341,8 @@ class SigmaGenerator:
         # Quote the title — names can contain ':' (e.g. "Attack Chain: ...") or
         # other YAML-significant characters that would otherwise break parsing.
         title_yaml = '"' + title.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+        description = _folded(description)
 
         yaml = f"""\
 title: {title_yaml}

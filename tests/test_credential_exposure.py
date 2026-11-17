@@ -206,3 +206,61 @@ def test_base64_decoding_of_junk_does_not_raise():
 def test_base64_decoding_of_non_utf8_is_replaced_not_fatal():
     out = _safe_b64(base64.b64encode(b"\xff\xfe\xfd"))
     assert out is not None
+
+
+# --------------------------------------------------------------------------- #
+#  Secrets must not leave the capture file                                      #
+# --------------------------------------------------------------------------- #
+
+def test_basic_auth_reports_the_account_but_never_the_password():
+    """Base64 is not encryption, and decoding it is not a reason to keep it.
+
+    Every other path here names the user and replaces the secret with a note
+    (see the FTP, IMAP and POP3 cases above). The two base64 mechanisms did not:
+    they decoded the blob and put the whole `user:password` into the event. Those
+    events are written to the HTML and PDF reports, the STIX bundle, the local
+    analysis history, and the copilot context an external AI provider may
+    receive — so a password captured off the wire left the capture file. The
+    account name is what an investigation needs; the secret stays in the PCAP.
+    """
+    token = base64.b64encode(b"admin:Sup3rSecretSentinel999").decode()
+    payload = f"GET /admin HTTP/1.1\r\nAuthorization: Basic {token}\r\n\r\n".encode()
+
+    events = _scan(_rec(payload))
+
+    assert events
+    rendered = str(events[0].evidence) + events[0].description
+    assert "admin" in rendered, "the account is the investigative value"
+    assert "Sup3rSecretSentinel999" not in rendered
+    assert token not in rendered, "the undecoded blob is the password too"
+
+
+def test_smtp_auth_plain_reports_the_account_but_never_the_password():
+    """AUTH PLAIN carries [authzid]\\0authcid\\0passwd — field 2 is the account."""
+    blob = base64.b64encode(b"\0admin\0Sup3rSecretSentinel999").decode()
+    payload = f"AUTH PLAIN {blob}\r\n".encode()
+
+    events = _scan(_rec(payload, dport=25))
+
+    assert events
+    rendered = str(events[0].evidence) + events[0].description
+    assert events[0].evidence["username"] == "admin"
+    assert "Sup3rSecretSentinel999" not in rendered
+    assert blob not in rendered
+
+
+def test_smtp_auth_login_does_not_guess_at_an_account():
+    """LOGIN sends one field per line, so this blob may be either half.
+
+    Naming it "the username" would be a guess, and guessing wrong here prints a
+    password into the report as an account name.
+    """
+    blob = base64.b64encode(b"Sup3rSecretSentinel999").decode()
+    payload = f"AUTH LOGIN {blob}\r\n".encode()
+
+    events = _scan(_rec(payload, dport=25))
+
+    assert events
+    rendered = str(events[0].evidence) + events[0].description
+    assert "Sup3rSecretSentinel999" not in rendered
+    assert "not recoverable" in events[0].evidence["username"]

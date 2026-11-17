@@ -8,6 +8,8 @@ into a 500 with the results already in memory.
 """
 
 
+from pathlib import Path
+
 import pytest
 
 from packetiq.detection.models import DetectionEvent, EventType, Severity
@@ -495,3 +497,63 @@ def test_a_live_session_that_cannot_open_its_pcap_still_captures(monkeypatch):
 
     assert session._writer is None
     assert session.sniffer is not None
+
+
+# ── Live sessions must be reclaimed like jobs are ────────────────────────────
+
+def test_stopped_live_sessions_are_evicted_with_their_recordings(tmp_path):
+    """`_live_sessions` had no eviction at all — no del, pop or clear anywhere.
+
+    `_jobs` has had `_evict_old_jobs` from the start. A stopped live session is
+    deliberately retained so `/api/live/{sid}/analyze` can still run the full
+    pipeline over what it recorded, but nothing removed it afterwards: every
+    `POST /api/live/start` leaked a session object, its alert and
+    packet-summary buffers, and the recorded capture — up to 300,000 packets on
+    disk — for the lifetime of the process.
+    """
+    class _Fake:
+        def __init__(self, name, running=False):
+            self.running = running
+            self.pcap_path = str(tmp_path / f"live_{name}.pcap")
+            Path(self.pcap_path).write_text("x", encoding="utf-8")
+
+        def alive(self):
+            return self.running
+
+    webapp._live_sessions.clear()
+    try:
+        for i in range(20):
+            webapp._live_sessions[f"sid{i}"] = _Fake(i)
+        webapp._live_sessions["live"] = _Fake("live", running=True)
+
+        webapp._evict_old_live_sessions()
+
+        assert "live" in webapp._live_sessions, "a running capture is never evicted"
+        assert "sid19" in webapp._live_sessions, "the newest stopped session is kept"
+        assert "sid0" not in webapp._live_sessions, "the oldest stopped session goes"
+        assert len(webapp._live_sessions) == 7, "6 stopped + the running one"
+        assert len(list(tmp_path.glob("live_*.pcap"))) == 7, (
+            "the evicted sessions' recordings are deleted, not orphaned"
+        )
+    finally:
+        webapp._live_sessions.clear()
+
+
+def test_evicting_live_sessions_is_a_no_op_below_the_cap():
+    """The common case must not touch anything."""
+    webapp._live_sessions.clear()
+    try:
+        class _Stopped:
+            pcap_path = None
+
+            def alive(self):
+                return False
+
+        for i in range(3):
+            webapp._live_sessions[f"sid{i}"] = _Stopped()
+
+        webapp._evict_old_live_sessions()
+
+        assert len(webapp._live_sessions) == 3
+    finally:
+        webapp._live_sessions.clear()

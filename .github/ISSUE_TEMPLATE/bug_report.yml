@@ -1,0 +1,103 @@
+name: Bug report
+description: A crash, a wrong result, or something that does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please confirm the behaviour on the current `main`.
+
+        **Do not attach a capture from a production network.** It carries real
+        addresses, hostnames and cleartext credentials. Reproduce with
+        `python samples/generate_sample.py`, carve a slice you have checked and
+        are permitted to share, or describe the traffic in words.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The exact command, or the steps in the web app.
+      placeholder: |
+        1. python samples/generate_sample.py
+        2. packetiq analyze samples/demo_attack.pcap --full
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Full traceback or error output
+      description: Paste it whole. A truncated traceback usually hides the cause.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: PacketIQ version
+      description: The output of `packetiq version`.
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: The output of `python -V`. PacketIQ requires 3.11 or newer.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Docker
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where it happened
+      options:
+        - Web app
+        - CLI
+        - Local dashboard
+        - Live capture
+        - Docker image
+        - Double-click launcher
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: capture-source
+    attributes:
+      label: Input the analysis ran on
+      description: >-
+        Describe it rather than attaching it: the format, roughly how many
+        packets, and the protocols involved.
+      placeholder: "The bundled samples/demo_attack.pcap, about 20k packets, TCP and DNS."
+
+  - type: checkboxes
+    id: confirms
+    attributes:
+      label: Before submitting
+      options:
+        - label: I am not attaching a capture from a network I cannot share data from.
+          required: true
+        - label: This is not a security vulnerability. Those go through SECURITY.md privately.
+          required: true

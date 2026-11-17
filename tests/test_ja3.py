@@ -357,3 +357,29 @@ def test_the_streaming_entry_point_matches_the_incremental_one(monkeypatch):
 def test_finalize_before_begin_returns_nothing():
     """Defensive: the engine may skip this detector entirely."""
     assert JA3Detector().finalize() == []
+
+
+def test_ja3_reproduces_the_published_reference_fingerprint():
+    """Pinned against the vector from the Salesforce JA3 specification.
+
+    `test_ja3_matches_the_documented_construction` above rebuilds the string
+    with the same field order and separators as the implementation and compares
+    the two MD5s, so it verifies internal consistency but would pass unchanged
+    if the construction itself were wrong. Only an externally published value
+    can catch that.
+
+    The failure it guards against is silent and total: JA3 keeps the cipher list
+    in the order the client sent it (unlike JA4, which sorts). Sorting here, or
+    swapping a `-` for a `,`, still yields a stable 32-character fingerprint for
+    every connection — it just no longer matches any entry in the abuse.ch
+    blocklist, so the detector reports nothing and looks healthy doing it.
+    """
+    reference = {
+        "version":    769,
+        "ciphers":    [47, 53, 5, 10, 49161, 49162, 49171, 49172, 50, 56, 19, 4],
+        "extensions": [0, 10, 11],
+        "curves":     [23, 24, 25],
+        "point_fmts": [0],
+    }
+
+    assert _compute_ja3(reference) == "ada70206e40642a3e4461f35503241d5"

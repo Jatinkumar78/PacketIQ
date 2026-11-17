@@ -1,0 +1,65 @@
+# Dependency update automation.
+#
+# A note before enabling the pip ecosystem: this project keeps
+# `pyproject.toml` and `requirements.txt` in lockstep, and
+# tests/test_project_metadata_sync.py fails the build when they disagree.
+# Dependabot edits pyproject only, so a pip pull request will go red until
+# requirements.txt is updated to match. That is the gate working as intended
+# rather than a misconfiguration: the two install paths must not drift.
+#
+# Floors here only ever go up. Each one is a patched release verified against the
+# advisory database at the floor version itself, so never accept a pull request
+# that lowers one. See SECURITY.md.
+version: 2
+updates:
+  # The pinned action versions in .github/workflows/ci.yml. Low-risk, and the
+  # one most likely to go stale unnoticed.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "ci"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+    groups:
+      # One pull request for the development toolchain rather than six.
+      dev-tooling:
+        patterns:
+          - "pytest*"
+          - "ruff"
+          - "mypy"
+          - "types-*"
+          - "pysigma"
+          - "pyyaml"
+      runtime:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "pytest*"
+          - "ruff"
+          - "mypy"
+          - "types-*"
+          - "pysigma"
+          - "pyyaml"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "docker"
+    labels:
+      - "dependencies"
+      - "docker"

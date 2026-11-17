@@ -619,6 +619,21 @@ _PROTO_KEYWORDS = {
 _TLS_GROUP = {"tls", "ssl", "https"}
 
 
+# AND semantics means a real search is a handful of terms; beyond that the
+# result set is empty by construction. The cost is tokens x packets, and
+# `_iter_packets` scans up to 200,000 of them, so an unbounded token count was
+# a free way to burn server CPU: measured 0.4us/packet for one token but
+# 644us/packet for 50,000 — about 129 seconds of work for a single
+# `/api/packets?q=` request, and a URL holds that many single-character tokens
+# comfortably.
+_MAX_QUERY_TOKENS = 32
+# The string is sliced *before* lowering and splitting, because the split is
+# itself proportional to the query length and runs once per packet: capping
+# only the token count still cost 174us/packet on a 50,000-token query, since
+# every packet re-split the whole thing. 512 characters is a generous search box.
+_MAX_QUERY_CHARS = 512
+
+
 def matches(summary: dict, q: str) -> bool:
     """
     Search a packet summary. Multi-token, case-insensitive, AND semantics.
@@ -632,7 +647,7 @@ def matches(summary: dict, q: str) -> bool:
     protos = set(summary.get("protocols") or [])
     hay = " ".join(str(summary.get(k, "")) for k in
                    ("src", "dst", "proto", "service", "info")).lower()
-    for tok in q.lower().split():
+    for tok in q[:_MAX_QUERY_CHARS].lower().split()[:_MAX_QUERY_TOKENS]:
         if tok in _PROTO_KEYWORDS:
             want = _TLS_GROUP if tok in _TLS_GROUP else {tok}
             if not (want & protos):

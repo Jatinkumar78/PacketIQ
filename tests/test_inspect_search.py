@@ -49,3 +49,45 @@ def test_substring_and_empty():
     assert matches(p, "8.8.8.8")     # ip substring
     assert matches(p, "")            # empty query matches everything
     assert not matches(p, "9.9.9.9")
+
+
+def test_a_very_long_search_query_is_bounded():
+    """Search cost is tokens x packets, and up to 200,000 packets are scanned.
+
+    An unbounded query was a free way to burn server CPU through
+    `/api/packets?q=`: measured 0.4us/packet for a single token but
+    644us/packet for 50,000 — roughly 129 seconds of work for one request, and
+    a URL carries that many single-character tokens comfortably. Capping the
+    token count alone was not enough, because `q.lower().split()` ran once per
+    packet and is itself proportional to the query length; slicing the string
+    first makes the cost flat (~2us/packet even for a 1 MB query).
+
+    The trade-off is deliberate: tokens past the 32nd are ignored. Under AND
+    semantics a 33-term search already matches nothing, so no useful query is
+    affected — and this is asserted rather than timed so it holds on any runner.
+    """
+    summary = {"src": "10.0.0.9", "dst": "45.33.32.156", "proto": "TCP",
+               "service": "HTTP", "info": "GET /index.html",
+               "protocols": ["tcp", "http"]}
+
+    # Within the cap, one non-matching token still rejects the packet.
+    assert matches(summary, " ".join(["0"] * 5 + ["definitelynotpresent"])) is False
+
+    # Past the cap the tail is never consulted, so the packet still matches.
+    assert matches(summary, " ".join(["0"] * 32 + ["definitelynotpresent"])) is True
+
+    # A megabyte of query is accepted and answered, not refused or hung on.
+    assert matches(summary, "0 " * 500_000) is True
+
+
+def test_bounding_the_query_leaves_ordinary_searches_alone():
+    """The cap must not change what a real search means."""
+    summary = {"src": "10.0.0.9", "dst": "45.33.32.156", "proto": "TCP",
+               "service": "HTTP", "info": "GET /index.html",
+               "protocols": ["tcp", "http"]}
+
+    assert matches(summary, "http") is True
+    assert matches(summary, "https") is False, "protocol keywords stay exact"
+    assert matches(summary, "10.0.0.9 http") is True
+    assert matches(summary, "nomatch") is False
+    assert matches(summary, "") is True

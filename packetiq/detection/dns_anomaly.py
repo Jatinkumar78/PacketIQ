@@ -162,12 +162,18 @@ def _dga_detection(result: ExtractionResult) -> list[DetectionEvent]:
             description  = f"Potential DGA domain queried: {qname}",
             timestamp    = q.get("ts", 0.0),
             packet_count = 1,
-            confidence   = min(1.0, (entropy - DGA_ENTROPY_THRESHOLD) / 1.0),
+            # Scored against the threshold that actually made this a finding,
+            # not the module default. Lowering `dga_entropy_threshold` in
+            # packetiq.toml used to yield a NEGATIVE confidence (entropy 3.585
+            # against a hardcoded 3.8 gave -0.215, rendered as "-22%"), and the
+            # evidence then contradicted the configured value. Clamped at 0 so
+            # no future threshold change can push it below zero again.
+            confidence   = min(1.0, max(0.0, entropy - entropy_threshold)),
             evidence     = {
                 "domain":           qname,
                 "sld":              sld,
                 "entropy":          round(entropy, 3),
-                "entropy_threshold": DGA_ENTROPY_THRESHOLD,
+                "entropy_threshold": entropy_threshold,
                 "sld_length":       len(sld),
             },
         ))
@@ -201,6 +207,17 @@ def _tunneling_detection(result: ExtractionResult) -> list[DetectionEvent]:
     events: list[DetectionEvent] = []
     seen_sources: set[str] = set()
 
+    # Oversized, non-trusted query counts per source, built in a single pass.
+    # This used to be a comprehension over every DNS query, re-run inside the
+    # loop below for each distinct source — O(sources x queries). A capture with
+    # many spoofed sources made that quadratic, and analysing a hostile capture
+    # is the job, so the cost had to come off the input size.
+    long_by_src: Counter = Counter()
+    for x in result.dns_queries:
+        xname = x.get("qname", "") or ""
+        if len(xname) >= TUNNEL_LABEL_LENGTH and not _is_trusted_domain(xname):
+            long_by_src[x.get("src", "")] += 1
+
     for q in result.dns_queries:
         qname = q.get("qname", "") or ""
         if len(qname) < TUNNEL_LABEL_LENGTH:
@@ -215,11 +232,7 @@ def _tunneling_detection(result: ExtractionResult) -> list[DetectionEvent]:
             continue
         seen_sources.add(src)
 
-        long_count = sum(
-            1 for x in result.dns_queries
-            if x.get("src") == src and len(x.get("qname", "") or "") >= TUNNEL_LABEL_LENGTH
-            and not _is_trusted_domain(x.get("qname", "") or "")
-        )
+        long_count = long_by_src[src]
 
         severity = Severity.CRITICAL if long_count >= 5 else Severity.HIGH
         events.append(DetectionEvent(
@@ -265,11 +278,20 @@ def _excessive_queries(result: ExtractionResult) -> list[DetectionEvent]:
     """
     events: list[DetectionEvent] = []
 
-    domain_counts: Counter = Counter(
-        q.get("qname", "") for q in result.dns_queries if q.get("qname")
-    )
+    # One pass to group queries by name. The two comprehensions this replaces
+    # each walked every DNS query again for every qualifying domain, so a
+    # capture carrying many high-volume names cost O(domains x queries):
+    # measured at 0.09s for 6k queries but 8.6s for 96k, i.e. ~37 minutes for
+    # the 1.5M queries a ~120MB capture holds. Severity here is only LOW, so
+    # the analysis hung on context that never drives a verdict.
+    by_domain: dict[str, list] = defaultdict(list)
+    for q in result.dns_queries:
+        name = q.get("qname", "")
+        if name:
+            by_domain[name].append(q)
 
-    for domain, count in domain_counts.items():
+    for domain, entries in by_domain.items():
+        count = len(entries)
         if count < EXCESSIVE_QUERY_COUNT:
             continue
 
@@ -278,8 +300,8 @@ def _excessive_queries(result: ExtractionResult) -> list[DetectionEvent]:
         if _is_trusted_domain(domain):
             continue
 
-        srcs = list({q["src"] for q in result.dns_queries if q.get("qname") == domain})
-        ts_list = sorted(q["ts"] for q in result.dns_queries if q.get("qname") == domain)
+        srcs = list({q["src"] for q in entries})
+        ts_list = sorted(q["ts"] for q in entries)
         max_rate = _max_window_count(ts_list, RATE_WINDOW_SECS)
 
         # Informational only — repetition of a single name is not discriminative.

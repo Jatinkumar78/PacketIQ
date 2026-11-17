@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or help with usage
+    url: https://github.com/Jatinkumar78/PacketIQ/blob/main/SUPPORT.md
+    about: Start here. Most usage questions are already answered in the docs.
+  - name: Report a security vulnerability
+    url: https://github.com/Jatinkumar78/PacketIQ/security/advisories/new
+    about: Please report privately, not in a public issue. See SECURITY.md.
+  - name: Code of Conduct
+    url: https://github.com/Jatinkumar78/PacketIQ/blob/main/CODE_OF_CONDUCT.md
+    about: How we expect people to behave here, and how to report a problem.

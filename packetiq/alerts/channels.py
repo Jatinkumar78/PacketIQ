@@ -17,14 +17,14 @@ import os
 import smtplib
 import ssl
 from email.message import EmailMessage
-from typing import Optional
+from urllib.parse import urlsplit
 
 import requests
 
 _TIMEOUT = 15
 
 
-def _env(name: str) -> Optional[str]:
+def _env(name: str) -> str | None:
     val = os.environ.get(name)
     if val:
         return val
@@ -43,6 +43,42 @@ def _env(name: str) -> Optional[str]:
     return None
 
 
+def _without_secret(exc: Exception, secret: str) -> str:
+    """Exception text with a credential removed.
+
+    `requests` embeds the request URL in ConnectionError, SSLError and
+    ProxyError, and an incoming-webhook URL *is* the credential — anyone holding
+    `https://hooks.slack.com/services/T.../B.../<secret>` can post to that
+    channel. The raw string therefore reads:
+
+        HTTPSConnectionPool(host='hooks.slack.com', port=443): Max retries
+        exceeded with url: /services/T000.../B000.../<secret> (Caused by ...)
+
+    These strings are returned to the caller and surface in the CLI and the
+    webapp, so one unreachable network disclosed the webhook. Redact rather
+    than swallow: the operator still needs to know what failed.
+    """
+    text = str(exc)
+    token = (secret or "").strip()
+    if not token:
+        return text
+
+    # requests reports the *path* it requested, not the URL it was handed, so
+    # replacing the full URL alone matched nothing and left the secret in place.
+    # Redact the whole URL and its path and query separately, longest first so a
+    # shorter fragment cannot partially consume a longer one.
+    fragments = {token}
+    parts = urlsplit(token)
+    if parts.scheme and parts.netloc:
+        if parts.path:
+            fragments.add(parts.path)
+        if parts.query:
+            fragments.add(parts.query)
+    for fragment in sorted(fragments, key=len, reverse=True):
+        text = text.replace(fragment, "<redacted>")
+    return text
+
+
 class SlackWebhook:
     def __init__(self, url: str):
         self.url = url
@@ -52,7 +88,7 @@ class SlackWebhook:
             r = requests.post(self.url, json={"text": text}, timeout=_TIMEOUT)
             return (r.status_code == 200, "" if r.status_code == 200 else f"HTTP {r.status_code}")
         except Exception as e:  # noqa: BLE001
-            return False, str(e)
+            return False, _without_secret(e, self.url)
 
 
 class GenericWebhook:
@@ -64,7 +100,7 @@ class GenericWebhook:
             r = requests.post(self.url, json=payload, timeout=_TIMEOUT)
             return (200 <= r.status_code < 300, "" if r.ok else f"HTTP {r.status_code}")
         except Exception as e:  # noqa: BLE001
-            return False, str(e)
+            return False, _without_secret(e, self.url)
 
 
 class EmailSender:
@@ -91,7 +127,10 @@ class EmailSender:
                 s.send_message(msg)
             return True, ""
         except Exception as e:  # noqa: BLE001
-            return False, str(e)
+            # smtplib echoes the server's response, which can quote the
+            # credentials it was given. The password is in scope here, so it is
+            # removed on the way out as a matter of course.
+            return False, _without_secret(e, self.password or "")
 
 
 def configured_channels() -> list[str]:
@@ -106,7 +145,7 @@ def configured_channels() -> list[str]:
     return chans
 
 
-def broadcast(subject: str, text: str, payload: Optional[dict] = None) -> dict:
+def broadcast(subject: str, text: str, payload: dict | None = None) -> dict:
     """Send to every configured channel. Returns {channel: (ok, err)}."""
     results: dict = {}
 

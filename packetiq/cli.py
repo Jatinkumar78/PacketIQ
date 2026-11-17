@@ -885,6 +885,24 @@ def dashboard(pcap_file: str, port: int, no_browser: bool):
     launch_dashboard(str(pcap_path), port=port, open_browser=not no_browser)
 
 
+def _warn_if_window_overflowed(mon) -> None:
+    """Say so when the rolling window became rate-limited rather than time-limited.
+
+    The window is capped at `live._MAX_WINDOW_RECORDS` so a busy link cannot
+    exhaust memory, but a monitor that silently analysed a subset of the traffic
+    while reporting as though it saw all of it would be the kind of overstated
+    result this project exists to avoid.
+    """
+    dropped = getattr(mon, "dropped", 0) or 0
+    if dropped:
+        ui.print_status(
+            f"{dropped:,} packet(s) fell out of the rolling window — traffic "
+            f"arrived faster than the {len(mon.buf):,}-record cap allows, so "
+            f"detection ran on the most recent packets only.",
+            status="warn",
+        )
+
+
 def _attribution_line(a) -> str:
     """Render one TTP-overlap row for the fuse report.
 
@@ -1332,6 +1350,7 @@ def live_cmd(interface, read_pcap, window, interval, threshold, alert, list_ifac
         mon = live_mod.replay(read_pcap, _on_alert, window_secs=window, threshold=threshold)
         ui.print_divider()
         ui.print_status(f"Replay complete — {mon.alert_count} alert(s) raised.", status="ok")
+        _warn_if_window_overflowed(mon)
         return
 
     if not interface:
@@ -1342,11 +1361,12 @@ def live_cmd(interface, read_pcap, window, interval, threshold, alert, list_ifac
 
     ui.print_status(f"Sniffing {interface} (Ctrl+C to stop)...", status="loading")
     try:
-        live_mod.sniff_live(interface, _on_alert, window_secs=window,
-                            interval_secs=interval, threshold=threshold)
+        mon = live_mod.sniff_live(interface, _on_alert, window_secs=window,
+                                  interval_secs=interval, threshold=threshold)
     except RuntimeError as e:
         ui.print_status(str(e), status="error")
         sys.exit(1)
+    _warn_if_window_overflowed(mon)
     ui.print_divider()
 
 

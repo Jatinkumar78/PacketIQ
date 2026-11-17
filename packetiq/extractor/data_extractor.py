@@ -14,7 +14,6 @@ Aggregates raw packet records into structured analytics:
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Optional
 
 from packetiq.parser.pcap_parser import RawPacketRecord
 from packetiq.utils.helpers import (
@@ -38,8 +37,8 @@ class FlowKey:
     """Bidirectional flow identifier — normalized so A→B == B→A."""
     src_ip: str
     dst_ip: str
-    src_port: Optional[int]
-    dst_port: Optional[int]
+    src_port: int | None
+    dst_port: int | None
     protocol: str
 
     def canonical(self) -> tuple:
@@ -56,8 +55,8 @@ class FlowStats:
     """Aggregated metrics for a single bidirectional flow."""
     src_ip: str
     dst_ip: str
-    src_port: Optional[int]
-    dst_port: Optional[int]
+    src_port: int | None
+    dst_port: int | None
     protocol: str
     service: str
 
@@ -110,6 +109,11 @@ class ExtractionResult:
 
     # ── TCP connection tracking ──────────────────────────────
     tcp_syn_pairs: dict = field(default_factory=dict)     # (src,dst,dport) → ts list
+    # The subset of the above that was answered by a SYN-ACK, keyed identically
+    # so a half-open probe can be identified *per port*. Previously this was
+    # only summarised into the two counts below, so detectors had to rebuild it
+    # from flow flag sets and lost the port.
+    tcp_synack_pairs: set = field(default_factory=set)    # (src,dst,dport)
     open_connections: int = 0
     completed_connections: int = 0
 
@@ -197,8 +201,8 @@ class DataExtractor:
         # Endpoints that were the destination of a flow's first packet.
         self._svc_server: set = set()
 
-        self._first_ts: Optional[float] = None
-        self._last_ts:  Optional[float] = None
+        self._first_ts: float | None = None
+        self._last_ts:  float | None = None
 
         # Observed software banners: (source, value) → set of IPs
         self._banners: dict = defaultdict(set)
@@ -436,7 +440,7 @@ class DataExtractor:
     _MAX_SVC_CLIENTS = 64
 
     @staticmethod
-    def _canonical_ip(ips: set, ip_mac_counts: dict, mac: str) -> Optional[str]:
+    def _canonical_ip(ips: set, ip_mac_counts: dict, mac: str) -> str | None:
         """Pick the address that best names a device: a routable IPv4 first, then
         a global IPv6, falling back to link-local only if nothing else exists."""
         def _rank(ip: str) -> tuple:
@@ -586,6 +590,7 @@ class DataExtractor:
         )
         r.completed_connections = len(self._synack_map & set(self._syn_map.keys()))
         r.tcp_syn_pairs         = dict(self._syn_map)
+        r.tcp_synack_pairs      = set(self._synack_map)
         r.src_ip_ttl            = self._src_ip_ttl
 
         # ARP host-discovery / spoofing evidence

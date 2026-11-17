@@ -1,6 +1,7 @@
 """Tests for JA4 fingerprinting and TLS certificate inspection."""
 
 import re
+from datetime import UTC
 
 from packetiq.detection import ja3, tls_inspect
 from packetiq.detection.models import EventType
@@ -27,7 +28,7 @@ def test_ja4_format():
 def test_self_signed_cert_detected(tmp_path):
     """Generate a real self-signed cert, wrap it in a TLS Certificate handshake
     record, and confirm tls_inspect flags it."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes
@@ -42,8 +43,8 @@ def test_self_signed_cert_detected(tmp_path):
         .subject_name(name).issuer_name(name)           # self-signed: issuer == subject
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.now(timezone.utc) - timedelta(days=1))
-        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=30))
+        .not_valid_before(datetime.now(UTC) - timedelta(days=1))
+        .not_valid_after(datetime.now(UTC) + timedelta(days=30))
         .sign(key, hashes.SHA256())
     )
     der = cert.public_bytes(__import__("cryptography.hazmat.primitives.serialization",

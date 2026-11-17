@@ -228,6 +228,30 @@ def test_the_live_command_finishes_cleanly_when_sniffing_ends(monkeypatch):
     assert "Sniffing en0" in result.output
 
 
+def test_the_live_command_says_so_when_the_window_overflowed(monkeypatch):
+    """A monitor that analysed a subset must not report as if it saw everything.
+
+    The rolling window is capped so a busy link cannot exhaust memory, but that
+    cap means detection ran on the most recent packets only. Staying quiet about
+    it would overstate the result, which is the one thing this project will not
+    do — so the count is surfaced.
+    """
+    from packetiq import live as live_mod
+
+    def _overflowed(*args, **kwargs):
+        mon = live_mod.LiveMonitor(300.0, "HIGH", lambda e: None)
+        mon.dropped = 12_345
+        return mon
+
+    monkeypatch.setattr(live_mod, "sniff_live", _overflowed)
+
+    result = CliRunner().invoke(main, ["live", "-i", "en0"])
+
+    assert result.exit_code == 0
+    assert "12,345" in result.output
+    assert "rolling window" in result.output
+
+
 def test_a_progress_socket_that_goes_quiet_is_closed_rather_than_held_open(client,
                                                                            monkeypatch):
     """The relay waits 10 minutes for the next progress message. If an analysis
@@ -250,7 +274,7 @@ def test_a_progress_socket_that_goes_quiet_is_closed_rather_than_held_open(clien
     async def immediate_timeout(awaitable, timeout=None):
         if hasattr(awaitable, "close"):
             awaitable.close()
-        raise _asyncio.TimeoutError
+        raise TimeoutError
 
     from starlette.websockets import WebSocketDisconnect
 

@@ -1,0 +1,90 @@
+name: Detection issue (false positive or missed detection)
+description: A detector fired when it should not have, or stayed quiet when it should have fired.
+labels: ["detection", "accuracy"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful kind of report this project gets. Detection
+        accuracy here is measured rather than asserted, currently 100% recall and
+        90% precision on the Stratosphere CTU-13 dataset, so a real
+        counter-example moves a published number.
+
+        **Do not attach a capture from a production network.** Describe the
+        traffic pattern, or carve a slice you have checked with `packetiq slice`.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Which is it
+      options:
+        - False positive (it fired and should not have)
+        - Missed detection (it should have fired and did not)
+        - Right finding, wrong severity or confidence
+        - Right finding, wrong or missing MITRE technique
+    validations:
+      required: true
+
+  - type: input
+    id: detector
+    attributes:
+      label: Detector involved
+      description: "The name from the README table, for example: Port Scan, C2 Beacon, DNS DGA."
+    validations:
+      required: true
+
+  - type: textarea
+    id: traffic
+    attributes:
+      label: The traffic
+      description: >-
+        What was actually on the wire. Protocols, ports, direction, timing,
+        roughly how many packets or connections, and whether the hosts are
+        internal or external.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Why you believe the result is wrong
+      description: >-
+        For a false positive, what the traffic really was and what makes it
+        benign. For a miss, what the activity was and what should have caught it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: What the tool reported
+      description: >-
+        The event as shown, including its evidence and confidence. The web app's
+        "Why was this flagged?" panel and the `--full` CLI output both print it.
+      render: text
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Non-default thresholds
+      description: >-
+        If you changed anything in packetiq.toml, paste the relevant section.
+        Many detectors are tunable, and the fix is sometimes a default rather
+        than a code change.
+      render: toml
+
+  - type: input
+    id: version
+    attributes:
+      label: PacketIQ version
+      description: The output of `packetiq version`.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirms
+    attributes:
+      label: Before submitting
+      options:
+        - label: I am describing the traffic rather than attaching a capture I cannot share.
+          required: true

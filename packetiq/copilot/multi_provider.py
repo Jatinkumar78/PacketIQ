@@ -13,7 +13,7 @@ cloud key or a fully-offline local model), not just an Anthropic key.
 from __future__ import annotations
 
 import asyncio
-from typing import Callable
+from collections.abc import Callable
 
 
 class MultiProviderClient:

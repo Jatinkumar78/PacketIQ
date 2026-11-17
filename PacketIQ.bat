@@ -17,15 +17,15 @@ REM 1) Find Python
 where py >nul 2>&1 && (set "PY=py -3") || (set "PY=python")
 %PY% --version >nul 2>&1
 if errorlevel 1 (
-  echo Python 3.9+ is required. Install it from https://www.python.org/downloads/
+  echo Python 3.11+ is required. Install it from https://www.python.org/downloads/
   echo Then double-click this file again.
   pause
   exit /b 1
 )
-REM Make sure it's new enough (3.9+), or the install below fails with a confusing error
-%PY% -c "import sys; sys.exit(0 if sys.version_info[:2]>=(3,9) else 1)" >nul 2>&1
+REM Make sure it's new enough (3.11+), or the install below fails with a confusing error
+%PY% -c "import sys; sys.exit(0 if sys.version_info[:2]>=(3,11) else 1)" >nul 2>&1
 if errorlevel 1 (
-  echo PacketIQ needs Python 3.9 or newer. Install a newer version from
+  echo PacketIQ needs Python 3.11 or newer. Install a newer version from
   echo https://www.python.org/downloads/ then double-click this file again.
   pause
   exit /b 1
