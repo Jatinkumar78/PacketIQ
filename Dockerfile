@@ -1,5 +1,5 @@
 # PacketIQ — AI PCAP Forensics & SOC Intelligence
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 # libpcap is optional (file parsing is pure Python); build tools for cryptography wheels
 RUN apt-get update \
