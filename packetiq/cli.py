@@ -1058,6 +1058,85 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# crack command — offline AS-REP crack + WinRM decryption (opt-in)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@main.command("crack")
+@click.argument("pcap_file", type=click.Path(exists=True, readable=True))
+@click.option("--wordlist", "-w", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Wordlist to crack the AS-REP roast with (default: a small bundled "
+                   "common-password list; point this at rockyou.txt for real work).")
+def crack(pcap_file: str, wordlist: str | None):
+    """
+    Offline: crack an AS-REP roast, then decrypt the WinRM session it unlocks.
+
+    \b
+    This is the deliberate exception to PacketIQ's read-only stance: it takes the
+    credential material the capture exposes and does the offline work by hand —
+    recovering the password from the roast, then using it to decrypt the sealed
+    WinRM traffic and read the commands that ran. It needs a wordlist, and it
+    only recovers what weak credentials and a cracked password allow.
+    """
+    from scapy.all import PcapReader
+
+    from packetiq.detection import kerberos as kerb
+    from packetiq.offline import asrep, winrm
+
+    pcap_path = str(Path(pcap_file).resolve())
+    ui.print_section("OFFLINE CRACK + DECRYPT",
+                     "AS-REP roasting and WinRM session recovery")
+
+    # 1. Extract the AS-REP roast(s) the capture carries.
+    acc = kerb.KerberosAccumulator()
+    with contextlib.suppress(Exception), PcapReader(pcap_path) as reader:
+        for pkt in reader:
+            acc.feed(pkt)
+        acc.finalize()
+    hashes = acc.summary().get("asrep_hashes", {})
+    if not hashes:
+        ui.print_status("No AS-REP roastable credential found in this capture. "
+                        "Nothing to crack.", "warning")
+        return
+
+    def candidates():
+        return asrep.iter_wordlist(wordlist) if wordlist else asrep.bundled_wordlist()
+
+    source = Path(wordlist).name if wordlist else "bundled common-password list"
+    ui.print_status(f"Found {len(hashes)} AS-REP roast(s); cracking against {source}.", "info")
+
+    recovered: dict[str, str] = {}
+    for account, hash_string in hashes.items():
+        password = asrep.crack(hash_string, candidates())
+        if password:
+            recovered[account] = password
+            ui.print_status(f"CRACKED {account}: {password}", "warning")
+        else:
+            ui.print_status(f"{account}: not cracked with this wordlist "
+                            "(try a larger one, e.g. rockyou.txt).", "info")
+    if not recovered:
+        return
+
+    # 2. Use each recovered password to decrypt the WinRM session(s).
+    for account, password in recovered.items():
+        result = winrm.decrypt_capture(pcap_path, password)
+        if not result:
+            continue
+        ui.print_section(f"WINRM SESSION DECRYPTED ({account})",
+                         f"{result.sessions} session(s) unsealed with the cracked password")
+        if result.commands:
+            ui.print_table(
+                "Commands run on the target (decrypted from the WinRM session)",
+                columns=[("#", "dim white", "right"), ("Command", "bold green", "left")],
+                rows=[[str(i), c] for i, c in enumerate(result.commands, 1)],
+                max_rows=9999,
+            )
+        for path in result.exfiltrated_files:
+            ui.print_status(f"File written/exfiltrated on the target: {path}", "warning")
+        for flag in result.flags:
+            ui.print_status(f"Flag recovered from the decrypted session: {flag}", "warning")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # report command
 # ──────────────────────────────────────────────────────────────────────────────
 

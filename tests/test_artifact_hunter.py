@@ -430,6 +430,34 @@ def test_a_benign_query_string_is_not_reported_as_a_decoded_payload():
     assert [e for e in events if e.event_type is EventType.ENCODED_PAYLOAD] == []
 
 
+def test_plain_http_is_not_reported_as_an_obfuscated_payload():
+    """A readable HTTP exchange is not obfuscated — url-decoding it must never
+    produce an ENCODED_PAYLOAD finding (the dominant false positive on real
+    HTTP/TLS traffic)."""
+    http = (b"GET /index.html?q=%20hello HTTP/1.1\r\nHost: site.test\r\n\r\n"
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html>ok page</html>")
+    acc, events = _hunt(http)
+    assert [e for e in events if e.event_type is EventType.ENCODED_PAYLOAD] == []
+
+
+def test_a_crib_surfacing_under_xor_in_binary_is_not_reported():
+    """A TLS record or ciphertext can yield a crib under some XOR key while
+    staying binary; it must not be reported, and no preview is binary."""
+    blob = bytes((b ^ 0x42) for b in (b"http/get " + bytes(range(230))))
+    res = mod.inspect_blob(blob)
+    assert not any(d["chain"].startswith("xor:") for d in res["decoded"])
+    for d in res["decoded"]:
+        assert all(" " <= c <= "~" for c in d["preview"])
+
+
+def test_a_decoded_file_is_reported_by_its_magic():
+    """A decode that comes out as a recognised file (binary) is still reported,
+    on the strength of its magic header rather than printable text."""
+    blob = base64.b64encode(b"MZ\x90\x00\x03" + bytes(range(120)))
+    res = mod.inspect_blob(blob)
+    assert any(d["chain"] == "base64" for d in res["decoded"])
+
+
 # ── severities, dedupe and the summary ────────────────────────────────────────
 
 def test_secret_severities_match_the_kind():

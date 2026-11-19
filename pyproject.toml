@@ -109,6 +109,7 @@ packetiq = [
     "detection/data/yara_rules/*",
     "enrichment/data/*",
     "profiles/*.toml",
+    "offline/*.txt",
     "webapp/templates/*.html",
     "webapp/static/vendor/*.js",
     "dashboard/templates/*.html",

@@ -388,13 +388,16 @@ def inspect_blob(data: bytes) -> dict:
         found_secrets = find_secrets(out)
         flags.extend(found_flags)
         secrets.extend(found_secrets)
-        # A URL-decode on its own that only yields plain text is almost always a
-        # benign query string, not an artifact. Require a real signal — a crib, a
-        # file magic, or a non-trivial transform — before reporting a decoded
-        # payload, so the section stays free of query-string noise.
-        interesting = (_has_crib(out) or out.startswith(_MAGICS)
-                       or any(t != "url" for t in chain))
-        if interesting and _looks_meaningful(out):
+        # Report a decoded payload only when it is genuinely readable (a command,
+        # a config, a script) or a recognised file, AND it was reached through a
+        # real decoding step. Two cases were pure noise on live traffic and are
+        # now excluded: a URL-decode on its own (HTTP is already readable, not
+        # obfuscated), and a decode that comes out mostly-binary with only a
+        # stray crib in it (a TLS record, a compressed blob). A flag or secret
+        # found inside any decode is still reported separately, above.
+        readable = out.startswith(_MAGICS) or _printable_ratio(out) >= 0.85
+        real_transform = any(t != "url" for t in chain)
+        if readable and real_transform:
             decoded.append({"chain": " -> ".join(chain), "preview": _preview(out),
                             "yielded": bool(found_flags or found_secrets)})
 
@@ -408,8 +411,12 @@ def inspect_blob(data: bytes) -> dict:
             found_secrets = find_secrets(plain)
             flags.extend(found_flags)
             secrets.extend(found_secrets)
-            decoded.append({"chain": f"xor:0x{key_byte:02x}", "preview": _preview(plain),
-                            "yielded": bool(found_flags or found_secrets)})
+            # A crib can surface under XOR inside otherwise-binary data; only
+            # report the recovered payload when it is actually readable, so a
+            # stray match in a TLS record or a ciphertext is not a finding.
+            if plain.startswith(_MAGICS) or _printable_ratio(plain) >= 0.85:
+                decoded.append({"chain": f"xor:0x{key_byte:02x}", "preview": _preview(plain),
+                                "yielded": bool(found_flags or found_secrets)})
 
     return {"flags": flags, "secrets": secrets, "decoded": decoded}
 
@@ -625,7 +632,10 @@ _SECRET_SEVERITY = {
 
 
 def _preview(data: bytes, limit: int = 200) -> str:
-    text = re.sub(r"\s+", " ", data.decode("utf-8", "replace")).strip()
+    text = re.sub(r"\s+", " ", data.decode("utf-8", "replace"))
+    # Keep only printable ASCII so a decoded blob can never carry control bytes or
+    # replacement characters into the report or the copilot context.
+    text = "".join(ch for ch in text if " " <= ch <= "~").strip()
     return text[:limit] + ("…" if len(text) > limit else "")
 
 

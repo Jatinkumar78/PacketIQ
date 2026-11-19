@@ -24,7 +24,7 @@ re-measured on 2026-11-19 after the documentation gates below were added:
 
 | | |
 |---|---|
-| Tests | **2,398 passing**, **100.00%** line coverage of **12,866** statements |
+| Tests | **2,426 passing**, **100.00%** line coverage of **13,244** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.11 and 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean at `py311` · `mypy` clean across **83** source files |
@@ -215,6 +215,59 @@ there the floor was the only thing standing.
 from three packages to seven since the 1.0.0 baseline; it is itemised in
 SECURITY.md and `docs/security_audit/pip_audit.txt` and printed by CI's advisory
 3.9 audit on every push, rather than rounded away.
+
+### `packetiq crack`: AS-REP roasting to a decrypted WinRM shell, end to end
+
+Everywhere else PacketIQ reads what the packets contain and refuses to invent what
+they do not, and it says plainly when an answer lives behind an offline crack or
+inside session encryption. A user asked it to cross that line for the Directory
+room: take the credential material the capture exposes and do the offline work by
+hand. This adds an opt-in `crack` command that does exactly that, and nothing in
+the normal read-only pipeline changed.
+
+On the Directory capture it now recovers the whole chain the walkthrough does:
+
+* **The password.** The AS-REP roast PacketIQ already extracts is cracked against
+  a wordlist. `packetiq.offline.crypto` ships pure-Python MD4 and RC4 (OpenSSL 3
+  dropped both, so `hashlib` cannot make an NT hash any more), and the RC4-HMAC
+  verification recovers `larry.doe`'s password from the roast. Validated against
+  the real hash: it returns `Password1!`.
+* **The commands.** With the password, the NTLMv2 session key is reconstructed the
+  way the client and server did (and checked against the NTProofStr before
+  anything is trusted), and the RC4 sealing on the WinRM bodies is undone,
+  connection by connection, because each WinRM connection runs its own handshake
+  and its own keystream. Both the PowerShell Remoting and WS-Management shell
+  encodings are read, recovering `whoami`, the three `reg save HKLM\...` hive
+  dumps, and the files they wrote.
+* **The flag.** The decrypted output is run through the artifact hunter, which
+  reads `THM{Ya_G0t_R0aSt3d!}` out of the session, planted by
+  `echo "THM{...}" > note.txt`.
+
+It is deliberately separate: a new `packetiq/offline/` package, a `crack`
+subcommand that is never part of `analyze`, and a bundled common-password list
+used only when no `--wordlist` is given. The read-only tool still never fabricates
+a cracked password or a decrypted command; this is the one place the user can ask
+it to compute them, with the wordlist they provide.
+
+### The artifact hunter was too loud on real traffic, and it drowned the answers
+
+Run against a real Active Directory capture (the TryHackMe Directory room, 11,136
+packets), the artifact decoder emitted **34 `ENCODED_PAYLOAD` findings, almost all
+noise**: it `url`-decoded plain HTTP streams (which are already readable, not
+obfuscated) and recorded mostly-binary TLS records that happened to contain a
+crib, pushing control bytes and replacement characters into the copilot context.
+The real evidence, the AS-REP roast for `DIRECTORY.THM\larry.doe` and the open
+ports, was still there, but it was buried in a 48 KB context half-full of garbage,
+which is exactly the kind of dilution that makes a local model answer badly.
+
+**Fixed.** A decoded payload is now reported only when it is genuinely readable (a
+command, a script, a config) or a recognised file, AND it was reached through a
+real decoding step, not a bare URL-decode. The same readability gate is applied to
+the XOR solver, so a crib that surfaces inside a ciphertext or a TLS record is no
+longer reported. Previews are filtered to printable ASCII, so a binary blob can
+never pollute the report or the context again. On that capture the findings drop
+from 34 to 1 and the context from 48 KB to 21 KB, with every real answer intact.
+A flag or secret found inside any decode is still reported, exactly as before.
 
 ### HTTP read whole, and the conversations on the wire: email, chat, and terminal
 
