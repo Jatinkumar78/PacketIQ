@@ -53,6 +53,7 @@ def build_context(
     sections.append(_cleartext_sessions(result))
     sections.append(_decoded_artifacts(result))
     sections.append(_http_forensics(result))
+    sections.append(_offline_recovery(result))
     sections.append(_detection_events(events))
     sections.append(_attack_chains(chains))
     sections.append(_dns_intelligence(result))
@@ -338,6 +339,36 @@ def _http_forensics(result: ExtractionResult) -> str:
     for s in hf.get("secrets") or []:
         lines.append(f"  SECRET in an HTTP body: {s['detail']}: {s['value']}")
 
+    return "\n".join(lines)
+
+
+def _offline_recovery(result: ExtractionResult) -> str:
+    """What the opt-in offline step recovered: the cracked password, the decrypted
+    WinRM commands, and the flag.
+
+    This is the section that answers the questions the packets alone cannot: the
+    password behind an AS-REP roast, and the commands and flag inside an encrypted
+    WinRM session. Every value here was computed offline from the capture's own
+    material (the roast was cracked, the session key was reconstructed and
+    verified against the handshake, and the sealed bodies were decrypted), so it
+    is stated as fact, not inferred. When this section is present, the remote-
+    management note above about command text being unrecoverable no longer applies.
+    """
+    off = getattr(result, "offline", None) or {}
+    if not (off.get("credentials") or off.get("commands") or off.get("flags")):
+        return ""
+
+    lines = ["=== OFFLINE RECOVERY (AS-REP crack + WinRM decryption) ==="]
+    lines.append("  These facts were recovered offline from the capture's own credential "
+                 "material. State them plainly when asked.")
+    for account, password in (off.get("credentials") or {}).items():
+        lines.append(f"  CRACKED PASSWORD: the account {account} has password {password}")
+    for command in off.get("commands") or []:
+        lines.append(f"  COMMAND RUN ON THE TARGET (decrypted from WinRM): {command}")
+    for path in off.get("exfiltrated_files") or []:
+        lines.append(f"  FILE WRITTEN / EXFILTRATED on the target: {path}")
+    for flag in off.get("flags") or []:
+        lines.append(f"  FLAG RECOVERED: {flag}")
     return "\n".join(lines)
 
 
@@ -628,14 +659,24 @@ def _remote_management(result: ExtractionResult) -> str:
 
     lines.append(f"  Payload            : {wrm.get('payload_bytes', 0)} bytes, "
                  f"{wrm.get('encrypted_requests', 0)} request(s) SPNEGO-encrypted")
-    lines.append("  NOTE: the command text is inside SPNEGO session encryption and "
-                 "cannot be recovered from this capture. Do not speculate about "
-                 "which commands ran, and if asked for a specific command, a flag, "
-                 "or any output of this session, say it is not present in the packets "
-                 "and point to the host's PowerShell operational and WinRM event logs, "
-                 "which record the command text even when the wire is encrypted. The "
-                 "account, workstation and client software above are read from "
-                 "unencrypted headers and are reliable.")
+    if (getattr(result, "offline", None) or {}).get("commands"):
+        lines.append("  NOTE: the command text was SPNEGO-encrypted on the wire but has "
+                     "been RECOVERED by offline decryption (the account's AS-REP roast was "
+                     "cracked and the WinRM session decrypted with the recovered password). "
+                     "The commands, the files written and any flag are in the OFFLINE "
+                     "RECOVERY section below; use those to answer, and do not say the "
+                     "session is unrecoverable.")
+    else:
+        lines.append("  NOTE: the command text is inside SPNEGO session encryption and is "
+                     "not in the packets as they stand. Do not invent which commands ran. "
+                     "If the account authenticating here has a roastable AS-REP (see the "
+                     "ACTIVE DIRECTORY / KERBEROS section), PacketIQ can recover the "
+                     "commands and any flag OFFLINE by cracking the roast and decrypting "
+                     "the session: re-run with `packetiq crack <pcap>` or "
+                     "`packetiq chat <pcap> --crack`. Otherwise the host's PowerShell "
+                     "operational and WinRM event logs hold the command text. The account, "
+                     "workstation and client software above are read from unencrypted "
+                     "headers and are reliable.")
     return "\n".join(lines)
 
 

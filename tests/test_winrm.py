@@ -396,7 +396,8 @@ def test_the_copilot_context_gives_the_account_and_forbids_inventing_commands():
     assert "REMOTE MANAGEMENT" in text
     assert "AUTHENTICATED AS   : directory.thm\\larry.doe" in text
     assert "client called itself KALI" in text
-    assert "Do not speculate about which commands ran" in text
+    assert "Do not invent which commands ran" in text
+    assert "--crack" in text          # points to the offline recovery path
     assert RUBY_AGENT in text
 
 
@@ -482,6 +483,8 @@ def test_the_context_tells_the_model_the_flag_and_commands_are_not_in_the_packet
     result.winrm = acc.summary()
 
     text = _remote_management(result)
-    assert "not present in the packets" in text or "cannot be recovered" in text
+    assert "not in the packets" in text
     assert "flag" in text.lower()
     assert "PowerShell operational and WinRM event logs" in text
+    # and it now names the offline path that can recover them
+    assert "packetiq crack" in text

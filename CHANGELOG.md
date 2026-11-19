@@ -24,7 +24,7 @@ re-measured on 2026-11-19 after the documentation gates below were added:
 
 | | |
 |---|---|
-| Tests | **2,426 passing**, **100.00%** line coverage of **13,244** statements |
+| Tests | **2,435 passing**, **100.00%** line coverage of **13,321** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.11 and 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean at `py311` · `mypy` clean across **83** source files |
@@ -215,6 +215,26 @@ there the floor was the only thing standing.
 from three packages to seven since the 1.0.0 baseline; it is itemised in
 SECURITY.md and `docs/security_audit/pip_audit.txt` and printed by CI's advisory
 3.9 audit on every push, rather than rounded away.
+
+### The crack results now reach the copilot, so the AI can answer the whole room
+
+The `crack` command recovered the password, the commands and the flag, but they
+went to its own terminal output and never reached the AI copilot's context, so
+asking the copilot still got "that is encrypted, not in the packets" — the same
+starvation that every other copilot miss has turned out to be. The WinRM section
+even instructed the model to say so.
+
+Fixed by carrying the offline recovery into the context the copilot reads.
+`packetiq chat <pcap> --crack` (and `analyze --crack`) now run the AS-REP crack and
+the WinRM decryption, fold the result into `result.offline`, and add an OFFLINE
+RECOVERY section with the cracked password, the decrypted commands, the files
+written and the flag. The remote-management note is now conditional: once the
+commands are recovered it tells the model to use them, and when they are not it
+points at `packetiq crack` / `--crack` rather than only at host logs. Verified on
+the real Directory capture: with `--crack` the context carries `Password1!`, the
+three `reg save HKLM\...` commands and `THM{Ya_G0t_R0aSt3d!}`, so the grounded
+copilot can answer Q4 through Q6 instead of declining them. Without `--crack`
+nothing changes: the offline step stays opt-in.
 
 ### `packetiq crack`: AS-REP roasting to a decrypted WinRM shell, end to end
 

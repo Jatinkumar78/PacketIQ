@@ -159,6 +159,10 @@ class ExtractionResult:
     # uploads and decompressed response bodies read from the full HTTP exchange.
     http_forensics: dict = field(default_factory=dict)
 
+    # Offline recovery (opt-in, --crack): the cracked password, the decrypted WinRM
+    # commands and the flag. Empty unless the user asked for the offline step.
+    offline: dict = field(default_factory=dict)
+
     arp_request_targets: dict = field(default_factory=dict)
     # sender IP → number of ARP requests it sent
     arp_request_counts: dict = field(default_factory=dict)

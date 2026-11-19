@@ -337,3 +337,137 @@ def test_the_crack_cli_notes_an_uncracked_roast(tmp_path, monkeypatch):
                         lambda self: {"asrep_hashes": {"svc": make_asrep_hash("UnguessableXyz9")}})
     out = CliRunner().invoke(main, ["crack", str(pcap)])
     assert out.exit_code == 0 and "not cracked" in out.output
+
+
+# ── recover() orchestration and the copilot wiring ────────────────────────────
+
+def test_recover_cracks_and_decrypts(tmp_path, monkeypatch):
+    from packetiq.offline import recover as rec_mod
+    c2s, s2c = build_session("Password1!", c2s_plain=[_SOAP_CMD], s2c_plain=[_soap_flag()])
+    pcap = tmp_path / "w.pcap"
+    _winrm_pcap(pcap, c2s, s2c)
+    monkeypatch.setattr(rec_mod, "_asrep_hashes",
+                        lambda p: {"larry.doe": make_asrep_hash("Password1!")})
+    r = rec_mod.recover(str(pcap))
+    assert r.credentials == {"larry.doe": "Password1!"}
+    assert "reg save HKLM\\SYSTEM C:\\SYSTEM" in r.commands
+    assert "THM{round_trip_flag}" in r.flags
+    assert r.exfiltrated_files == ["C:\\SYSTEM"] and bool(r) is True
+    d = r.to_dict()
+    assert d["credentials"]["larry.doe"] == "Password1!" and d["roasts"] == 1
+
+
+def test_recover_with_no_roast_is_empty(tmp_path, monkeypatch):
+    from packetiq.offline import recover as rec_mod
+    pcap = tmp_path / "w.pcap"
+    _winrm_pcap(pcap, *build_session("x", c2s_plain=[_SOAP_CMD]))
+    monkeypatch.setattr(rec_mod, "_asrep_hashes", lambda p: {})
+    r = rec_mod.recover(str(pcap))
+    assert not r and r.roasts == 0 and r.to_dict()["commands"] == []
+
+
+def test_recover_notes_an_uncracked_roast(tmp_path, monkeypatch):
+    from packetiq.offline import recover as rec_mod
+    pcap = tmp_path / "w.pcap"
+    _winrm_pcap(pcap, *build_session("x", c2s_plain=[_SOAP_CMD]))
+    monkeypatch.setattr(rec_mod, "_asrep_hashes", lambda p: {"svc": make_asrep_hash("Unguessable9")})
+    r = rec_mod.recover(str(pcap))
+    assert r.roasts == 1 and r.credentials == {}
+
+
+def test_asrep_hashes_is_empty_for_a_capture_without_kerberos(tmp_path):
+    from packetiq.offline import recover as rec_mod
+    pcap = tmp_path / "w.pcap"
+    _winrm_pcap(pcap, *build_session("x", c2s_plain=[_SOAP_CMD]))
+    assert rec_mod._asrep_hashes(str(pcap)) == {}
+    assert rec_mod._asrep_hashes(str(tmp_path / "nope.pcap")) == {}   # unreadable → {}
+
+
+# ── the copilot context section and the WinRM note ────────────────────────────
+
+def test_the_offline_recovery_context_section():
+    from packetiq.copilot.context_builder import _offline_recovery
+    from packetiq.extractor.data_extractor import ExtractionResult
+
+    assert _offline_recovery(ExtractionResult()) == ""
+    r = ExtractionResult()
+    r.offline = {"credentials": {"larry.doe": "Password1!"},
+                 "commands": ["reg save HKLM\\SYSTEM C:\\SYSTEM"],
+                 "exfiltrated_files": ["C:\\SYSTEM"], "flags": ["THM{x}"]}
+    text = _offline_recovery(r)
+    assert "OFFLINE RECOVERY" in text
+    assert "Password1!" in text and "reg save HKLM\\SYSTEM C:\\SYSTEM" in text
+    assert "C:\\SYSTEM" in text and "THM{x}" in text
+
+
+def test_the_winrm_note_changes_once_commands_are_recovered():
+    from packetiq.copilot.context_builder import _remote_management
+    from packetiq.extractor.data_extractor import ExtractionResult
+
+    r = ExtractionResult()
+    r.winrm = {"requests": 5, "sessions": 1}
+    assert "--crack" in _remote_management(r)              # hint when not yet recovered
+    r.offline = {"commands": ["reg save HKLM\\SYSTEM C:\\SYSTEM"]}
+    assert "RECOVERED by offline decryption" in _remote_management(r)
+
+
+# ── the CLI --crack wiring on chat and analyze ────────────────────────────────
+
+def _mock_roast(monkeypatch, password="Password1!"):
+    from packetiq.detection import kerberos as kerb
+    monkeypatch.setattr(kerb.KerberosAccumulator, "summary",
+                        lambda self: {"asrep_hashes": {"larry.doe": make_asrep_hash(password)}})
+
+
+def test_apply_offline_recovery_helper(tmp_path, monkeypatch):
+    from packetiq import cli
+    from packetiq.extractor.data_extractor import ExtractionResult
+    from packetiq.offline import recover as rec_mod
+
+    # not cracking, a roast is present → hints, returns None
+    res = ExtractionResult()
+    res.kerberos = {"asrep_hashes": {"u": "h"}}
+    assert cli._apply_offline_recovery(res, "x.pcap", False, None) is None
+    # cracking → recovers and folds into result.offline
+    c2s, s2c = build_session("Password1!", c2s_plain=[_SOAP_CMD], s2c_plain=[_soap_flag()])
+    pcap = tmp_path / "w.pcap"
+    _winrm_pcap(pcap, c2s, s2c)
+    monkeypatch.setattr(rec_mod, "_asrep_hashes",
+                        lambda p: {"larry.doe": make_asrep_hash("Password1!")})
+    res2 = ExtractionResult()
+    rec = cli._apply_offline_recovery(res2, str(pcap), True, None)
+    assert rec and res2.offline["credentials"]["larry.doe"] == "Password1!"
+    cli._print_offline_recovery(rec)
+    # cracking but no roast → returns an empty recovery
+    monkeypatch.setattr(rec_mod, "_asrep_hashes", lambda p: {})
+    assert not cli._apply_offline_recovery(ExtractionResult(), str(pcap), True, None)
+
+
+def test_analyze_crack_shows_the_recovery(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from packetiq.cli import main
+    c2s, s2c = build_session("Password1!", c2s_plain=[_SOAP_CMD], s2c_plain=[_soap_flag()])
+    pcap = tmp_path / "w.pcap"
+    _winrm_pcap(pcap, c2s, s2c)
+    _mock_roast(monkeypatch)
+    out = CliRunner().invoke(main, ["analyze", str(pcap), "--crack"])
+    assert out.exit_code == 0
+    assert "CRACKED larry.doe: Password1!" in out.output
+    assert "reg save HKLM" in out.output and "THM{round_trip_flag}" in out.output
+
+
+def test_chat_crack_feeds_the_copilot_before_needing_a_provider(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from packetiq.cli import main
+    from packetiq.copilot.multi_provider import MultiProviderClient
+    c2s, s2c = build_session("Password1!", c2s_plain=[_SOAP_CMD], s2c_plain=[_soap_flag()])
+    pcap = tmp_path / "w.pcap"
+    _winrm_pcap(pcap, c2s, s2c)
+    _mock_roast(monkeypatch)
+    monkeypatch.setattr(MultiProviderClient, "available", lambda self: False)
+    out = CliRunner().invoke(main, ["chat", str(pcap), "--crack"])
+    # the offline recovery ran and would reach the copilot context
+    assert "CRACKED larry.doe: Password1!" in out.output
+    assert "THM{round_trip_flag}" in out.output

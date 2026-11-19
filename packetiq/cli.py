@@ -453,7 +453,13 @@ def main(ctx, profile):
               help="Minimum severity level to alert on.")
 @click.option("--timeline/--no-timeline", default=True, show_default=True,
               help="Show attack timeline reconstruction.")
-def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: str, timeline: bool):
+@click.option("--crack", "do_crack", is_flag=True, default=False,
+              help="Also run the offline step (crack the AS-REP roast, decrypt WinRM) and "
+                   "show the recovered password, commands and flag.")
+@click.option("--wordlist", "-w", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Wordlist for --crack (default: the bundled common-password list).")
+def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: str,
+            timeline: bool, do_crack: bool, wordlist: str | None):
     """
     Parse and analyze a PCAP file.
 
@@ -462,10 +468,13 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
         packetiq analyze capture.pcap
         packetiq analyze capture.pcap --top 20
         packetiq analyze capture.pcap --alert
-        packetiq analyze capture.pcap --alert --alert-threshold CRITICAL
+        packetiq analyze capture.pcap --crack        # also recover cracked creds/commands/flag
     """
     pcap_path = Path(pcap_file).resolve()
     file_meta, result, events, risk, chains, fingerprints = _run_pipeline(pcap_path, ui)
+    _rec = _apply_offline_recovery(result, str(pcap_path), do_crack, wordlist)
+    if _rec:
+        _print_offline_recovery(_rec)
 
     # ── Summary panel ──────────────────────────────────────────────────
     ui.print_section("CAPTURE SUMMARY")
@@ -1061,6 +1070,49 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
 # crack command — offline AS-REP crack + WinRM decryption (opt-in)
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _print_offline_recovery(rec) -> None:
+    """Render the offline result: the cracked password(s), and the decrypted WinRM
+    commands, exfiltrated files and flag. Shared by `crack`, `chat` and `analyze`."""
+    for account, password in rec.credentials.items():
+        ui.print_status(f"CRACKED {account}: {password}", "warning")
+    uncracked = rec.roasts - len(rec.credentials)
+    if uncracked:
+        ui.print_status(f"{uncracked} AS-REP roast(s) not cracked with this wordlist "
+                        "(try a larger one, e.g. rockyou.txt).", "info")
+    if rec.commands or rec.flags:
+        ui.print_section("WINRM SESSION DECRYPTED",
+                         f"{rec.sessions} session(s) unsealed with the cracked password")
+        if rec.commands:
+            ui.print_table(
+                "Commands run on the target (decrypted from the WinRM session)",
+                columns=[("#", "dim white", "right"), ("Command", "bold green", "left")],
+                rows=[[str(i), c] for i, c in enumerate(rec.commands, 1)],
+                max_rows=9999,
+            )
+        for path in rec.exfiltrated_files:
+            ui.print_status(f"File written/exfiltrated on the target: {path}", "warning")
+        for flag in rec.flags:
+            ui.print_status(f"Flag recovered from the decrypted session: {flag}", "warning")
+
+
+def _apply_offline_recovery(result, pcap_path: str, do_crack: bool, wordlist: str | None):
+    """For chat/analyze: run the opt-in offline step and fold it into the result so
+    the copilot and the report can use the recovered facts. Returns the recovery
+    when --crack ran, else hints that it is available and returns None."""
+    from packetiq.offline.recover import recover
+
+    if not do_crack:
+        if (getattr(result, "kerberos", None) or {}).get("asrep_hashes"):
+            ui.print_status("An AS-REP roast is present. Re-run with --crack to recover the "
+                            "password, the WinRM commands and the flag for the copilot.", "info")
+        return None
+    rec = recover(pcap_path, wordlist)
+    result.offline = rec.to_dict()
+    if not rec.roasts:
+        ui.print_status("No AS-REP roast in this capture to crack.", "info")
+    return rec
+
+
 @main.command("crack")
 @click.argument("pcap_file", type=click.Path(exists=True, readable=True))
 @click.option("--wordlist", "-w", type=click.Path(exists=True, dir_okay=False), default=None,
@@ -1077,63 +1129,20 @@ def crack(pcap_file: str, wordlist: str | None):
     WinRM traffic and read the commands that ran. It needs a wordlist, and it
     only recovers what weak credentials and a cracked password allow.
     """
-    from scapy.all import PcapReader
-
-    from packetiq.detection import kerberos as kerb
-    from packetiq.offline import asrep, winrm
+    from packetiq.offline.recover import recover
 
     pcap_path = str(Path(pcap_file).resolve())
     ui.print_section("OFFLINE CRACK + DECRYPT",
                      "AS-REP roasting and WinRM session recovery")
 
-    # 1. Extract the AS-REP roast(s) the capture carries.
-    acc = kerb.KerberosAccumulator()
-    with contextlib.suppress(Exception), PcapReader(pcap_path) as reader:
-        for pkt in reader:
-            acc.feed(pkt)
-        acc.finalize()
-    hashes = acc.summary().get("asrep_hashes", {})
-    if not hashes:
+    source = Path(wordlist).name if wordlist else "bundled common-password list"
+    rec = recover(pcap_path, wordlist)
+    if not rec.roasts:
         ui.print_status("No AS-REP roastable credential found in this capture. "
                         "Nothing to crack.", "warning")
         return
-
-    def candidates():
-        return asrep.iter_wordlist(wordlist) if wordlist else asrep.bundled_wordlist()
-
-    source = Path(wordlist).name if wordlist else "bundled common-password list"
-    ui.print_status(f"Found {len(hashes)} AS-REP roast(s); cracking against {source}.", "info")
-
-    recovered: dict[str, str] = {}
-    for account, hash_string in hashes.items():
-        password = asrep.crack(hash_string, candidates())
-        if password:
-            recovered[account] = password
-            ui.print_status(f"CRACKED {account}: {password}", "warning")
-        else:
-            ui.print_status(f"{account}: not cracked with this wordlist "
-                            "(try a larger one, e.g. rockyou.txt).", "info")
-    if not recovered:
-        return
-
-    # 2. Use each recovered password to decrypt the WinRM session(s).
-    for account, password in recovered.items():
-        result = winrm.decrypt_capture(pcap_path, password)
-        if not result:
-            continue
-        ui.print_section(f"WINRM SESSION DECRYPTED ({account})",
-                         f"{result.sessions} session(s) unsealed with the cracked password")
-        if result.commands:
-            ui.print_table(
-                "Commands run on the target (decrypted from the WinRM session)",
-                columns=[("#", "dim white", "right"), ("Command", "bold green", "left")],
-                rows=[[str(i), c] for i, c in enumerate(result.commands, 1)],
-                max_rows=9999,
-            )
-        for path in result.exfiltrated_files:
-            ui.print_status(f"File written/exfiltrated on the target: {path}", "warning")
-        for flag in result.flags:
-            ui.print_status(f"Flag recovered from the decrypted session: {flag}", "warning")
+    ui.print_status(f"Found {rec.roasts} AS-REP roast(s); cracked against {source}.", "info")
+    _print_offline_recovery(rec)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1230,7 +1239,12 @@ def report(pcap_file: str, out: str, alert: bool, provider: str, model: str):
 @click.option("--model", default="", metavar="NAME",
               help="Pin the model (e.g. qwen2.5:3b). Local models: `ollama list`. "
                    "Pick one that fits your RAM — a larger model is slower.")
-def chat(pcap_file: str, provider: str, model: str):
+@click.option("--crack", "do_crack", is_flag=True, default=False,
+              help="Also run the offline step (crack the AS-REP roast, decrypt WinRM) and "
+                   "give the copilot the recovered password, commands and flag.")
+@click.option("--wordlist", "-w", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Wordlist for --crack (default: the bundled common-password list).")
+def chat(pcap_file: str, provider: str, model: str, do_crack: bool, wordlist: str | None):
     """
     Run full analysis then open an AI chat session about the PCAP.
 
@@ -1238,12 +1252,16 @@ def chat(pcap_file: str, provider: str, model: str):
     Example:
         packetiq chat capture.pcap
         packetiq chat capture.pcap --provider ollama --model qwen2.5:3b
+        packetiq chat capture.pcap --crack        # also recover cracked creds/commands/flag
     """
     from packetiq.copilot import InteractiveChat, build_context
     from packetiq.copilot.multi_provider import MultiProviderClient
 
     pcap_path = Path(pcap_file).resolve()
     file_meta, result, events, risk, chains, fingerprints = _run_pipeline(pcap_path, ui)
+    rec = _apply_offline_recovery(result, str(pcap_path), do_crack, wordlist)
+    if rec:
+        _print_offline_recovery(rec)
 
     ui.print_section("AI COPILOT", "loading analysis context")
 
