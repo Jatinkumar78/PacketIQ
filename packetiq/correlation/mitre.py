@@ -170,6 +170,16 @@ EVENT_TYPE_TECHNIQUES: dict[str, list[MitreTechnique]] = {
         MitreTechnique("TA0007", "Discovery",           "T1135",     "Network Share Discovery"),
         MitreTechnique("TA0043", "Reconnaissance",      "T1046",     "Network Service Discovery"),
     ],
+
+    EventType.SUSPICIOUS_FILE_TRANSFER: [
+        MitreTechnique("TA0008", "Lateral Movement",    "T1105",     "Ingress Tool Transfer"),
+        MitreTechnique("TA0011", "Command and Control", "T1071.002", "Application Layer Protocol: File Transfer"),
+    ],
+
+    EventType.REVERSE_SHELL: [
+        MitreTechnique("TA0002", "Execution",           "T1059.004", "Command and Scripting Interpreter: Unix Shell"),
+        MitreTechnique("TA0011", "Command and Control", "T1571",     "Non-Standard Port"),
+    ],
 }
 
 # ── Kill Chain phase per EventType ────────────────────────────────────────────
@@ -209,6 +219,8 @@ EVENT_TYPE_KILL_CHAIN: dict[str, str] = {
     EventType.SMB_FILE_ACCESS:     "Actions on Objectives",
     EventType.DCERPC_SUSPECT_BIND: "Actions on Objectives",
     EventType.DCERPC_RECON:        "Reconnaissance",
+    EventType.SUSPICIOUS_FILE_TRANSFER: "Installation",
+    EventType.REVERSE_SHELL:       "Actions on Objectives",
 }
 
 

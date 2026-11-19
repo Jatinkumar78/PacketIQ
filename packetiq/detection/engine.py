@@ -135,6 +135,9 @@ class DetectionEngine:
         _step("dcerpc_analysis")
         from packetiq.detection import dcerpc as dcerpc_detect
         dcerpc_acc = dcerpc_detect.DCERPCAccumulator()
+        _step("cleartext_recovery")
+        from packetiq.detection import cleartext as cleartext_detect
+        cleartext_acc = cleartext_detect.ClearTextAccumulator()
         with contextlib.suppress(Exception):
             from scapy.all import PcapReader
             with PcapReader(pcap_path) as reader:
@@ -148,6 +151,7 @@ class DetectionEngine:
                     ldap_acc.feed(pkt)
                     smb_acc.feed(pkt)
                     dcerpc_acc.feed(pkt)
+                    cleartext_acc.feed(pkt)
         with contextlib.suppress(Exception):
             events.extend(krb_acc.finalize())
             # Published even when nothing fired: a responder asking "which
@@ -166,6 +170,9 @@ class DetectionEngine:
         with contextlib.suppress(Exception):
             events.extend(dcerpc_acc.finalize())
             result.dcerpc = dcerpc_acc.summary()
+        with contextlib.suppress(Exception):
+            events.extend(cleartext_acc.finalize())
+            result.cleartext = cleartext_acc.summary()
         if tls_acc is not None:
             with contextlib.suppress(Exception):
                 events.extend(tls_acc.finalize())

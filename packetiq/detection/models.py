@@ -57,6 +57,9 @@ class EventType(str, Enum):
     SMB_FILE_ACCESS     = "SMB_FILE_ACCESS"
     DCERPC_SUSPECT_BIND = "DCERPC_SUSPECT_BIND"
     DCERPC_RECON        = "DCERPC_RECON"
+    # Cleartext session recovery: the readable conversation on the wire.
+    SUSPICIOUS_FILE_TRANSFER = "SUSPICIOUS_FILE_TRANSFER"
+    REVERSE_SHELL       = "REVERSE_SHELL"
 
 
 @dataclass

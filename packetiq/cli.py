@@ -211,6 +211,65 @@ def _print_smb_section(ui, smb_data: dict, full: bool) -> None:
             "dialect the EternalBlue family targets.", "warning")
 
 
+def _print_cleartext_section(ui, ct: dict) -> None:
+    """Render recovered cleartext sessions: credentials, uploads, shell transcripts."""
+    if not ct:
+        return
+    ui.print_section(
+        "RECOVERED CLEARTEXT SESSIONS",
+        "credentials, file transfers and shell commands read off the wire")
+
+    valid = ct.get("valid_credentials", []) or []
+    if valid:
+        ui.print_table(
+            "Credentials recovered in cleartext (the login that worked)",
+            columns=[("Protocol", "yellow", "left"), ("Username", "bold red", "left"),
+                     ("Password", "bold red", "left"), ("Result", "cyan", "left")],
+            rows=[[c.get("protocol", "?"), c.get("username", "?"),
+                   c.get("password", "?"), c.get("result", "?")] for c in valid],
+            max_rows=9999,
+        )
+    if ct.get("failed_password_attempts"):
+        ui.print_status(
+            f"{ct['failed_password_attempts']} failed password attempt(s) preceded the "
+            "successful login: a brute-force run against this account.", "info")
+
+    for ftp in ct.get("ftp_sessions", []) or []:
+        if not (ftp.get("working_directory") or ftp.get("uploaded")):
+            continue
+        detail = []
+        if ftp.get("working_directory"):
+            detail.append(f"working directory {ftp['working_directory']}")
+        if ftp.get("uploaded"):
+            detail.append(f"uploaded {', '.join(ftp['uploaded'])}")
+        ui.print_status(
+            f"FTP session as {ftp.get('username') or '?'}: " + "; ".join(detail), "warning")
+
+    for up in ct.get("uploaded_files", []) or []:
+        for url in up.get("urls", []) or []:
+            ui.print_status(f"Indicator inside uploaded {up.get('kind', 'file')}: {url}", "warning")
+        for cb in up.get("callbacks", []) or []:
+            ui.print_status(f"Call-back address inside uploaded {up.get('kind', 'file')}: {cb}",
+                            "warning")
+
+    for sh in ct.get("shell_sessions", []) or []:
+        head = "Interactive shell recovered"
+        if sh.get("hostname"):
+            head += f" on host {sh['hostname']}"
+        if sh.get("became_root"):
+            head += " (escalated to root)"
+        ui.print_section(head, f"{len(sh.get('commands', []))} command(s) the attacker typed")
+        if sh.get("commands"):
+            ui.print_table(
+                "Commands issued (read from the cleartext shell stream)",
+                columns=[("#", "dim white", "right"), ("Command", "bold green", "left")],
+                rows=[[str(i), cmd] for i, cmd in enumerate(sh["commands"], 1)],
+                max_rows=9999,
+            )
+        for proj in sh.get("github_projects", []) or []:
+            ui.print_status(f"GitHub project fetched during the session: {proj}", "warning")
+
+
 def _print_dcerpc_section(ui, rpc: dict) -> None:
     """Render the DCERPC section: which RPC interfaces were bound, and why it matters."""
     if not rpc:
@@ -489,6 +548,9 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
 
     # ── RPC interfaces (DCERPC) ────────────────────────────────────────
     _print_dcerpc_section(ui, getattr(result, "dcerpc", {}) or {})
+
+    # ── Recovered cleartext sessions ───────────────────────────────────
+    _print_cleartext_section(ui, getattr(result, "cleartext", {}) or {})
 
     # ── Remote management (WinRM / WS-Management) ──────────────────────
     # 792 POSTs to one path is not web browsing, and reporting one of them as a

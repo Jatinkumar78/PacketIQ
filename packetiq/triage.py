@@ -134,6 +134,16 @@ _RATIONALE: dict = {
         "why": "An AS-REP for an account without pre-authentication, or a service ticket encrypted with RC4, hands over a hash the attacker can attack offline at their own pace with no further traffic and no failed logons.",
         "action": "Rotate the credentials of every account and service principal named. Enable pre-authentication, and set a long random password on service accounts so an offline crack does not finish.",
     },
+    EventType.SUSPICIOUS_FILE_TRANSFER: {
+        "what": "A file moved over a cleartext protocol, usually FTP, into a web-served directory.",
+        "why": "An upload to a directory like /var/www/html is how a web shell or reverse shell gets planted where the server will execute it. The filename and the directory are both read from the FTP control channel in clear text.",
+        "action": "Retrieve the named file from the target, hash it, and determine what it does. If it is a web or reverse shell, treat the host as compromised from the moment of upload.",
+    },
+    EventType.REVERSE_SHELL: {
+        "what": "An interactive shell reconstructed from a cleartext TCP stream.",
+        "why": "When a reverse or bind shell runs over an unencrypted connection, every command the attacker typed and every line of output is readable on the wire. This is the fullest possible account of what was done on the host: the commands, the privilege escalation, and any tool pulled from the internet.",
+        "action": "Treat every command in the transcript as having run. Rotate any credential used, remove any tool or account the attacker added, and investigate anything they downloaded, especially a rootkit or persistence tool.",
+    },
     EventType.DCERPC_SUSPECT_BIND: {
         "what": "A bind to a remote-procedure interface that is a known attack tool.",
         "why": "The interface UUID in a DCERPC bind says which service was asked for, in clear text even when the call is encrypted. svcctl creates a service to run a payload (PsExec); atsvc schedules a task; drsuapi replicates password hashes out of the domain (DCSync); spoolss is PrintNightmare. A bind to one of these from a host that is not its normal client is the signal.",

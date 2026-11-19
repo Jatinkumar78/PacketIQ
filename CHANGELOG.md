@@ -24,7 +24,7 @@ re-measured on 2026-11-17 after the documentation gates below were added:
 
 | | |
 |---|---|
-| Tests | **2,221 passing**, **100.00%** line coverage of **11,499** statements |
+| Tests | **2,255 passing**, **100.00%** line coverage of **11,815** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.11 and 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean at `py311` · `mypy` clean across **83** source files |
@@ -215,6 +215,53 @@ there the floor was the only thing standing.
 from three packages to seven since the 1.0.0 baseline; it is itemised in
 SECURITY.md and `docs/security_audit/pip_audit.txt` and printed by CI's advisory
 3.9 audit on every push, rather than rounded away.
+
+### Cleartext session recovery: reading the conversation on the wire
+
+A second forensics capture, an FTP-brute-force-to-reverse-shell intrusion, was
+the opposite of the Active Directory one: almost nothing in it was encrypted,
+and almost nothing was answerable. The copilot replied "that is not present in
+this capture" to question after question whose answer was sitting readable in
+the packets. The cause was the same as it always is: the evidence never reached
+the model, because the tool did not reconstruct it. It detected "a credential
+was exposed" and then declined to read the credential.
+
+**Added: `packetiq/detection/cleartext.py`.** It reassembles TCP streams and
+recovers the readable sessions in them:
+
+* **Credentials**, with the password. FTP logins are rebuilt from the control
+  channel, and the password is shown, because it was sent unencrypted and
+  anyone who captured the traffic already has it. Withholding a value that is
+  on the wire helps no one rotate the account. The login that worked is
+  separated from the brute-force spray, so the answer to "what was the
+  password" is one line, not fifty guesses.
+* **File transfers.** The FTP working directory (from the 257 reply) and the
+  uploaded filename (from STOR) are read from the control channel, and
+  indicators are carved from the uploaded file itself, a call-back address and
+  a source URL, without reproducing the file body.
+* **Interactive shells.** A reverse or bind shell over an unencrypted
+  connection is a stream of typed commands and their output. The tool rebuilds
+  the transcript: the commands the attacker ran, the hostname of the
+  compromised machine, the escalation to root, and any tool pulled from GitHub.
+
+Two event types, `SUSPICIOUS_FILE_TRANSFER` and `REVERSE_SHELL`, a
+`RECOVERED CLEARTEXT SESSIONS` section in the terminal, the web app and the
+copilot context, and `tests/test_cleartext.py`.
+
+**The result on the capture.** It reads `7 events, 2 chains, 100/100 CRITICAL`,
+and the copilot context now carries every recoverable answer: the FTP service,
+the username and the working password, the working directory, the uploaded
+backdoor filename, the URL inside it, the hostname, each command the attacker
+typed, the privilege escalation, and the GitHub project they cloned. Where a
+question turns on knowledge that is not in the packets at all, such as the name
+of the brute-force tool or the category of a downloaded rootkit, the tool does
+not pretend the capture contains it.
+
+**A bug this fixed.** An `^([A-Z]{3,4})(?:\s+...)` pattern over the FTP command
+log used `\s`, which matches a newline, so a verb with no argument (PWD, QUIT)
+swallowed the next command line as its argument and the uploaded filename was
+lost. The separator is now `[ \t]+`, held to one line. Found by a test that
+built a real STOR sequence rather than a single command.
 
 ### DCERPC: which RPC interface the attacker reached for
 

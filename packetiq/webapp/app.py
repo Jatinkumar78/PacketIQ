@@ -800,6 +800,7 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
         "ldap":          getattr(result, "ldap", {}) or {},
         "smb":           getattr(result, "smb", {}) or {},
         "dcerpc":        getattr(result, "dcerpc", {}) or {},
+        "cleartext":     getattr(result, "cleartext", {}) or {},
         "sigma_rules":   [{"title": r.title, "level": r.level, "yaml": r.raw_yaml} for r in sigma],
         "attributions":  [_ser_attr(a) for a in attrs],
         "graph":         _build_graph(result, events),

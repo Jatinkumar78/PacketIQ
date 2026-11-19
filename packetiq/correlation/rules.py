@@ -104,7 +104,8 @@ def recon_to_initial_access(events: list[DetectionEvent]) -> list[AttackChain]:
     attack_types = {EventType.BRUTE_FORCE, EventType.KERBEROS_BRUTE_FORCE,
                     EventType.KERBEROS_ROASTING, EventType.WINRM_EXECUTION,
                     EventType.SMB_LATERAL_MOVEMENT, EventType.SMB_FILE_ACCESS,
-                    EventType.DCERPC_SUSPECT_BIND}
+                    EventType.DCERPC_SUSPECT_BIND, EventType.REVERSE_SHELL,
+                    EventType.SUSPICIOUS_FILE_TRANSFER}
 
     for src_ip, src_events in by_src.items():
         recon_events  = [e for e in src_events if e.event_type in recon_types]

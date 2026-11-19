@@ -148,6 +148,9 @@ class ExtractionResult:
     # DCERPC: which remote-procedure interfaces were bound (svcctl, drsuapi, …).
     dcerpc: dict = field(default_factory=dict)
 
+    # Cleartext sessions recovered from the wire: FTP logins, shell transcripts.
+    cleartext: dict = field(default_factory=dict)
+
     arp_request_targets: dict = field(default_factory=dict)
     # sender IP → number of ARP requests it sent
     arp_request_counts: dict = field(default_factory=dict)

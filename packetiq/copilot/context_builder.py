@@ -50,6 +50,7 @@ def build_context(
     sections.append(_network_topology(result))
     sections.append(_port_activity(result))
     sections.append(_discovered_services(result))
+    sections.append(_cleartext_sessions(result))
     sections.append(_detection_events(events))
     sections.append(_attack_chains(chains))
     sections.append(_dns_intelligence(result))
@@ -176,6 +177,65 @@ def _discovered_services(result: ExtractionResult) -> str:
         for port, svc in ports:
             if svc:
                 lines.append(f"      {port:<6} {svc}")
+    return "\n".join(lines)
+
+
+def _cleartext_sessions(result: ExtractionResult) -> str:
+    """The readable conversation an unencrypted capture hands you.
+
+    This is the section that answers a cleartext-capture investigation: the
+    credential that worked, the files that moved, and the commands an attacker
+    typed into a recovered shell. Everything here was read directly off the
+    wire, so it is stated as fact, not inferred.
+    """
+    ct = getattr(result, "cleartext", None) or {}
+    if not ct:
+        return ""
+
+    lines = ["=== RECOVERED CLEARTEXT SESSIONS ==="]
+
+    valid = ct.get("valid_credentials") or []
+    if valid:
+        lines.append("  CREDENTIALS RECOVERED (sent unencrypted, read off the wire):")
+        for c in valid:
+            lines.append(f"    {c['protocol']} login SUCCEEDED: username={c['username']}  "
+                         f"password={c['password']}")
+    if ct.get("failed_password_attempts"):
+        lines.append(f"  Password-spray attempts before success: "
+                     f"{ct['failed_password_attempts']} (a brute-force run)")
+
+    for ftp in ct.get("ftp_sessions") or []:
+        if not (ftp.get("working_directory") or ftp.get("uploaded") or ftp.get("downloaded")):
+            continue
+        lines.append(f"  FTP SESSION as {ftp.get('username') or '?'} on {ftp.get('server')}:")
+        if ftp.get("working_directory"):
+            lines.append(f"    working directory after login: {ftp['working_directory']}")
+        if ftp.get("uploaded"):
+            lines.append(f"    files UPLOADED: {', '.join(ftp['uploaded'])}")
+        if ftp.get("downloaded"):
+            lines.append(f"    files downloaded: {', '.join(ftp['downloaded'])}")
+
+    for up in ct.get("uploaded_files") or []:
+        lines.append(f"  UPLOADED FILE ({up.get('kind')}): indicators found inside it:")
+        for url in up.get("urls") or []:
+            lines.append(f"    URL in file: {url}")
+        for cb in up.get("callbacks") or []:
+            lines.append(f"    call-back address in file: {cb}")
+
+    for sh in ct.get("shell_sessions") or []:
+        lines.append("  INTERACTIVE SHELL recovered (commands the attacker typed, "
+                     "read from the cleartext stream):")
+        if sh.get("hostname"):
+            lines.append(f"    compromised host hostname: {sh['hostname']}")
+        if sh.get("became_root"):
+            lines.append("    the attacker escalated to root in this session")
+        for i, cmd in enumerate(sh.get("commands") or [], 1):
+            lines.append(f"    command {i}: {cmd}")
+        for proj in sh.get("github_projects") or []:
+            lines.append(f"    GitHub project fetched: {proj}")
+        for url in (sh.get("urls") or [])[:8]:
+            lines.append(f"    URL contacted: {url}")
+
     return "\n".join(lines)
 
 
