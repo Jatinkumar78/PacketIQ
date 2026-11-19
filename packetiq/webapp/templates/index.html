@@ -1262,7 +1262,7 @@ tbody tr:hover td{background:var(--surface2)}
           <div class="sec-head">
             <div>
               <div class="sec-title">Remote Management &mdash; WinRM</div>
-              <div class="sec-sub">WS-Management sessions: the channel PowerShell Remoting and tools such as Evil-WinRM use to run commands on a Windows host. Payloads are SPNEGO session-encrypted and the commands are <b>not</b> recoverable from the capture; the account, the workstation name the client sent and the client software are not encrypted.</div>
+              <div class="sec-sub">WS-Management sessions: the channel PowerShell Remoting and tools such as Evil-WinRM use to run commands on a Windows host. Payloads are SPNEGO session-encrypted; the account, the workstation name the client sent and the client software are in the clear. If the account is AS-REP roastable with a weak password, the commands and any flag can be recovered <b>offline</b> &mdash; use <b>Recover credentials &amp; commands</b> below.</div>
             </div>
             <span class="result-count" id="wrm-count">0 requests</span>
           </div>
@@ -1283,6 +1283,11 @@ tbody tr:hover td{background:var(--surface2)}
             </div>
           </div>
           <div id="wrm-notes"></div>
+          <div id="wrm-recover-wrap" style="display:none;margin-top:10px">
+            <button class="btn btn-primary btn-sm" id="wrm-recover-btn" onclick="recoverWinRM()">&#128273; Recover credentials &amp; commands (offline)</button>
+            <span id="wrm-recover-status" style="margin-left:10px;font-size:12px;color:var(--text-sub)"></span>
+            <div id="wrm-recover-out" style="margin-top:12px"></div>
+          </div>
         </div>
 
         <div class="sec-title" style="margin-bottom:16px">Asset Fingerprints</div>
@@ -2501,7 +2506,7 @@ function renderKerberos(k){
                 font-size:12.5px;color:var(--text-sub);word-break:break-word">${n}</div>`).join('');
 }
 
-function renderWinRM(w){
+function renderWinRM(w, offline){
   const block = document.getElementById('wrm-block');
   if(!block) return;
   const reqs = w.requests||0;
@@ -2535,13 +2540,80 @@ function renderWinRM(w){
   }
   notes.push((w.encrypted_requests||0).toLocaleString() + ' request(s) carried SPNEGO '
              + 'session-encrypted payloads totalling ' + (w.payload_bytes||0).toLocaleString()
-             + ' bytes. The commands themselves are <b>not</b> recoverable here \u2014 pull '
-             + 'PowerShell operational and WinRM logs on the target for this window, which do '
-             + 'hold the command text.');
+             + ' bytes. If the authenticating account is AS-REP roastable with a weak password, '
+             + 'the commands and any flag can be recovered <b>offline</b> \u2014 use <b>Recover '
+             + 'credentials &amp; commands</b> below. Otherwise pull the target\u2019s PowerShell '
+             + 'operational and WinRM logs for this window, which hold the command text.');
   document.getElementById('wrm-notes').innerHTML = notes.map(n=>`
     <div style="border:1px solid var(--border);border-left:3px solid var(--accent2);border-radius:8px;
                 padding:12px 14px;background:var(--surface);margin-bottom:8px;
                 font-size:12.5px;color:var(--text-sub);word-break:break-word">${n}</div>`).join('');
+
+  // Opt-in offline recovery: a weak AS-REP roast unlocks the sealed commands + flag.
+  const recWrap = document.getElementById('wrm-recover-wrap');
+  if(recWrap){
+    recWrap.style.display = (sessions>0 || (w.encrypted_requests||0)>0) ? '' : 'none';
+    if(offline){
+      renderRecovered(offline);
+    } else {
+      const b = document.getElementById('wrm-recover-btn');
+      const st = document.getElementById('wrm-recover-status');
+      const out = document.getElementById('wrm-recover-out');
+      if(b){ b.disabled=false; b.innerHTML='&#128273; Recover credentials &amp; commands (offline)'; }
+      if(st) st.textContent='';
+      if(out) out.innerHTML='';
+    }
+  }
+}
+
+function renderRecovered(off){
+  const b = document.getElementById('wrm-recover-btn');
+  const st = document.getElementById('wrm-recover-status');
+  const out = document.getElementById('wrm-recover-out');
+  if(!out) return;
+  const creds = off.credentials||{};
+  const cmds  = off.commands||[];
+  const files = off.exfiltrated_files||[];
+  const flags = off.flags||[];
+  const any = Object.keys(creds).length || cmds.length || flags.length;
+  if(b){ b.disabled = true; b.innerHTML = any ? '&#10003; Recovered' : 'Nothing recoverable'; }
+  if(st) st.textContent = any
+    ? 'The AI copilot now has these facts \u2014 ask it about the password, the commands, or the flag.'
+    : 'No roastable credential with a weak password in this capture, so the session could not be decrypted offline.';
+  const row = (label, val, color) => `
+    <div style="border:1px solid var(--border);border-left:3px solid var(--${color});border-radius:8px;
+                padding:10px 12px;background:var(--surface);margin-bottom:8px;font-size:12.5px;word-break:break-word">
+      <span style="color:var(--text-sub)">${label}:</span>
+      <span class="mono" style="color:var(--text);font-weight:600;margin-left:6px">${val}</span></div>`;
+  let html = '';
+  for(const acc in creds){ html += row('Cracked password', esc(acc)+' \u2192 '+esc(creds[acc]), 'danger'); }
+  cmds.forEach(c => html += row('Command run on target', esc(c), 'accent2'));
+  files.forEach(f => html += row('File written / exfiltrated', esc(f), 'accent'));
+  flags.forEach(f => html += row('Flag recovered', esc(f), 'danger'));
+  out.innerHTML = html;
+}
+
+async function recoverWinRM(){
+  const b = document.getElementById('wrm-recover-btn');
+  const st = document.getElementById('wrm-recover-status');
+  if(!b) return;
+  b.disabled = true;
+  if(st) st.textContent = 'Cracking the AS-REP roast and decrypting the session\u2026 this runs offline and may take a moment.';
+  try{
+    const r = await fetch('/api/recover/'+jobId, {method:'POST'});
+    if(!r.ok){
+      const d = await r.json().catch(()=>({}));
+      if(st) st.textContent = 'Recovery failed: ' + (d.detail || ('HTTP '+r.status));
+      b.disabled = false;
+      return;
+    }
+    const off = await r.json();
+    if(window._lastResult) window._lastResult.offline = off;
+    renderRecovered(off);
+  }catch(e){
+    if(st) st.textContent = 'Recovery failed: ' + e;
+    b.disabled = false;
+  }
 }
 
 function renderAssets(d){
@@ -2574,7 +2646,8 @@ function renderAssets(d){
   }
 
   renderKerberos(d.kerberos||{});
-  renderWinRM(d.winrm||{});
+  window._lastResult = d;
+  renderWinRM(d.winrm||{}, d.offline||null);
 
   const fps = d.fingerprints||[];
   document.getElementById('fp-tbody').innerHTML = fps.map(f=>`

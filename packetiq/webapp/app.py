@@ -1189,6 +1189,8 @@ def _build_chat_context(result: dict) -> str:
     events = result.get("events", [])
     chains = result.get("chains", [])
     attrs  = result.get("attributions", [])
+    wrm    = result.get("winrm", {}) or {}
+    off    = result.get("offline", {}) or {}
 
     lines = []
 
@@ -1314,6 +1316,63 @@ def _build_chat_context(result: dict) -> str:
                 f"  Motivation  : {a.get('motivation','')}",
                 f"  Matched TTPs: {', '.join(a.get('matched_ttps',[]))}",
             ]
+
+    # Remote management (WinRM / WS-Management): who ran a remote session, and —
+    # once the opt-in offline step has run — the commands and flag recovered from it.
+    if wrm:
+        lines.append("\n=== REMOTE MANAGEMENT (WinRM / WS-Management) ===")
+        lines.append(f"  Requests to /wsman : {wrm.get('requests', 0)} "
+                     f"across {wrm.get('sessions', 0)} session(s)")
+        if wrm.get("clients"):
+            lines.append(f"  Client(s)          : {', '.join(wrm['clients'])}")
+        if wrm.get("targets"):
+            lines.append(f"  Target(s)          : {', '.join(wrm['targets'])}")
+        for account in wrm.get("accounts") or []:
+            who = "\\".join(x for x in (account.get("domain"), account.get("user")) if x)
+            station = account.get("workstation") or "not sent"
+            lines.append(f"  AUTHENTICATED AS   : {who}  (client called itself {station})")
+        agents = wrm.get("user_agents") or {}
+        if agents:
+            lines.append("  Client software    : "
+                         + ", ".join(f"{name} x{n}" for name, n in agents.items()))
+        actions = wrm.get("actions_seen") or {}
+        if actions:
+            lines.append("  Actions in clear   : "
+                         + ", ".join(f"{a} x{n}" for a, n in actions.items()))
+        lines.append(f"  Payload            : {wrm.get('payload_bytes', 0)} bytes, "
+                     f"{wrm.get('encrypted_requests', 0)} request(s) SPNEGO-encrypted")
+        if off.get("commands"):
+            lines.append("  NOTE: the command text was SPNEGO-encrypted on the wire but has "
+                         "been RECOVERED by offline decryption (the account's AS-REP roast was "
+                         "cracked and the WinRM session decrypted with the recovered password). "
+                         "The commands, the files written and any flag are in the OFFLINE "
+                         "RECOVERY section below; use those to answer, and do not say the "
+                         "session is unrecoverable.")
+        else:
+            lines.append("  NOTE: the command text is inside SPNEGO session encryption and is "
+                         "not in the packets as they stand. Do not invent which commands ran. "
+                         "If the account authenticating here has a roastable AS-REP, PacketIQ "
+                         "can recover the commands and any flag OFFLINE: click “Recover "
+                         "credentials & commands” in the WinRM panel, or run "
+                         "`packetiq chat <pcap> --crack`. Otherwise the host's PowerShell "
+                         "operational and WinRM event logs hold the command text. The account, "
+                         "workstation and client software above are read from unencrypted "
+                         "headers and are reliable.")
+
+    # Offline recovery (opt-in): the cracked password, the decrypted WinRM commands
+    # and the flag — the facts the packets alone cannot give, computed offline.
+    if off.get("credentials") or off.get("commands") or off.get("flags"):
+        lines.append("\n=== OFFLINE RECOVERY (AS-REP crack + WinRM decryption) ===")
+        lines.append("  These facts were recovered offline from the capture's own credential "
+                     "material. State them plainly when asked.")
+        for account, password in (off.get("credentials") or {}).items():
+            lines.append(f"  CRACKED PASSWORD: the account {account} has password {password}")
+        for command in off.get("commands") or []:
+            lines.append(f"  COMMAND RUN ON THE TARGET (decrypted from WinRM): {command}")
+        for path in off.get("exfiltrated_files") or []:
+            lines.append(f"  FILE WRITTEN / EXFILTRATED on the target: {path}")
+        for flag in off.get("flags") or []:
+            lines.append(f"  FLAG RECOVERED: {flag}")
 
     return "\n".join(lines)
 
@@ -3688,6 +3747,44 @@ def create_app() -> FastAPI:
             headers={"Content-Disposition":
                      f'attachment; filename="packetiq_sigma_{job_id[:8]}.zip"'},
         )
+
+    @app.post("/api/recover/{job_id}")
+    async def recover_endpoint(job_id: str):
+        """Opt-in offline recovery: crack the AS-REP roast(s) the capture carries and
+        decrypt the WinRM session(s) the recovered password unlocks, then fold the
+        result into the job so the copilot answers 'what was the password / what
+        commands ran / what is the flag' from recovered fact instead of calling the
+        session unrecoverable. Pure offline cryptanalysis of the capture's own bytes —
+        it touches no network and runs only when the analyst asks for it."""
+        if job_id not in _jobs or not _jobs[job_id].get("result"):
+            raise HTTPException(404, "Job not found or not complete.")
+        result = _jobs[job_id]["result"]
+        if result.get("offline"):                        # already recovered — idempotent
+            return result["offline"]
+        paths = _job_pcap_paths(job_id)
+        if not paths:
+            raise HTTPException(410, "The capture file for this job is no longer available on disk.")
+
+        from packetiq.offline.recover import OfflineRecovery
+        from packetiq.offline.recover import recover as _recover
+        loop = asyncio.get_running_loop()
+
+        def _run() -> dict:
+            merged = OfflineRecovery()
+            for path in paths:
+                part = _recover(path, None)
+                merged.roasts += part.roasts
+                merged.sessions += part.sessions
+                merged.credentials.update(part.credentials)
+                merged.commands[:] = list(dict.fromkeys(merged.commands + part.commands))
+                merged.flags[:] = list(dict.fromkeys(merged.flags + part.flags))
+                merged.exfiltrated_files[:] = list(
+                    dict.fromkeys(merged.exfiltrated_files + part.exfiltrated_files))
+            return merged.to_dict()
+
+        data = await loop.run_in_executor(None, _run)
+        result["offline"] = data
+        return data
 
     @app.get("/api/chat/{job_id}/status")
     async def chat_status(job_id: str):

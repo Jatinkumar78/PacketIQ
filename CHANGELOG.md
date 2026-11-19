@@ -24,7 +24,7 @@ re-measured on 2026-11-19 after the documentation gates below were added:
 
 | | |
 |---|---|
-| Tests | **2,435 passing**, **100.00%** line coverage of **13,321** statements |
+| Tests | **2,441 passing**, **100.00%** line coverage of **13,382** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.11 and 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean at `py311` · `mypy` clean across **83** source files |
@@ -215,6 +215,30 @@ there the floor was the only thing standing.
 from three packages to seven since the 1.0.0 baseline; it is itemised in
 SECURITY.md and `docs/security_audit/pip_audit.txt` and printed by CI's advisory
 3.9 audit on every push, rather than rounded away.
+
+### The web copilot gets the crack too, so the GUI answers the whole room
+
+The CLI copilot could answer the whole Directory room once `--crack` fed it the
+recovery, but the web GUI copilot still could not. The web app builds its own
+context (`_build_chat_context`), that builder never ran the crack, and the WinRM
+panel told the model outright that the commands were "not recoverable from the
+capture". So the same room the CLI solved end to end failed in the browser on Q4
+through Q6, the recovered half, for the same reason every copilot miss has: the
+answer was never in the context the model reads.
+
+Fixed by giving the GUI the offline step the CLI already has. A new opt-in
+endpoint, `POST /api/recover/{job}`, cracks the AS-REP roast and decrypts the
+WinRM session(s) for a completed job, folds the result into `result["offline"]`
+and returns it; the WinRM panel grows a "Recover credentials & commands" button
+that calls it and shows the cracked password, the decrypted commands, the files
+written and the flag. `_build_chat_context` now carries a REMOTE MANAGEMENT
+section and, once recovery has run, an OFFLINE RECOVERY section, so every later
+chat turn reasons over the recovered fact. The panel's old "not recoverable" copy
+is now conditional: before the crack it says the commands are recoverable offline
+and points at the button, after it the recovered values are shown. Verified on the
+real Directory capture: after one click the web context carries `Password1!`, the
+`reg save` commands and `THM{Ya_G0t_R0aSt3d!}`. The step stays opt-in and touches
+no network; it is pure offline cryptanalysis of the capture's own bytes.
 
 ### The crack results now reach the copilot, so the AI can answer the whole room
 
