@@ -456,3 +456,159 @@ def test_the_context_reports_a_download_as_well_as_an_upload():
     }
     text = _cleartext_sessions(result)
     assert "files downloaded: secrets.zip" in text
+
+
+# ── SMTP / IRC / Telnet conversation recovery ─────────────────────────────────
+
+import base64  # noqa: E402
+
+
+def test_an_smtp_email_envelope_and_subject_are_recovered():
+    cmds = (b"EHLO me\r\nMAIL FROM:<alice@corp.test>\r\nRCPT TO:<bob@corp.test>\r\n"
+            b"DATA\r\nSubject: Q4 numbers\r\n\r\nthe body text\r\n.\r\nQUIT\r\n")
+    acc, _ = _run(_segments(ATTACKER, 40000, VICTIM, 25, [cmds]))
+    em = acc.summary()["email_sessions"][0]
+    assert em["mail_from"] == "alice@corp.test"
+    assert "bob@corp.test" in em["recipients"]
+    assert em["subject"] == "Q4 numbers"
+
+
+def test_smtp_auth_login_credentials_are_decoded_and_raised():
+    user = base64.b64encode(b"mailer").decode()
+    pw = base64.b64encode(b"s3cret").decode()
+    cmds = f"AUTH LOGIN\r\n{user}\r\n{pw}\r\nMAIL FROM:<a@b.test>\r\n".encode()
+    acc, events = _run(_segments(ATTACKER, 40000, VICTIM, 25, [cmds]))
+    creds = acc.summary()["valid_credentials"]
+    assert any(c["protocol"] == "SMTP" and c["username"] == "mailer"
+               and c["password"] == "s3cret" for c in creds)
+    assert any(e.protocol == "SMTP" and e.dst_port == 25 for e in events
+               if e.event_type is EventType.CREDENTIAL_EXPOSURE)
+
+
+def test_smtp_auth_plain_credentials_are_decoded():
+    blob = base64.b64encode(b"\x00mailer\x00s3cret").decode()
+    acc, _ = _run(_segments(ATTACKER, 40000, VICTIM, 25, [f"AUTH PLAIN {blob}\r\n".encode()]))
+    assert any(c["username"] == "mailer" and c["password"] == "s3cret"
+               for c in acc.summary()["valid_credentials"])
+
+
+def test_smtp_auth_helper_covers_every_branch():
+    good = base64.b64encode(b"\x00u\x00p").decode().encode()
+    assert mod._smtp_auth(b"AUTH PLAIN " + good) == ("u", "p")
+    # decodes cleanly but too few \0 parts
+    assert mod._smtp_auth(b"AUTH PLAIN " + base64.b64encode(b"nopart").decode().encode()) is None
+    # matches the charset but an invalid base64 length → decode raises → None
+    assert mod._smtp_auth(b"AUTH PLAIN QUJDE") is None
+    u, pw = base64.b64encode(b"user").decode().encode(), base64.b64encode(b"pass").decode().encode()
+    assert mod._smtp_auth(b"AUTH LOGIN\r\n" + u + b"\r\n" + pw + b"\r\n") == ("user", "pass")
+    assert mod._smtp_auth(b"AUTH LOGIN\r\n" + u + b"\r\n") is None          # one token
+    assert mod._smtp_auth(b"AUTH LOGIN\r\nQUJDE\r\nQUJDE\r\n") is None      # invalid tokens
+    assert mod._smtp_auth(b"HELO nothing here") is None
+
+
+def test_b64_text_helper():
+    assert mod._b64_text(base64.b64encode(b"hi")) == "hi"
+    assert mod._b64_text(b"QUJDE") is None
+
+
+def test_an_irc_chat_with_messages_and_server_password_is_recovered():
+    client = (b"PASS serverpw\r\nNICK h4x0r\r\nUSER h4x0r 0 * :real\r\n"
+              b"JOIN #secret\r\nPRIVMSG #secret :the flag is THM{irc_flag}\r\n")
+    server = b":srv 001 h4x0r :Welcome\r\n:other!u@h PRIVMSG #secret :hi there\r\n"
+    acc, events = _run(_segments(ATTACKER, 40000, VICTIM, 6667, [client])
+                       + _segments(VICTIM, 6667, ATTACKER, 40000, [server]))
+    s = acc.summary()["irc_sessions"][0]
+    assert s["nick"] == "h4x0r" and "#secret" in s["channels"]
+    assert any("the flag is THM{irc_flag}" in m for m in s["messages"])
+    assert any("hi there" in m for m in s["messages"])
+    assert any(c["protocol"] == "IRC" and c["password"] == "serverpw"
+               for c in acc.summary()["valid_credentials"])
+    assert any(e.protocol == "IRC" and e.dst_port == 6667 for e in events
+               if e.event_type is EventType.CREDENTIAL_EXPOSURE)
+
+
+def test_a_telnet_login_is_recovered_through_the_iac_negotiation():
+    server = b"\xff\xfb\x01Ubuntu 20.04 LTS\r\nlogin: admin\r\nPassword: \r\nWelcome\r\n"
+    client = b"admin\r\ns3cretpw\r\n"
+    acc, events = _run(_segments(VICTIM, 23, ATTACKER, 40000, [server])
+                       + _segments(ATTACKER, 40000, VICTIM, 23, [client]))
+    login = acc.summary()["telnet_logins"][0]
+    assert login["username"] == "admin" and login["password"] == "s3cretpw"
+    assert any(e.protocol == "TELNET" and e.dst_port == 23 for e in events
+               if e.event_type is EventType.CREDENTIAL_EXPOSURE)
+
+
+def test_strip_iac_removes_two_and_three_byte_sequences():
+    data = b"\xff\xfb\x01login: \xff\xf1admin"
+    assert mod._strip_iac(data) == b"login: admin"
+
+
+def test_telnet_creds_with_no_login_prompt_returns_nothing():
+    assert mod._telnet_creds(b"no prompt in here", b"typed stuff") == ("", "")
+
+
+def test_a_telnet_session_without_a_password_prompt_has_no_password():
+    server = b"login: guest\r\nWelcome, no password needed\r\n"
+    client = b"guest\r\n"
+    acc, _ = _run(_segments(VICTIM, 23, ATTACKER, 40000, [server])
+                  + _segments(ATTACKER, 40000, VICTIM, 23, [client]))
+    login = acc.summary()["telnet_logins"][0]
+    assert login["username"] == "guest" and login["password"] == ""
+
+
+# ── the new conversations in the context and the CLI ──────────────────────────
+
+_CONVO_SUMMARY = {
+    "email_sessions": [{"client": ATTACKER, "server": VICTIM,
+                        "mail_from": "alice@corp.test", "recipients": ["bob@corp.test"],
+                        "subject": "Q4 numbers", "username": "mailer"}],
+    "irc_sessions": [{"client": ATTACKER, "server": VICTIM, "nick": "h4x0r",
+                      "channels": ["#secret"], "messages": ["#secret: the plan is set"]}],
+    "telnet_logins": [{"client": ATTACKER, "server": VICTIM,
+                       "username": "admin", "password": "s3cretpw"}],
+}
+
+
+def test_the_context_renders_email_irc_and_telnet():
+    from packetiq.copilot.context_builder import _cleartext_sessions
+    from packetiq.extractor.data_extractor import ExtractionResult
+
+    result = ExtractionResult()
+    result.cleartext = _CONVO_SUMMARY
+    text = _cleartext_sessions(result)
+    assert "alice@corp.test" in text and "Q4 numbers" in text
+    assert "h4x0r" in text and "the plan is set" in text
+    assert "username=admin" in text and "password=s3cretpw" in text
+
+
+def test_the_cli_renders_email_irc_and_telnet():
+    from packetiq.cli import _print_cleartext_section
+
+    ui = _CapturingUI()
+    _print_cleartext_section(ui, _CONVO_SUMMARY)
+    assert "alice@corp.test" in ui.blob and "Q4 numbers" in ui.blob
+    assert "h4x0r" in ui.blob and "the plan is set" in ui.blob
+    assert "admin" in ui.blob and "s3cretpw" in ui.blob
+
+
+def test_a_port_25_stream_with_no_smtp_commands_is_skipped():
+    acc, _ = _run(_segments(ATTACKER, 40000, VICTIM, 25, [b"random bytes, not smtp at all here"]))
+    assert acc.summary().get("email_sessions", []) == []
+
+
+def test_a_port_6667_stream_with_no_irc_commands_is_skipped():
+    acc, _ = _run(_segments(ATTACKER, 40000, VICTIM, 6667, [b"just some data, no irc here at all"]))
+    assert acc.summary().get("irc_sessions", []) == []
+
+
+def test_a_telnet_stream_without_a_login_prompt_is_skipped():
+    acc, _ = _run(_segments(VICTIM, 23, ATTACKER, 40000, [b"welcome, no prompt shown\r\n"])
+                  + _segments(ATTACKER, 40000, VICTIM, 23, [b"hello\r\n"]))
+    assert acc.summary().get("telnet_logins", []) == []
+
+
+def test_a_telnet_login_prompt_with_no_recoverable_credential_is_skipped():
+    server = b"login: \r\nMOTD text only, nothing typed\r\n"
+    acc, _ = _run(_segments(VICTIM, 23, ATTACKER, 40000, [server])
+                  + _segments(ATTACKER, 40000, VICTIM, 23, [b"\r\n"]))
+    assert acc.summary().get("telnet_logins", []) == []

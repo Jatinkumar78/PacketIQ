@@ -24,6 +24,11 @@ TUNNEL_LABEL_LENGTH     = 50    # query name characters → tunneling suspicion
 EXCESSIVE_QUERY_COUNT   = 20    # same domain queried more than N times
 RATE_WINDOW_SECS        = 60.0
 RATE_THRESHOLD          = 15    # queries to same domain in RATE_WINDOW_SECS
+# DNS exfiltration reconstruction: how many data-bearing subdomain queries to one
+# base domain before we bother concatenating and decoding them, and the minimum
+# reconstructed length worth hunting.
+EXFIL_MIN_QUERIES       = 3
+EXFIL_MIN_BYTES         = 16
 
 # Well-known public resolvers — DNS to these is normal
 KNOWN_RESOLVERS = {
@@ -106,10 +111,137 @@ def detect(result: ExtractionResult) -> list[DetectionEvent]:
     events: list[DetectionEvent] = []
     events.extend(_dga_detection(result))
     events.extend(_tunneling_detection(result))
+    events.extend(_reconstruct_exfil(result))
     events.extend(_excessive_queries(result))
     events.extend(_non_standard_resolver(result))
     events.extend(_suspicious_tld(result))
     return events
+
+
+# ── DNS Exfiltration Reconstruction ───────────────────────────────────────────
+
+def _base_domain(fqdn: str) -> str:
+    """The registrable base (last two labels): 'attacker.com' from 'a.b.attacker.com'."""
+    parts = fqdn.rstrip(".").lower().split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else (parts[0] if parts else "")
+
+
+def _subdomain_data(fqdn: str, base: str) -> str:
+    """Everything to the left of the base domain — the part that carries the data."""
+    name = fqdn.rstrip(".").lower()
+    suffix = "." + base
+    return name[: -len(suffix)] if name.endswith(suffix) else ""
+
+
+def _reconstruct_exfil(result: ExtractionResult) -> list[DetectionEvent]:
+    """Rebuild data smuggled out through DNS subdomain labels, then decode it.
+
+    Tools like dnscat2 and iodine, and almost every CTF DNS challenge, encode a
+    payload into the subdomain of each query: `<chunk>.<chunk>.tunnel.evil.com`.
+    Grouping every query by its base domain, ordering by time, concatenating the
+    left-hand labels and running the result through the artifact decoder turns a
+    page of long DNS names into the file, flag or command that actually left. The
+    decoded value is emitted as evidence so the copilot can state it.
+    """
+    from packetiq import config
+    from packetiq.detection import artifact_hunter
+
+    min_queries = config.get("dns", "exfil_min_queries", EXFIL_MIN_QUERIES)
+    events: list[DetectionEvent] = []
+    by_base: dict[str, list[dict]] = defaultdict(list)
+    for q in result.dns_queries:
+        qname = q.get("qname") or ""
+        if not qname or _is_trusted_domain(qname):
+            continue
+        base = _base_domain(qname)
+        if base and _subdomain_data(qname, base):
+            by_base[base].append(q)
+
+    for base, entries in by_base.items():
+        if len(entries) < min_queries:
+            continue
+        ordered = sorted(entries, key=lambda e: e.get("ts", 0.0))
+        label_lists = [(e.get("qname") or "").rstrip(".").lower().split(".") for e in ordered]
+        # Strip the constant structural labels (the base domain and any fixed
+        # subdomain like `tunnel.`); what varies is the data. Stripping only the
+        # base would splice a fixed `tunnel` into the middle of the payload and
+        # break the decode.
+        keep_from = _common_suffix_count(label_lists)
+        chunks: list[str] = []
+        for labels in label_lists:
+            data = "".join(labels[:-keep_from])
+            # A retry re-sends the same chunk; keep the data as sent once.
+            if data and (not chunks or chunks[-1] != data):
+                chunks.append(data)
+        reconstructed = "".join(chunks)
+        if len(reconstructed) < EXFIL_MIN_BYTES:
+            continue
+
+        hunt = artifact_hunter.inspect_blob(reconstructed.encode("utf-8", "replace"))
+        if not (hunt["flags"] or hunt["secrets"] or hunt["decoded"]):
+            continue
+
+        flags = [f["value"] for f in hunt["flags"]]
+        secrets = [f"{s['detail']}: {s['value']}" for s in hunt["secrets"]]
+        decoded = [f"[{d['chain']}] {d['preview']}" for d in hunt["decoded"]]
+        highlight = (flags[0] if flags else (secrets[0] if secrets else decoded[0]))
+        src = _dominant_src(entries)
+
+        evidence: dict = {
+            "base_domain": base,
+            "queries": len(entries),
+            "reconstructed_bytes": len(reconstructed),
+            "reconstructed": reconstructed[:200] + ("…" if len(reconstructed) > 200 else ""),
+            "mitre": "T1048.003 / T1071.004",
+            "note": "The payload was carried in the subdomain labels of DNS queries "
+                    "and reassembled in time order. The decoded value above is what "
+                    "left the network; a flag or secret here is the literal value.",
+        }
+        if flags:
+            evidence["flags"] = flags
+        if secrets:
+            evidence["secrets"] = secrets
+        if decoded:
+            evidence["decoded"] = decoded
+
+        events.append(DetectionEvent(
+            event_type   = EventType.DNS_TUNNELING,
+            severity     = Severity.CRITICAL,
+            src_ip       = src,
+            dst_ip       = None,
+            dst_port     = 53,
+            protocol     = "DNS",
+            description  = (
+                f"DNS exfiltration reconstructed from {len(entries)} subdomain "
+                f"queries to {base} → {highlight}"
+            ),
+            timestamp    = min((e.get("ts", 0.0) for e in entries), default=0.0),
+            packet_count = len(entries),
+            confidence   = 0.95,
+            evidence     = evidence,
+        ))
+
+    return events
+
+
+def _common_suffix_count(label_lists: list[list[str]]) -> int:
+    """How many trailing labels are identical across every query (≥2, the base).
+
+    Extends past the base domain for as long as the next label from the right is
+    the same in every query and every query still keeps at least one data label,
+    so a fixed `tunnel.` subdomain is treated as structure, not payload.
+    """
+    k = 2
+    while all(len(labels) > k for labels in label_lists):
+        if len({labels[-(k + 1)] for labels in label_lists}) != 1:
+            break
+        k += 1
+    return k
+
+
+def _dominant_src(entries: list[dict]) -> str:
+    srcs = Counter(e.get("src", "") for e in entries if e.get("src"))
+    return srcs.most_common(1)[0][0] if srcs else ""
 
 
 # ── DGA Detection ─────────────────────────────────────────────────────────────

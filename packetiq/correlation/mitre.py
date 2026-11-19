@@ -180,6 +180,17 @@ EVENT_TYPE_TECHNIQUES: dict[str, list[MitreTechnique]] = {
         MitreTechnique("TA0002", "Execution",           "T1059.004", "Command and Scripting Interpreter: Unix Shell"),
         MitreTechnique("TA0011", "Command and Control", "T1571",     "Non-Standard Port"),
     ],
+
+    EventType.ENCODED_PAYLOAD: [
+        MitreTechnique("TA0005", "Defense Evasion",     "T1140",     "Deobfuscate/Decode Files or Information"),
+        MitreTechnique("TA0011", "Command and Control", "T1132",     "Data Encoding"),
+        MitreTechnique("TA0005", "Defense Evasion",     "T1027",     "Obfuscated Files or Information"),
+    ],
+
+    EventType.EXTRACTED_SECRET: [
+        MitreTechnique("TA0006", "Credential Access",   "T1552",     "Unsecured Credentials"),
+        MitreTechnique("TA0009", "Collection",          "T1119",     "Automated Collection"),
+    ],
 }
 
 # ── Kill Chain phase per EventType ────────────────────────────────────────────
@@ -221,6 +232,10 @@ EVENT_TYPE_KILL_CHAIN: dict[str, str] = {
     EventType.DCERPC_RECON:        "Reconnaissance",
     EventType.SUSPICIOUS_FILE_TRANSFER: "Installation",
     EventType.REVERSE_SHELL:       "Actions on Objectives",
+    # Decoding a payload is defence evasion in service of C2; a recovered secret
+    # or flag is the thing the intrusion was after.
+    EventType.ENCODED_PAYLOAD:     "Command & Control",
+    EventType.EXTRACTED_SECRET:    "Actions on Objectives",
 }
 
 

@@ -51,6 +51,8 @@ def build_context(
     sections.append(_port_activity(result))
     sections.append(_discovered_services(result))
     sections.append(_cleartext_sessions(result))
+    sections.append(_decoded_artifacts(result))
+    sections.append(_http_forensics(result))
     sections.append(_detection_events(events))
     sections.append(_attack_chains(chains))
     sections.append(_dns_intelligence(result))
@@ -235,6 +237,106 @@ def _cleartext_sessions(result: ExtractionResult) -> str:
             lines.append(f"    GitHub project fetched: {proj}")
         for url in (sh.get("urls") or [])[:8]:
             lines.append(f"    URL contacted: {url}")
+
+    for em in ct.get("email_sessions") or []:
+        lines.append(f"  EMAIL (SMTP) on {em.get('server')}:")
+        if em.get("mail_from"):
+            lines.append(f"    from: {em['mail_from']}")
+        if em.get("recipients"):
+            lines.append(f"    to: {', '.join(em['recipients'])}")
+        if em.get("subject"):
+            lines.append(f"    subject: {em['subject']}")
+        if em.get("username"):
+            lines.append(f"    authenticated as: {em['username']}")
+
+    for irc in ct.get("irc_sessions") or []:
+        lines.append(f"  IRC CHAT on {irc.get('server')} as {irc.get('nick') or '?'}"
+                     + (f" in {', '.join(irc['channels'])}" if irc.get("channels") else "") + ":")
+        for msg in (irc.get("messages") or [])[:30]:
+            lines.append(f"    message: {msg}")
+
+    for tel in ct.get("telnet_logins") or []:
+        lines.append(f"  TELNET LOGIN on {tel.get('server')}: "
+                     f"username={tel.get('username') or '?'}"
+                     + (f" password={tel['password']}" if tel.get("password") else ""))
+
+    return "\n".join(lines)
+
+
+def _decoded_artifacts(result: ExtractionResult) -> str:
+    """What was hidden under encoding, and the secrets carved out of the streams.
+
+    This is the section that answers a CTF or a deep-forensics question: the
+    flag, the key, the command that was Base64'd or XOR'd out of plain sight.
+    Every value here was read from the capture, after any decoding named, so it
+    is stated as fact. A flag string in this section is the literal flag.
+    """
+    art = getattr(result, "artifacts", None) or {}
+    if not art:
+        return ""
+
+    lines = ["=== DECODED ARTIFACTS & SECRETS ==="]
+
+    flags = art.get("flags") or []
+    if flags:
+        lines.append("  CTF FLAGS RECOVERED (the literal flag string on the wire):")
+        for f in flags:
+            tail = " (written reversed in the capture)" if f.get("orientation") == "reversed" else ""
+            lines.append(f"    {f['value']}{tail}")
+
+    secrets = art.get("secrets") or []
+    if secrets:
+        lines.append("  SECRETS CARVED FROM THE STREAMS (read off the wire, treat as compromised):")
+        for s in secrets:
+            lines.append(f"    {s['detail']}: {s['value']}")
+
+    payloads = art.get("decoded_payloads") or []
+    if payloads:
+        lines.append("  OBFUSCATED PAYLOADS DECODED (transform chain -> content):")
+        for d in payloads:
+            lines.append(f"    [{d['chain']}] {d['preview']}")
+
+    return "\n".join(lines)
+
+
+def _http_forensics(result: ExtractionResult) -> str:
+    """The full HTTP exchange: what was POSTed, the credentials and cookies, the
+    custom headers, the uploads, and what a compressed response body was hiding.
+
+    This is the section that answers a web-forensics question the request line
+    alone cannot: the password in the login POST, the session cookie to revoke,
+    the API key in an X-header, the file that was uploaded. Everything here was
+    read from the reassembled HTTP body, so it is stated as fact.
+    """
+    hf = getattr(result, "http_forensics", None) or {}
+    if not hf:
+        return ""
+
+    lines = ["=== HTTP DEEP INSPECTION ==="]
+    lines.append(f"  Transactions parsed: {hf.get('transactions', 0)}")
+
+    for c in hf.get("credentials") or []:
+        who = c.get("username") or "(token)"
+        lines.append(f"  CREDENTIAL ({c.get('via')}): {who} / {c.get('password')} "
+                     f"on {c.get('host')}")
+    for sc in hf.get("session_cookies") or []:
+        lines.append(f"  SESSION COOKIE on {sc['host']}: {sc['name']}={sc['value']} "
+                     f"(replayable to hijack the session)")
+    for name, value in (hf.get("custom_headers") or {}).items():
+        lines.append(f"  custom header {name}: {value}")
+    for p in hf.get("posts") or []:
+        params = ", ".join(f"{k}={v}" for k, v in (p.get("params") or {}).items())
+        lines.append(f"  POST {p.get('host')}{p.get('path')}: {params}")
+    for up in hf.get("uploads") or []:
+        lines.append(f"  FILE UPLOADED to {up['host']}: {up['filename']} "
+                     f"(form field {up.get('field') or '?'})")
+    for d in hf.get("decompressed") or []:
+        lines.append(f"  decompressed {d['encoding']} response body "
+                     f"({d['bytes']} bytes) from {d['server']}")
+    for f in hf.get("flags") or []:
+        lines.append(f"  FLAG recovered from an HTTP body: {f['value']}")
+    for s in hf.get("secrets") or []:
+        lines.append(f"  SECRET in an HTTP body: {s['detail']}: {s['value']}")
 
     return "\n".join(lines)
 

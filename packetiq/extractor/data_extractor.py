@@ -151,6 +151,14 @@ class ExtractionResult:
     # Cleartext sessions recovered from the wire: FTP logins, shell transcripts.
     cleartext: dict = field(default_factory=dict)
 
+    # Deep artifact hunting: flags, secrets and decoded/XOR'd payloads carved out
+    # of the reassembled streams. Empty when nothing was hidden.
+    artifacts: dict = field(default_factory=dict)
+
+    # HTTP deep inspection: POST parameters, credentials, cookies, custom headers,
+    # uploads and decompressed response bodies read from the full HTTP exchange.
+    http_forensics: dict = field(default_factory=dict)
+
     arp_request_targets: dict = field(default_factory=dict)
     # sender IP → number of ARP requests it sent
     arp_request_counts: dict = field(default_factory=dict)

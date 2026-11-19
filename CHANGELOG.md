@@ -20,11 +20,11 @@ stay on 1.0.0 or upgrade Python; `pip` will not offer 1.1.0 to them.
 
 **State of the release, as measured on 2026-11-15** (macOS 26.6.1 arm64,
 CPython 3.12.13) rather than asserted, with the test and coverage figures
-re-measured on 2026-11-17 after the documentation gates below were added:
+re-measured on 2026-11-19 after the documentation gates below were added:
 
 | | |
 |---|---|
-| Tests | **2,255 passing**, **100.00%** line coverage of **11,815** statements |
+| Tests | **2,398 passing**, **100.00%** line coverage of **12,866** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.11 and 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean at `py311` · `mypy` clean across **83** source files |
@@ -215,6 +215,152 @@ there the floor was the only thing standing.
 from three packages to seven since the 1.0.0 baseline; it is itemised in
 SECURITY.md and `docs/security_audit/pip_audit.txt` and printed by CI's advisory
 3.9 audit on every push, rather than rounded away.
+
+### HTTP read whole, and the conversations on the wire: email, chat, and terminal
+
+The second half of the same effort, for the same reason: give the copilot the
+evidence a SOC actually asks about, so a grounded answer can be a full one.
+
+**HTTP deep inspection (`http_forensics.py`).** The flow-level detector sees a
+request line; this reassembles the request and response streams and reads them
+whole. It recovers the POST parameters (with the username/password pulled out as
+a cleartext credential), HTTP Basic and Bearer authentication decoded from the
+`Authorization` header, cookies (with the session-bearing ones called out as the
+thing an attacker replays), custom `X-*` headers and the User-Agent, and
+multipart uploads by field and filename. Response bodies are **gzip/deflate
+decompressed before scanning**, so a flag or secret stuffed into a compressed
+response is recovered rather than skipped as binary. Every body is run through
+the shared artifact decoder, and all of it is emitted as structured evidence
+with its own copilot-context section.
+
+**Email, chat and terminal (`cleartext.py`).** The user asked to be able to solve
+"real world conversations", so the cleartext recovery now reads the conversations
+themselves: **SMTP** envelopes (MAIL FROM, the recipients, the subject) and AUTH
+LOGIN / AUTH PLAIN credentials; **IRC** nicks, the channels joined, the PRIVMSG
+messages in both directions (the chat log), and the server PASS; and **Telnet**
+logins read from the prompts the server echoes, through the IAC negotiation. Each
+is surfaced in the recovered-sessions context and the CLI.
+
+**A bug this fixed.** The Telnet prompt pattern used `\s`, which matches a
+newline, so an empty `login: \r\n` prompt swallowed the next line as the
+username. The separator is now `[ \t]*`, the same fix the FTP command parser
+needed. Found by a test built from a real login exchange.
+
+### Covert-channel reconstruction and full file forensics: more real evidence, not a looser guard
+
+A user analysing captures with the copilot said the grounded answers felt "very
+limited, not enough for a SOC". The temptation is to loosen the grounding guard,
+and that is the wrong fix: the guard only ever removes an IP, technique, CVE,
+hash or domain that is *not* in the evidence, never prose or a real value, and
+weakening it would put hallucinations back into a tool whose whole promise is
+that it does not invent. The answers were thin because too few facts reached the
+context. So the fix is to reconstruct far more real evidence, which is what this
+does. Every value added here is emitted as structured evidence, so the copilot
+can state it and the guard still passes it through.
+
+**A reusable decode pipeline.** The artifact hunter's core — recursive decode,
+single-byte XOR, flag and secret extraction — is now `inspect_blob(data)`,
+callable by any detector that reassembled a byte stream itself. The DNS and ICMP
+reconstructors below run the exact same hunt as a TCP stream does.
+
+**DNS exfiltration reconstruction (`dns_anomaly.py`).** dnscat2, iodine and
+almost every CTF DNS challenge hide a payload in the subdomain of each query.
+PacketIQ now groups queries by base domain, strips the constant structural labels
+(so a fixed `tunnel.` subdomain is not spliced into the data), concatenates the
+varying labels in time order, and runs the result through `inspect_blob`. A page
+of long DNS names becomes the flag, key or command that actually left, emitted on
+the DNS_TUNNELING finding. Threshold `dns.exfil_min_queries` is tunable and drops
+to 2 under the `ctf` profile.
+
+**ICMP tunnel reconstruction (`artifact_hunter.py`).** The hunter now also reads
+ICMP echo requests and replies, reassembles the payload per direction in echo
+sequence order, and hunts it the same way, so data smuggled through ping
+(icmptunnel, ptunnel) is recovered rather than only counted by volume. Findings
+are labelled with the channel they came off (TCP, UDP, ICMP).
+
+**Full file forensics (`file_carver.py`).** A carved file now carries **MD5,
+SHA-1 and SHA-256** (MD5 and SHA-1 are weak for security but are exactly what
+MalwareBazaar, VirusTotal and most IOC feeds key on, so all three are needed to
+search), plus embedded strings (URLs and flags) and document/image metadata (PDF
+`/Title` and `/Author`, PNG `tEXt`, JPEG comment). PNG and JPEG are now carved and
+hashed too. The finding holds everything a threat-intel lookup or a provenance
+question needs, not one digest.
+
+### A `ctf` sensitivity profile, for the captures the SOC thresholds would ignore
+
+PacketIQ's detector thresholds are tuned for a noisy enterprise link: an SSH
+brute force is 20 attempts in a minute, a port scan is 15 ports, a beacon is a
+dozen check-ins. That is the right floor for production and exactly wrong for a
+capture-the-flag or lab capture, where the whole intrusion is thirty packets and
+every one of those thresholds suppresses it. On a small room capture the tool
+reported nothing, so the copilot had nothing to answer from.
+
+**Added: named sensitivity profiles.** A profile is a bundled TOML preset under
+`packetiq/profiles/` that overlays the defaults, chosen with `--profile <name>`
+(a group flag, so `packetiq --profile ctf analyze|chat|html|webapp <pcap>` all
+see it) or `PACKETIQ_PROFILE`. The first, `ctf`, drops the scan, brute-force,
+beacon, ARP, Kerberos, LDAP, SMB, WinRM and ICMP minimums to 2–3 so a small,
+targeted capture trips detection and feeds the full MITRE correlation and
+timeline.
+
+It was almost no new code, because every detector already reads its threshold
+through `config.get(section, key, default)` rather than a hard-coded constant;
+the groundwork was there from when the config system was built. The profile is
+just a third layer, `defaults < active profile < the user's packetiq.toml`, so a
+profile is a starting posture and the user's own file still has the last word.
+Only keys a detector actually reads are in the preset, so nothing in it is
+decorative.
+
+It trades precision for recall on purpose and is always opt-in; production
+analysis keeps its noise discipline. `packetiq/profiles/ctf.toml`, the
+`--profile` / `PACKETIQ_PROFILE` plumbing in `config.py` and the CLI, and tests
+in `tests/test_config.py`.
+
+### Deep artifact hunting: finding the answer under the encoding
+
+A third capture, a cleartext CTF-style room, failed in a way the first two had
+taught us to recognise but not yet to fix. The copilot kept answering "that is
+not present in this capture" to questions whose answer *was* present, one
+transform down: a flag Base64'd into a response, a command gzip'd and then
+Base64'd again, a reverse-shell one-liner XOR'd with a single byte. The tool
+reassembled the stream and read its surface, so what had been deliberately
+encoded slid straight past it.
+
+**Added: `packetiq/detection/artifact_hunter.py`.** It hunts the reassembled
+streams for what was hidden in them:
+
+* **Obfuscated payloads, peeled recursively.** A multi-layer decoder unwraps
+  gzip, zlib, Base64, Base32, hex, URL-encoding and ROT13, in any order they
+  were stacked, up to four layers deep. Each layer is accepted only when it
+  unwraps to something that actually looks like content (a file magic, a crib,
+  or readable text), so a run of random text is never "decoded" into noise. The
+  exact transform chain is the finding: `base64 -> gzip -> rot13`, recorded.
+* **Single-byte XOR.** A high-entropy payload that is not valid text is run
+  against every key from `0x01` to `0xff`, looking for a known-plaintext crib
+  (`THM{`, `<?php`, `/dev/tcp/`, an HTTP verb, a PE header). This is the cheap
+  obfuscation real droppers use, undone.
+* **High-value secrets.** CTF flags (forward, written reversed, and
+  hex-encoded), JWTs, PEM and OpenSSH private keys, AWS, Slack and Google API
+  keys, PowerShell `-EncodedCommand` blobs decoded back to the command, and
+  bash `/dev/tcp` reverse shells, pulled out of the cleartext stream and out of
+  everything the two steps above decoded.
+
+A secret that was on the wire is shown so it can be rotated, the same decision
+the cleartext work reached about a password. A private key is the one exception:
+it is reported by type and a SHA-256 fingerprint rather than by reproducing the
+key body, the way the file carver reports a carved file, the indicator and not
+the payload.
+
+Two event types, `ENCODED_PAYLOAD` and `EXTRACTED_SECRET`, a
+`DECODED ARTIFACTS & SECRETS` section in the terminal, the web app and the
+copilot context, and `tests/test_artifact_hunter.py`.
+
+**Kept free of noise.** A bare URL-decode of a query string is not an artifact,
+and reporting one as a HIGH finding would bury the real ones. A decoded payload
+is surfaced only on a genuine signal, a crib, a file magic, or a transform that
+is not URL-decoding on its own, so a benign `%20` in an HTTP path produces
+nothing. Flags and secrets found inside a decode are still reported however they
+were wrapped.
 
 ### Cleartext session recovery: reading the conversation on the wire
 

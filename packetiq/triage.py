@@ -144,6 +144,16 @@ _RATIONALE: dict = {
         "why": "When a reverse or bind shell runs over an unencrypted connection, every command the attacker typed and every line of output is readable on the wire. This is the fullest possible account of what was done on the host: the commands, the privilege escalation, and any tool pulled from the internet.",
         "action": "Treat every command in the transcript as having run. Rotate any credential used, remove any tool or account the attacker added, and investigate anything they downloaded, especially a rootkit or persistence tool.",
     },
+    EventType.ENCODED_PAYLOAD: {
+        "what": "A payload that was hidden under one or more layers of encoding, decoded back to readable content.",
+        "why": "Encoding a command or a file in Base64, hex, gzip or a single-byte XOR is how it slips past a signature and a casual look at the stream. The transform chain in the evidence is the deobfuscation an analyst would otherwise do by hand, and the preview is what was actually being carried.",
+        "action": "Read the decoded content as the real payload. If it is a command, treat it as having run; if it is a file, carve and hash it. The encoding itself is a sign the sender did not want this read.",
+    },
+    EventType.EXTRACTED_SECRET: {
+        "what": "A high-value secret carved from a stream: a CTF flag, a private key, an API token or an encoded command.",
+        "why": "The value was sitting in the capture, in clear text or one decode away. A key or token read off the wire is usable by anyone who has the capture, and a flag is the objective of the exercise the traffic belongs to.",
+        "action": "Treat every secret here as compromised and rotate it. A private key is reported by fingerprint rather than reproduced; retrieve the key from the host it belongs to and replace it.",
+    },
     EventType.DCERPC_SUSPECT_BIND: {
         "what": "A bind to a remote-procedure interface that is a known attack tool.",
         "why": "The interface UUID in a DCERPC bind says which service was asked for, in clear text even when the call is encrypted. svcctl creates a service to run a payload (PsExec); atsvc schedules a task; drsuapi replicates password hashes out of the domain (DCSync); spoolss is PrintNightmare. A bind to one of these from a host that is not its normal client is the signal.",
@@ -191,6 +201,8 @@ _RATIONALE: dict = {
 _EVIDENCE_BACKED = {
     EventType.IOC_MATCH, EventType.MALICIOUS_FILE,
     EventType.CREDENTIAL_EXPOSURE, EventType.JA3_ANOMALY,
+    # A flag, key or token read off the wire is observed fact, not a heuristic.
+    EventType.EXTRACTED_SECRET,
 }
 
 _PRECISION_STYLE = {

@@ -138,6 +138,18 @@ class DetectionEngine:
         _step("cleartext_recovery")
         from packetiq.detection import cleartext as cleartext_detect
         cleartext_acc = cleartext_detect.ClearTextAccumulator()
+        # Deep artifact hunting rides the same pass: it reassembles the streams
+        # and peels encodings / XOR off them, which needs the full payloads this
+        # scapy loop carries but the flow-level ExtractionResult does not.
+        _step("artifact_hunting")
+        from packetiq.detection import artifact_hunter as artifact_detect
+        artifact_acc = artifact_detect.ArtifactHunterAccumulator()
+        # HTTP deep inspection rides the same pass: it reassembles the request and
+        # response streams to read POST bodies, cookies, headers and decompressed
+        # response bodies, none of which the flow-level ExtractionResult retains.
+        _step("http_forensics")
+        from packetiq.detection import http_forensics as http_deep
+        http_acc = http_deep.HTTPForensicsAccumulator()
         with contextlib.suppress(Exception):
             from scapy.all import PcapReader
             with PcapReader(pcap_path) as reader:
@@ -152,6 +164,8 @@ class DetectionEngine:
                     smb_acc.feed(pkt)
                     dcerpc_acc.feed(pkt)
                     cleartext_acc.feed(pkt)
+                    artifact_acc.feed(pkt)
+                    http_acc.feed(pkt)
         with contextlib.suppress(Exception):
             events.extend(krb_acc.finalize())
             # Published even when nothing fired: a responder asking "which
@@ -173,6 +187,12 @@ class DetectionEngine:
         with contextlib.suppress(Exception):
             events.extend(cleartext_acc.finalize())
             result.cleartext = cleartext_acc.summary()
+        with contextlib.suppress(Exception):
+            events.extend(artifact_acc.finalize())
+            result.artifacts = artifact_acc.summary()
+        with contextlib.suppress(Exception):
+            events.extend(http_acc.finalize())
+            result.http_forensics = http_acc.summary()
         if tls_acc is not None:
             with contextlib.suppress(Exception):
                 events.extend(tls_acc.finalize())

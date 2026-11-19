@@ -418,3 +418,60 @@ def test_the_number_of_carved_flows_is_bounded(monkeypatch):
     assert len(acc.segments) == 10
     assert acc.skipped_flows == 90
     assert len(acc.sizes) == 10, "a declined flow must not leave a size entry behind"
+
+
+# ── Full hash set, embedded strings, and document/image metadata ──────────────
+
+def test_a_carved_file_gets_md5_sha1_and_sha256():
+    body = b"MZ" + b"\x00" * 200
+    h = file_carver._file_hashes(body)
+    assert len(h["md5"]) == 32 and len(h["sha1"]) == 40 and len(h["sha256"]) == 64
+    assert h["sha256"] == hashlib.sha256(body).hexdigest()
+
+
+def test_notable_strings_pulls_urls_and_flags_from_a_file():
+    body = (b"%PDF-1.4 see http://pentestmonkey.net/tool for details "
+            b"and the flag is THM{inside_the_file} end.")
+    strings = file_carver._notable_strings(body)
+    assert "http://pentestmonkey.net/tool" in strings
+    assert "THM{inside_the_file}" in strings
+
+
+def test_notable_strings_is_empty_when_there_is_nothing():
+    assert file_carver._notable_strings(b"MZ" + b"\x00" * 100) == []
+
+
+def test_pdf_title_and_author_metadata_is_extracted():
+    body = b"%PDF-1.5\n<< /Title (Quarterly Secrets) /Author (mallory) >>\n"
+    meta = file_carver._file_metadata(body, "PDF")
+    assert meta["title"] == "Quarterly Secrets"
+    assert meta["author"] == "mallory"
+
+
+def test_png_text_chunk_metadata_is_extracted():
+    body = b"\x89PNG\r\n\x1a\n" + b"....tEXtComment\x00flag THM{png_text}" + b"\x00" * 10
+    meta = file_carver._file_metadata(body, "PNG image")
+    assert "Comment" in meta["text"] and "THM{png_text}" in meta["text"]
+
+
+def test_jpeg_comment_metadata_is_extracted():
+    comment = b"hidden THM{jpeg_com}"
+    length = (len(comment) + 2).to_bytes(2, "big")
+    body = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + b"\xff\xfe" + length + comment + b"\xff\xd9"
+    meta = file_carver._file_metadata(body, "JPEG image")
+    assert meta["comment"] == "hidden THM{jpeg_com}"
+
+
+def test_metadata_is_empty_for_a_file_without_it():
+    assert file_carver._file_metadata(b"MZ" + b"\x00" * 50, "PE/EXE (Windows)") == {}
+    assert file_carver._file_metadata(b"%PDF-1.4 no info here", "PDF") == {}
+    assert file_carver._file_metadata(b"\x89PNG\r\n\x1a\n no text", "PNG image") == {}
+    assert file_carver._file_metadata(b"\xff\xd8\xff no comment marker", "JPEG image") == {}
+
+
+def test_file_artifacts_combines_strings_and_metadata():
+    body = b"%PDF-1.4 /Title (Report) grab http://evil.test/x THM{both}"
+    art = file_carver._file_artifacts(body, "PDF")
+    assert "http://evil.test/x" in art["strings"] and "THM{both}" in art["strings"]
+    assert art["metadata"]["title"] == "Report"
+    assert file_carver._file_artifacts(b"MZ" + b"\x00" * 40, "PE/EXE (Windows)") == {}

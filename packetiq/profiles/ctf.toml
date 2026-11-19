@@ -1,0 +1,62 @@
+# PacketIQ "ctf" profile — forensic / CTF sensitivity.
+#
+# Capture-the-flag and lab captures are small and deliberate: a port scan is a
+# dozen packets, a brute force is a handful of tries, a beacon checks in a few
+# times. PacketIQ's production defaults are tuned for a noisy enterprise link and
+# would (correctly) suppress all of that as below the noise floor. This profile
+# drops the minimums so a small, targeted capture still trips detection and feeds
+# the full MITRE ATT&CK correlation and timeline.
+#
+# It trades precision for recall ON PURPOSE. It is opt-in (`--profile ctf` or
+# PACKETIQ_PROFILE=ctf) and never the default, so production analysis keeps its
+# noise discipline. Every key below is read by a detector at runtime; a user's
+# own packetiq.toml still overrides anything here.
+
+# A login attempt or two is enough to call it a guessing run.
+[brute_force]
+ssh_threshold = 3
+ftp_threshold = 3
+telnet_threshold = 3
+rdp_threshold = 3
+vnc_threshold = 3
+
+# Three probed ports or hosts is a scan when the whole capture is thirty packets.
+[port_scan]
+vertical_port_threshold = 3
+horizontal_host_threshold = 3
+stealth_halfopen_threshold = 3
+
+# Three check-ins is a cadence. (The detector still needs real periodicity; this
+# only lets it look at a short series instead of discarding it.)
+[beacon]
+min_connections = 3
+
+# A couple of ARP who-has for other hosts is discovery in a tiny lab segment.
+[arp_scan]
+target_threshold = 5
+
+# Small AD rooms: a few principals asked for, one disowned, is enumeration.
+[kerberos]
+user_enum_min_names = 3
+user_enum_min_unknown = 1
+spray_min_users = 3
+
+# One directory search is already a client that looked around.
+[ldap]
+enum_min_searches = 1
+
+# Two SMB operations is a session worth reporting in a lab capture.
+[smb]
+session_min_operations = 2
+
+# A couple of WS-Management POSTs is a remote session, not a stray management call.
+[winrm]
+session_min_requests = 2
+
+# Even a few kilobytes inside ICMP is a covert channel in a CTF.
+[icmp]
+tunnel_threshold_bytes = 4096
+
+# Two encoded subdomain queries are enough to try reconstructing the exfil.
+[dns]
+exfil_min_queries = 2

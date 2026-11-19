@@ -303,6 +303,8 @@ def test_every_emitted_detection_type_reaches_the_readme_table():
         EventType.DCERPC_RECON: "dcerpc recon",
         EventType.SUSPICIOUS_FILE_TRANSFER: "suspicious file transfer",
         EventType.REVERSE_SHELL: "reverse shell",
+        EventType.ENCODED_PAYLOAD: "encoded payload",
+        EventType.EXTRACTED_SECRET: "extracted secret",
     }
     assert set(names) == set(EventType), "a new EventType needs a row in the README table"
     missing = sorted(v for k, v in names.items() if v not in readme)

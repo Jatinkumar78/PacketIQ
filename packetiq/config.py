@@ -2,13 +2,16 @@
 Central configuration — lets analysts tune detector thresholds per environment
 without editing code.
 
-Resolution order (first found wins):
-  1. $PACKETIQ_CONFIG                (explicit path)
-  2. ./packetiq.toml                 (current working directory)
-  3. built-in defaults below
+Layering (highest priority last):
+  1. built-in defaults below
+  2. an active named profile (packetiq/profiles/<name>.toml), chosen with
+     `--profile <name>` or $PACKETIQ_PROFILE — a bundled preset such as `ctf`
+  3. the user's own file: $PACKETIQ_CONFIG, else ./packetiq.toml
+
+So a profile is a starting posture and the user's file always has the last word.
 
 Reading TOML uses the stdlib `tomllib` (Python 3.11+, which is the floor). A
-missing, unreadable or malformed file falls back to the built-in defaults —
+missing, unreadable or malformed file falls back to the layer beneath it —
 configuration is always optional and must never stop the tool starting.
 
 Usage:
@@ -74,6 +77,7 @@ DEFAULTS: dict = {
         "dga_min_length": 12,
         "tunnel_label_length": 50,
         "excessive_query_count": 20,
+        "exfil_min_queries": 3,   # data-bearing subdomain queries before reconstruction
     },
     "icmp": {
         "tunnel_threshold_bytes": 102400,
@@ -106,14 +110,59 @@ def _config_path() -> Path | None:
     return None
 
 
+# ── Named profiles (bundled sensitivity presets) ──────────────────────────────
+#
+# A profile is a TOML file under packetiq/profiles/ that overlays DEFAULTS before
+# the user's own packetiq.toml. It lets a whole posture be chosen with one flag:
+# `ctf` drops the SOC noise-suppression thresholds so a small, targeted capture
+# still trips detection and feeds the full MITRE correlation and timeline, where
+# the production defaults correctly stay quiet. It trades precision for recall on
+# purpose and is always opt-in.
+
+_PROFILES_DIR = Path(__file__).parent / "profiles"
+_active_profile: str | None = None
+
+
+def available_profiles() -> list[str]:
+    """Names of the bundled profiles that ship with the package."""
+    if not _PROFILES_DIR.is_dir():
+        return []
+    return sorted(p.stem for p in _PROFILES_DIR.glob("*.toml"))
+
+
+def active_profile() -> str | None:
+    """The profile in force: the one set in-process, else $PACKETIQ_PROFILE."""
+    if _active_profile is not None:
+        return _active_profile
+    return os.environ.get("PACKETIQ_PROFILE", "").strip() or None
+
+
+def set_active_profile(name: str | None) -> None:
+    """Select a bundled profile (or None to clear) and invalidate the cache."""
+    global _active_profile
+    _active_profile = name or None
+    load.cache_clear()
+
+
+def _profile_overlay() -> dict:
+    name = active_profile()
+    if not name:
+        return {}
+    path = _PROFILES_DIR / f"{name}.toml"
+    return _load_toml(path) if path.is_file() else {}
+
+
+def _user_overlay() -> dict:
+    path = _config_path()
+    return _load_toml(path) if path else {}
+
+
 @lru_cache(maxsize=1)
 def load() -> dict:
-    """Return the merged config (defaults overlaid with the user's file)."""
+    """Return the merged config: DEFAULTS < active profile < user packetiq.toml."""
     merged = {section: dict(values) for section, values in DEFAULTS.items()}
-    path = _config_path()
-    if path:
-        user = _load_toml(path)
-        for section, values in user.items():
+    for overlay in (_profile_overlay(), _user_overlay()):
+        for section, values in overlay.items():
             if isinstance(values, dict):
                 merged.setdefault(section, {}).update(values)
     return merged

@@ -33,6 +33,8 @@ rather than by reproducing the file.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import contextlib
 import re
 from collections import defaultdict
@@ -42,6 +44,9 @@ from packetiq.detection.models import DetectionEvent, EventType, Severity
 
 FTP_PORTS = frozenset({21})
 TELNET_PORTS = frozenset({23})
+SMTP_PORTS = frozenset({25, 587})
+IRC_PORTS = frozenset({6667, 6660, 6661, 6662, 6663, 6664, 6665, 6666})
+_PROTO_PORTS = {"FTP": 21, "SMTP": 25, "IRC": 6667, "TELNET": 23}
 
 # How much of a reassembled stream to reason over. Enough to carry a shell
 # session or a dropped script; not so much that a bulk transfer is held in full.
@@ -82,6 +87,28 @@ _INTERESTING_COMMANDS = (
     b"chmod", b"python", b"bash -i", b"/bin/sh", b"/bin/bash", b"cat /etc",
     b"passwd", b"useradd", b"crontab", b"ssh-keygen",
 )
+
+
+# SMTP: the envelope and the message, read from the command stream.
+_SMTP_MAIL_FROM = re.compile(rb"MAIL FROM:\s*<?([^>\r\n]+)>?", re.IGNORECASE)
+_SMTP_RCPT_TO = re.compile(rb"RCPT TO:\s*<?([^>\r\n]+)>?", re.IGNORECASE)
+_SMTP_SUBJECT = re.compile(rb"^Subject:\s*([^\r\n]+)", re.IGNORECASE | re.MULTILINE)
+_SMTP_AUTH_LOGIN = re.compile(rb"AUTH\s+LOGIN", re.IGNORECASE)
+_SMTP_AUTH_PLAIN = re.compile(rb"AUTH\s+PLAIN\s+([A-Za-z0-9+/]{4,}={0,2})", re.IGNORECASE)
+_B64_LINE = re.compile(rb"^([A-Za-z0-9+/]{4,}={0,2})\r?$", re.MULTILINE)
+
+# IRC: the nick, the channels joined, and the messages — the chat itself.
+_IRC_NICK = re.compile(rb"^NICK\s+([^\r\n ]+)", re.IGNORECASE | re.MULTILINE)
+_IRC_JOIN = re.compile(rb"^JOIN\s+([^\r\n ]+)", re.IGNORECASE | re.MULTILINE)
+_IRC_PRIVMSG = re.compile(rb"PRIVMSG\s+([^\r\n ]+)\s+:([^\r\n]*)", re.IGNORECASE)
+_IRC_PASS = re.compile(rb"^PASS\s+([^\r\n]+)", re.IGNORECASE | re.MULTILINE)
+
+# Telnet: the login prompts a device echoes, so the credential can be read. The
+# separator is [ \t]*, not \s*: \s matches \r and \n, so an empty "login: \r\n"
+# prompt would otherwise swallow the next line as the username (the same trap the
+# FTP command parser hit).
+_TELNET_LOGIN_PROMPT = re.compile(rb"(?:login|user ?name):[ \t]*", re.IGNORECASE)
+_TELNET_PASS_PROMPT = re.compile(rb"password:[ \t]*", re.IGNORECASE)
 
 
 def _text(data: bytes) -> str:
@@ -147,6 +174,35 @@ class ShellSession:
     github_projects: list[str] = field(default_factory=list)
 
 
+@dataclass
+class EmailSession:
+    client: str = ""
+    server: str = ""
+    mail_from: str = ""
+    recipients: list[str] = field(default_factory=list)
+    subject: str = ""
+    username: str = ""
+    password: str = ""
+
+
+@dataclass
+class IRCSession:
+    client: str = ""
+    server: str = ""
+    nick: str = ""
+    channels: list[str] = field(default_factory=list)
+    messages: list[str] = field(default_factory=list)
+    password: str = ""
+
+
+@dataclass
+class TelnetLogin:
+    client: str = ""
+    server: str = ""
+    username: str = ""
+    password: str = ""
+
+
 class ClearTextAccumulator:
     """Reassembles TCP streams and recovers the readable sessions in them."""
 
@@ -154,6 +210,9 @@ class ClearTextAccumulator:
         self.streams: dict[tuple, _Stream] = defaultdict(_Stream)
         self.ftp: list[FTPSession] = []
         self.shells: list[ShellSession] = []
+        self.emails: list[EmailSession] = []
+        self.irc: list[IRCSession] = []
+        self.telnet_logins: list[TelnetLogin] = []
         self.credentials: list[dict] = []
         self.uploaded_files: list[dict] = []
 
@@ -187,6 +246,9 @@ class ClearTextAccumulator:
             directions = {k: stream.reassemble(k) for k in stream.segments}
             self._recover_ftp(directions)
             self._recover_shell(conv, directions)
+            self._recover_smtp(directions)
+            self._recover_irc(directions)
+            self._recover_telnet(directions)
             self._carve_uploads(directions)
         return self._events()
 
@@ -287,6 +349,97 @@ class ClearTextAccumulator:
         if session.commands or session.hostname or session.github_projects:
             self.shells.append(session)
 
+    def _recover_smtp(self, directions: dict[tuple, bytes]) -> None:
+        """Rebuild an email from the SMTP command stream: envelope, subject, login."""
+        client_key = next((k for k in directions if k[3] in SMTP_PORTS), None)
+        if client_key is None:
+            return
+        data = directions[client_key]
+        if not (_SMTP_MAIL_FROM.search(data) or _SMTP_AUTH_LOGIN.search(data)
+                or _SMTP_AUTH_PLAIN.search(data)):
+            return
+
+        session = EmailSession(client=client_key[0], server=client_key[2])
+        mail_from = _SMTP_MAIL_FROM.search(data)
+        if mail_from:
+            session.mail_from = _text(mail_from.group(1)).strip()
+        for m in _SMTP_RCPT_TO.finditer(data):
+            rcpt = _text(m.group(1)).strip()
+            if rcpt and rcpt not in session.recipients:
+                session.recipients.append(rcpt)
+        subject = _SMTP_SUBJECT.search(data)
+        if subject:
+            session.subject = _text(subject.group(1)).strip()
+        auth = _smtp_auth(data)
+        if auth:
+            session.username, session.password = auth
+
+        if session.mail_from or session.recipients or session.username:
+            self.emails.append(session)
+            if session.username and session.password:
+                self.credentials.append({
+                    "protocol": "SMTP", "host": session.server,
+                    "username": session.username, "password": session.password,
+                    "result": "login successful"})
+
+    def _recover_irc(self, directions: dict[tuple, bytes]) -> None:
+        """Recover an IRC session: the nick, the channels joined, and the messages."""
+        client_key = next((k for k in directions if k[3] in IRC_PORTS), None)
+        server_key = next((k for k in directions if k[1] in IRC_PORTS), None)
+        if client_key is None:
+            return
+        client_data = directions[client_key]
+        server_data = directions.get(server_key, b"") if server_key else b""
+        if not (_IRC_NICK.search(client_data) or _IRC_PRIVMSG.search(client_data + server_data)):
+            return
+
+        session = IRCSession(client=client_key[0], server=client_key[2])
+        nick = _IRC_NICK.search(client_data)
+        if nick:
+            session.nick = _text(nick.group(1))
+        for m in _IRC_JOIN.finditer(client_data):
+            channel = _text(m.group(1))
+            if channel not in session.channels:
+                session.channels.append(channel)
+        for data in (client_data, server_data):
+            for m in _IRC_PRIVMSG.finditer(data):
+                entry = f"{_text(m.group(1))}: {_text(m.group(2))}".strip()
+                if entry not in session.messages:
+                    session.messages.append(entry)
+        password = _IRC_PASS.search(client_data)
+        if password:
+            session.password = _text(password.group(1)).strip()
+
+        if session.nick or session.messages:
+            self.irc.append(session)
+            if session.password:
+                self.credentials.append({
+                    "protocol": "IRC", "host": session.server,
+                    "username": session.nick or "(none)", "password": session.password,
+                    "result": "server password"})
+
+    def _recover_telnet(self, directions: dict[tuple, bytes]) -> None:
+        """Recover a Telnet login from the prompts the server echoes."""
+        client_key = next((k for k in directions if k[3] in TELNET_PORTS), None)
+        server_key = next((k for k in directions if k[1] in TELNET_PORTS), None)
+        if client_key is None or server_key is None:
+            return
+        server_data = _strip_iac(directions[server_key])
+        client_data = _strip_iac(directions[client_key])
+        if not _TELNET_LOGIN_PROMPT.search(server_data):
+            return
+
+        username, password = _telnet_creds(server_data, client_data)
+        if not (username or password):
+            return
+        self.telnet_logins.append(TelnetLogin(
+            client=client_key[0], server=client_key[2],
+            username=username, password=password))
+        if username and password:
+            self.credentials.append({
+                "protocol": "TELNET", "host": client_key[2],
+                "username": username, "password": password, "result": "login"})
+
     def _carve_uploads(self, directions: dict[tuple, bytes]) -> None:
         """Pull indicators out of a transferred file without reproducing it.
 
@@ -321,16 +474,17 @@ class ClearTextAccumulator:
     # ── reporting ───────────────────────────────────────────────────────────
 
     def summary(self) -> dict:
-        if not (self.ftp or self.shells or self.credentials or self.uploaded_files):
+        if not (self.ftp or self.shells or self.credentials or self.uploaded_files
+                or self.emails or self.irc or self.telnet_logins):
             return {}
         # The password-spray attempts are the brute-force detector's territory;
         # here the one that mattered is the login that worked. Both are kept, but
         # the working credential is surfaced on its own so the answer to "what
         # was the password" is not buried under fifty guesses.
         working = _dedupe_creds(c for c in self.credentials
-                                if c["result"] == "login successful")
+                                if c["result"] != "login failed")
         failed = [c["password"] for c in self.credentials
-                  if c["result"] != "login successful"]
+                  if c["result"] == "login failed"]
         return {
             "credentials": working,
             "valid_credentials": working,
@@ -356,6 +510,28 @@ class ClearTextAccumulator:
                 }
                 for s in self.shells
             ],
+            "email_sessions": [
+                {
+                    "client": s.client, "server": s.server,
+                    "mail_from": s.mail_from, "recipients": s.recipients,
+                    "subject": s.subject, "username": s.username,
+                }
+                for s in self.emails
+            ],
+            "irc_sessions": [
+                {
+                    "client": s.client, "server": s.server, "nick": s.nick,
+                    "channels": s.channels, "messages": s.messages,
+                }
+                for s in self.irc
+            ],
+            "telnet_logins": [
+                {
+                    "client": s.client, "server": s.server,
+                    "username": s.username, "password": s.password,
+                }
+                for s in self.telnet_logins
+            ],
             "uploaded_files": self.uploaded_files,
         }
 
@@ -366,11 +542,12 @@ class ClearTextAccumulator:
         # already reports; repeating one event per guess here would bury the one
         # credential a responder has to rotate.
         for cred in _dedupe_creds(c for c in self.credentials
-                                  if c["result"] == "login successful"):
+                                  if c["result"] != "login failed"):
             events.append(DetectionEvent(
                 event_type=EventType.CREDENTIAL_EXPOSURE,
                 severity=Severity.CRITICAL,
-                src_ip=cred["host"], dst_ip=None, dst_port=21, protocol=cred["protocol"],
+                src_ip=cred["host"], dst_ip=None,
+                dst_port=_PROTO_PORTS.get(cred["protocol"]), protocol=cred["protocol"],
                 timestamp=0.0, packet_count=1, confidence=1.0,
                 description=(
                     f"{cred['protocol']} credentials recovered in cleartext — "
@@ -470,6 +647,61 @@ def _dedupe_creds(creds) -> list[dict]:
         seen.add(ident)
         out.append(c)
     return out
+
+
+def _b64_text(token: bytes) -> str | None:
+    """Decode a base64 token to text, or None if it is not valid base64."""
+    try:
+        return base64.b64decode(token, validate=True).decode("utf-8", "replace")
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _smtp_auth(data: bytes) -> tuple[str, str] | None:
+    """Recover SMTP AUTH credentials: PLAIN (one blob) or LOGIN (two b64 lines)."""
+    plain = _SMTP_AUTH_PLAIN.search(data)
+    if plain:
+        try:
+            raw = base64.b64decode(plain.group(1), validate=True)
+        except (binascii.Error, ValueError):
+            raw = b""
+        parts = raw.split(b"\x00")
+        if len(parts) >= 3:
+            return _text(parts[1]), _text(parts[2])
+    login = _SMTP_AUTH_LOGIN.search(data)
+    if login:
+        tokens = _B64_LINE.findall(data[login.end():])
+        if len(tokens) >= 2:
+            user, password = _b64_text(tokens[0]), _b64_text(tokens[1])
+            if user is not None and password is not None:
+                return user, password
+    return None
+
+
+_IAC_RE = re.compile(rb"\xff(?:[\xfb-\xfe].|[\xf0-\xfa\xff])")
+
+
+def _strip_iac(data: bytes) -> bytes:
+    """Remove Telnet IAC negotiation sequences so prompts read as plain text."""
+    return _IAC_RE.sub(b"", data)
+
+
+def _printable(data: bytes) -> str:
+    return bytes(b for b in data if 0x20 <= b < 0x7f or b == 0x09).decode("ascii", "replace")
+
+
+def _telnet_creds(server_data: bytes, client_data: bytes) -> tuple[str, str]:
+    """Username from the server's echo after the login prompt; password from the
+    client's typed line when the server also showed a password prompt."""
+    username, password = "", ""
+    prompt = _TELNET_LOGIN_PROMPT.search(server_data)
+    if prompt:
+        username = _printable(re.split(rb"[\r\n]", server_data[prompt.end():], maxsplit=1)[0]).strip()
+    if _TELNET_PASS_PROMPT.search(server_data):
+        typed = [t for t in (_printable(x).strip()
+                             for x in re.split(rb"[\r\n]+", client_data)) if t]
+        password = next((t for t in typed if t != username), "")
+    return username, password
 
 
 def _endpoints(pkt) -> tuple[str | None, str | None]:

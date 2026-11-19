@@ -288,3 +288,91 @@ def test_the_tunneling_arm_does_not_rescan_the_query_log_for_every_source():
     query log per source.
     """
     assert _traversals(2, tunneling_sources=10) == _traversals(2, tunneling_sources=500)
+
+
+# ── DNS exfiltration reconstruction ───────────────────────────────────────────
+
+def _exfil_queries(payload_bytes, *, host="attacker.xyz", fixed="tunnel",
+                   chunk=10, src="10.0.0.5"):
+    """Encode bytes as hex (DNS-label-safe), split into subdomain chunks, and
+    build one query per chunk of the form <chunk>.<fixed>.<host>."""
+    hexed = payload_bytes.hex()
+    chunks = [hexed[i:i + chunk] for i in range(0, len(hexed), chunk)]
+    return [_q(f"{c}.{fixed}.{host}", src=src, ts=float(i)) for i, c in enumerate(chunks)]
+
+
+def test_dns_exfil_flag_is_reconstructed_and_decoded_from_subdomains():
+    events = dns_anomaly._reconstruct_exfil(_res(*_exfil_queries(b"THM{dns_exfil_flag}")))
+    tun = [e for e in events if e.event_type is EventType.DNS_TUNNELING]
+    assert len(tun) == 1
+    assert tun[0].severity is Severity.CRITICAL
+    assert "THM{dns_exfil_flag}" in tun[0].evidence.get("flags", [])
+    assert tun[0].src_ip == "10.0.0.5"
+    assert "attacker.xyz" in tun[0].description
+
+
+def test_dns_exfil_recovers_a_secret_carried_in_the_labels():
+    events = dns_anomaly._reconstruct_exfil(
+        _res(*_exfil_queries(b"creds AKIAIOSFODNN7EXAMPLE leaked")))
+    tun = [e for e in events if e.event_type is EventType.DNS_TUNNELING]
+    assert tun and any("AKIAIOSFODNN7EXAMPLE" in s for s in tun[0].evidence.get("secrets", []))
+
+
+def test_dns_exfil_reports_a_decoded_command_with_no_flag_or_secret():
+    # The ~ is stripped at runtime so no contiguous exec sink ships (see
+    # tests/test_repo_hygiene.py); the decoder still sees a real PHP payload.
+    events = dns_anomaly._reconstruct_exfil(
+        _res(*_exfil_queries(b"<?php sys~tem($_GET[0]); ?>".replace(b"~", b""))))
+    tun = [e for e in events if e.event_type is EventType.DNS_TUNNELING]
+    assert tun and tun[0].evidence.get("decoded")
+    assert "flags" not in tun[0].evidence and "secrets" not in tun[0].evidence
+
+
+def test_too_few_exfil_queries_are_not_reconstructed():
+    two = _exfil_queries(b"THM{dns_exfil_flag}")[:2]
+    assert dns_anomaly._reconstruct_exfil(_res(*two)) == []
+
+
+def test_random_subdomains_that_decode_to_nothing_are_not_flagged():
+    queries = [_q(f"{c}.plain.lookup.net", ts=float(i))
+               for i, c in enumerate(["qqqwwweee", "rrrtttyyy", "uuuiiiooo", "ppplllkkk"])]
+    assert dns_anomaly._reconstruct_exfil(_res(*queries)) == []
+
+
+def test_exfil_to_a_trusted_base_domain_is_ignored():
+    queries = _exfil_queries(b"THM{dns_exfil_flag}", host="google.com")
+    assert dns_anomaly._reconstruct_exfil(_res(*queries)) == []
+
+
+def test_an_empty_query_name_is_skipped_during_reconstruction():
+    queries = [_q("")] + _exfil_queries(b"THM{dns_exfil_flag}")
+    tun = dns_anomaly._reconstruct_exfil(_res(*queries))
+    assert tun and "THM{dns_exfil_flag}" in tun[0].evidence.get("flags", [])
+
+
+def test_a_retried_exfil_chunk_is_counted_once():
+    qs = _exfil_queries(b"THM{dns_exfil_flag}")
+    # Duplicate the first chunk immediately (a retry) — it must not corrupt the data.
+    events = dns_anomaly._reconstruct_exfil(_res(qs[0], qs[0], *qs[1:]))
+    tun = [e for e in events if e.event_type is EventType.DNS_TUNNELING]
+    assert tun and "THM{dns_exfil_flag}" in tun[0].evidence.get("flags", [])
+
+
+def test_reconstruction_below_the_minimum_byte_length_is_skipped():
+    # Three one-char chunks → 3 bytes reconstructed, under EXFIL_MIN_BYTES.
+    queries = [_q(f"{c}.d.evil.xyz", ts=float(i)) for i, c in enumerate(["a", "b", "c"])]
+    assert dns_anomaly._reconstruct_exfil(_res(*queries)) == []
+
+
+def test_common_suffix_count_handles_a_bare_subdomain():
+    # No fixed subdomain shared by all → only the 2-label base is common.
+    assert dns_anomaly._common_suffix_count([["aa", "evil", "xyz"], ["bb", "evil", "xyz"]]) == 2
+
+
+def test_the_exfil_helpers():
+    assert dns_anomaly._base_domain("a.b.attacker.com") == "attacker.com"
+    assert dns_anomaly._base_domain("single") == "single"
+    assert dns_anomaly._subdomain_data("a.b.attacker.com", "attacker.com") == "a.b"
+    assert dns_anomaly._subdomain_data("attacker.com", "attacker.com") == ""
+    assert dns_anomaly._dominant_src([]) == ""
+    assert dns_anomaly._dominant_src([{"src": "9.9.9.9"}, {"src": "9.9.9.9"}]) == "9.9.9.9"

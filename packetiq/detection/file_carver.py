@@ -15,6 +15,7 @@ first bytes of each packet, which is too little for multi-KB files).
 """
 
 import hashlib
+import re
 from collections import defaultdict
 
 from scapy.all import PcapReader
@@ -51,8 +52,20 @@ _MAGIC = [
     (b"Rar!\x1a\x07",  "RAR archive",      False),
     (b"\x1f\x8b",      "GZIP",             False),
     (b"\xd0\xcf\x11\xe0", "MS Office (OLE)", False),
+    (b"\x89PNG\r\n\x1a\n", "PNG image",    False),
+    (b"\xff\xd8\xff",  "JPEG image",       False),
     (b"\x4d\x5a",      "PE/EXE (Windows)", True),
 ]
+
+# How far into a carved file to scan for embedded strings and metadata — enough
+# to cover a header and a document's info block, bounded so a large binary does
+# not cost a full scan.
+_META_SCAN = 64 * 1024
+
+_URL_IN_FILE = re.compile(rb"https?://[^\s\"'<>)\]]{4,2048}")
+_PDF_TITLE = re.compile(rb"/Title\s*\(([^)\r\n]{1,200})\)")
+_PDF_AUTHOR = re.compile(rb"/Author\s*\(([^)\r\n]{1,200})\)")
+_PNG_TEXT = re.compile(rb"tEXt([\x20-\x7e]{1,79})\x00([\x20-\x7e]{0,255})")
 
 
 class FileCarverAccumulator:
@@ -136,20 +149,25 @@ class FileCarverAccumulator:
             if ftype is None:
                 continue
 
-            sha = hashlib.sha256(body).hexdigest()
+            hashes = _file_hashes(body)
+            sha = hashes["sha256"]
             if sha in seen_hashes:
                 continue
             seen_hashes.add(sha)
 
             rep = store.lookup_hash(sha) if store else None
             client = dst   # server is src here (download direction)
+            # Full hash set + embedded strings + document/image metadata, so a
+            # flagged file carries everything a threat-intel lookup or a provenance
+            # question needs, not just one digest.
+            base = {"file_type": ftype, "size": len(body), "server": src,
+                    **hashes, **_file_artifacts(body, ftype)}
             if rep:
                 events.append(_event(
                     Severity.CRITICAL, client, src, sport,
                     f"Known-malicious file downloaded from {src} — {rep.label} "
                     f"({ftype}, {len(body):,} bytes)",
-                    {"sha256": sha, "file_type": ftype, "size": len(body),
-                     "source": rep.source, "label": rep.label, "server": src},
+                    {**base, "source": rep.source, "label": rep.label},
                     self.meta.get(key, {}).get("ts", 0.0),
                 ))
             elif is_exe and not is_private_ip(src):
@@ -157,7 +175,7 @@ class FileCarverAccumulator:
                     Severity.MEDIUM, client, src, sport,
                     f"Executable file transfer over cleartext from {src} "
                     f"({ftype}, {len(body):,} bytes) — review SHA-256",
-                    {"sha256": sha, "file_type": ftype, "size": len(body), "server": src},
+                    base,
                     self.meta.get(key, {}).get("ts", 0.0),
                 ))
 
@@ -255,6 +273,77 @@ def _identify(body: bytes):
         if body.startswith(magic):
             return ftype, is_exe
     return None, False
+
+
+def _file_hashes(body: bytes) -> dict:
+    """The three digests a threat-intel lookup asks for. MD5 and SHA-1 are weak
+    for security but are exactly what MalwareBazaar, VirusTotal and most IOC feeds
+    key on, so a carved file needs all three to be searchable — this is
+    fingerprinting, not a security primitive."""
+    return {
+        "md5":    hashlib.md5(body, usedforsecurity=False).hexdigest(),
+        "sha1":   hashlib.sha1(body, usedforsecurity=False).hexdigest(),
+        "sha256": hashlib.sha256(body).hexdigest(),
+    }
+
+
+def _notable_strings(body: bytes) -> list[str]:
+    """URLs and CTF flags embedded in a carved file — the strings an analyst would
+    grep for. Reuses the artifact hunter's flag extractor so the set stays in sync."""
+    from packetiq.detection.artifact_hunter import find_flags
+
+    head = body[:_META_SCAN]
+    out: list[str] = []
+    for m in _URL_IN_FILE.finditer(head):
+        url = m.group(0).decode("utf-8", "replace").rstrip(".,);'\"")
+        if url not in out:
+            out.append(url)
+    for f in find_flags(head):
+        if f["value"] not in out:
+            out.append(f["value"])
+    return out[:10]
+
+
+def _file_metadata(body: bytes, ftype: str) -> dict:
+    """Document / image metadata: a PDF's Title and Author, a PNG tEXt chunk, a
+    JPEG comment. These carry provenance (who authored a dropped document) and are
+    a classic place to hide a flag."""
+    head = body[:_META_SCAN]
+    meta: dict = {}
+    if ftype == "PDF":
+        title = _PDF_TITLE.search(head)
+        author = _PDF_AUTHOR.search(head)
+        if title:
+            meta["title"] = title.group(1).decode("latin-1", "replace").strip()
+        if author:
+            meta["author"] = author.group(1).decode("latin-1", "replace").strip()
+    elif ftype == "PNG image":
+        text = _PNG_TEXT.search(head)
+        if text:
+            key = text.group(1).decode("latin-1", "replace").strip()
+            val = text.group(2).decode("latin-1", "replace").strip()
+            meta["text"] = f"{key}: {val}" if val else key
+    elif ftype == "JPEG image":
+        idx = head.find(b"\xff\xfe")
+        if idx != -1 and idx + 4 <= len(head):
+            length = int.from_bytes(head[idx + 2:idx + 4], "big")
+            comment = head[idx + 4: idx + 2 + length].decode("latin-1", "replace").strip()
+            if comment:
+                meta["comment"] = comment
+    return meta
+
+
+def _file_artifacts(body: bytes, ftype: str) -> dict:
+    """The optional enrichment for a carved-file finding: embedded strings and
+    document/image metadata, each added only when present."""
+    out: dict = {}
+    strings = _notable_strings(body)
+    if strings:
+        out["strings"] = strings
+    metadata = _file_metadata(body, ftype)
+    if metadata:
+        out["metadata"] = metadata
+    return out
 
 
 def _event(sev, src_ip, dst_ip, dport, desc, evidence, ts) -> DetectionEvent:

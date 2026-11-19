@@ -60,6 +60,11 @@ class EventType(str, Enum):
     # Cleartext session recovery: the readable conversation on the wire.
     SUSPICIOUS_FILE_TRANSFER = "SUSPICIOUS_FILE_TRANSFER"
     REVERSE_SHELL       = "REVERSE_SHELL"
+    # Deep artifact hunting: what was hidden under encoding, and what it held.
+    # An obfuscated blob that was decoded back to readable content, and the
+    # high-value secrets (CTF flags, keys, tokens) carved out of a stream.
+    ENCODED_PAYLOAD     = "ENCODED_PAYLOAD"
+    EXTRACTED_SECRET    = "EXTRACTED_SECRET"  # nosec B105 # enum member name, not a credential value
 
 
 @dataclass

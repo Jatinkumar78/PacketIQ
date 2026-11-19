@@ -14,7 +14,7 @@ from pathlib import Path
 
 import click
 
-from packetiq import __version__
+from packetiq import __version__, config
 from packetiq.correlation.engine import CorrelationEngine
 from packetiq.detection.engine import DetectionEngine
 from packetiq.detection.models import Severity
@@ -269,6 +269,109 @@ def _print_cleartext_section(ui, ct: dict) -> None:
         for proj in sh.get("github_projects", []) or []:
             ui.print_status(f"GitHub project fetched during the session: {proj}", "warning")
 
+    for em in ct.get("email_sessions", []) or []:
+        detail = []
+        if em.get("mail_from"):
+            detail.append(f"from {em['mail_from']}")
+        if em.get("recipients"):
+            detail.append(f"to {', '.join(em['recipients'])}")
+        if em.get("subject"):
+            detail.append(f"subject {em['subject']!r}")
+        ui.print_status("Email (SMTP) recovered: " + "; ".join(detail), "warning")
+
+    for irc in ct.get("irc_sessions", []) or []:
+        head = f"IRC chat recovered as {irc.get('nick') or '?'}"
+        if irc.get("channels"):
+            head += f" in {', '.join(irc['channels'])}"
+        ui.print_section(head, f"{len(irc.get('messages', []))} message(s)")
+        if irc.get("messages"):
+            ui.print_table(
+                "IRC messages (read from the cleartext stream)",
+                columns=[("#", "dim white", "right"), ("Message", "bold green", "left")],
+                rows=[[str(i), m] for i, m in enumerate(irc["messages"], 1)],
+                max_rows=9999,
+            )
+
+    for tel in ct.get("telnet_logins", []) or []:
+        pw = f" / {tel['password']}" if tel.get("password") else ""
+        ui.print_status(f"Telnet login recovered on {tel.get('server')}: "
+                        f"{tel.get('username') or '?'}{pw}", "warning")
+
+
+def _print_artifacts_section(ui, art: dict) -> None:
+    """Render decoded artifacts: CTF flags, carved secrets, deobfuscated payloads."""
+    if not art:
+        return
+    ui.print_section(
+        "DECODED ARTIFACTS & SECRETS",
+        "flags, keys and obfuscated payloads carved from the reassembled streams")
+
+    flags = art.get("flags", []) or []
+    if flags:
+        ui.print_table(
+            "CTF flags recovered (the literal flag on the wire)",
+            columns=[("Flag", "bold green", "left"), ("Orientation", "cyan", "left")],
+            rows=[[f.get("value", "?"), f.get("orientation", "forward")] for f in flags],
+            max_rows=9999,
+        )
+    secrets = art.get("secrets", []) or []
+    if secrets:
+        ui.print_table(
+            "Secrets carved from the streams (read off the wire, treat as compromised)",
+            columns=[("Kind", "yellow", "left"), ("Value", "bold red", "left")],
+            rows=[[s.get("detail", s.get("kind", "?")), s.get("value", "?")] for s in secrets],
+            max_rows=9999,
+        )
+    payloads = art.get("decoded_payloads", []) or []
+    if payloads:
+        ui.print_table(
+            "Obfuscated payloads decoded (transform chain and the content it held)",
+            columns=[("Transform", "magenta", "left"), ("Decoded preview", "white", "left")],
+            rows=[[d.get("chain", "?"), d.get("preview", "")] for d in payloads],
+            max_rows=9999,
+        )
+
+
+def _print_http_forensics_section(ui, hf: dict) -> None:
+    """Render HTTP deep inspection: credentials, cookies, headers, uploads, bodies."""
+    if not hf:
+        return
+    ui.print_section(
+        "HTTP DEEP INSPECTION",
+        f"{hf.get('transactions', 0)} transaction(s) read in full")
+
+    creds = hf.get("credentials", []) or []
+    if creds:
+        ui.print_table(
+            "Credentials sent over cleartext HTTP",
+            columns=[("Via", "yellow", "left"), ("Username", "bold red", "left"),
+                     ("Password / token", "bold red", "left"), ("Host", "cyan", "left")],
+            rows=[[c.get("via", "?"), c.get("username") or "(token)",
+                   c.get("password", "?"), c.get("host", "?")] for c in creds],
+            max_rows=9999,
+        )
+    cookies = hf.get("session_cookies", []) or []
+    if cookies:
+        ui.print_table(
+            "Session cookies (replayable to hijack the session)",
+            columns=[("Host", "cyan", "left"), ("Name", "bold red", "left"),
+                     ("Value", "white", "left")],
+            rows=[[c["host"], c["name"], c["value"]] for c in cookies],
+            max_rows=9999,
+        )
+    for name, value in (hf.get("custom_headers") or {}).items():
+        ui.print_status(f"Custom header {name}: {value}", "info")
+    for up in hf.get("uploads", []) or []:
+        ui.print_status(f"HTTP upload to {up['host']}: {up['filename']} "
+                        f"(field {up.get('field') or '?'})", "warning")
+    for d in hf.get("decompressed", []) or []:
+        ui.print_status(f"Decompressed {d['encoding']} response body "
+                        f"({d['bytes']} bytes) from {d['server']}", "info")
+    for f in hf.get("flags", []) or []:
+        ui.print_status(f"Flag recovered from an HTTP body: {f['value']}", "warning")
+    for s in hf.get("secrets", []) or []:
+        ui.print_status(f"Secret in an HTTP body: {s['detail']}: {s['value']}", "warning")
+
 
 def _print_dcerpc_section(ui, rpc: dict) -> None:
     """Render the DCERPC section: which RPC interfaces were bound, and why it matters."""
@@ -303,8 +406,16 @@ def _print_dcerpc_section(ui, rpc: dict) -> None:
 # feature. Eager, so it prints and exits before the banner is drawn.
 @click.version_option(__version__, "-V", "--version", prog_name="PacketIQ",
                       message="%(prog)s %(version)s")
+# A whole sensitivity posture in one flag, applied before any subcommand runs, so
+# `packetiq --profile ctf analyze|chat|html|webapp <pcap>` all see the lowered
+# thresholds. Choices are the bundled profiles under packetiq/profiles/.
+@click.option("--profile", type=click.Choice(config.available_profiles(), case_sensitive=False),
+              default=None, metavar="NAME",
+              help="Apply a bundled sensitivity profile before analysis. 'ctf' lowers "
+                   "detector thresholds so small, targeted captures still trigger the "
+                   "full correlation. Also settable via $PACKETIQ_PROFILE.")
 @click.pass_context
-def main(ctx):
+def main(ctx, profile):
     """
     \b
     PacketIQ — AI PCAP Forensics & SOC Copilot
@@ -314,6 +425,12 @@ def main(ctx):
     if _machine_output_requested():
         ui.route_chrome_to_stderr()
     ui.print_banner()
+    if profile:
+        config.set_active_profile(profile)
+        ui.print_status(
+            f"Sensitivity profile '{profile}' active: detector thresholds lowered so a "
+            f"small or targeted capture still trips detection (trades precision for recall).",
+            "info")
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
@@ -551,6 +668,12 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
 
     # ── Recovered cleartext sessions ───────────────────────────────────
     _print_cleartext_section(ui, getattr(result, "cleartext", {}) or {})
+
+    # ── Decoded artifacts & secrets ────────────────────────────────────
+    _print_artifacts_section(ui, getattr(result, "artifacts", {}) or {})
+
+    # ── HTTP deep inspection ───────────────────────────────────────────
+    _print_http_forensics_section(ui, getattr(result, "http_forensics", {}) or {})
 
     # ── Remote management (WinRM / WS-Management) ──────────────────────
     # 792 POSTs to one path is not web browsing, and reporting one of them as a
