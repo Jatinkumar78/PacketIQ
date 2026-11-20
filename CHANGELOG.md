@@ -24,7 +24,7 @@ re-measured on 2026-11-19 after the documentation gates below were added:
 
 | | |
 |---|---|
-| Tests | **2,446 passing**, **100.00%** line coverage of **13,408** statements |
+| Tests | **2,447 passing**, **100.00%** line coverage of **13,432** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.11 and 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean at `py311` · `mypy` clean across **83** source files |
@@ -215,6 +215,37 @@ there the floor was the only thing standing.
 from three packages to seven since the 1.0.0 baseline; it is itemised in
 SECURITY.md and `docs/security_audit/pip_audit.txt` and printed by CI's advisory
 3.9 audit on every push, rather than rounded away.
+
+### Getting the open ports, the hash tail and the commands right for the copilot
+
+The copilot answered half the Directory room from local Ollama, but the open
+ports, the hash and the commands were still wrong, and each was a presentation gap
+in the tool, not the model guessing.
+
+The open-ports answer pulled in `137` (UDP NetBIOS) and `67` (a different host),
+because the context listed every open port of every host with no protocol. A TCP
+port scan reports TCP ports on the host it scanned, so the serialised list now
+keeps the protocol (`_open_ports_payload` carries `(port, proto, service)` from
+`service_exposure`), and the context lists each host's open TCP and UDP ports
+separately, says to answer with the scanned host's TCP ports, and notes that
+WinRM's 5985 was reached after the scan so "what did the scan initially find" can
+omit it.
+
+The hash answer dumped most of the blob, because a small model cannot take "the
+last 30 characters" of a 500-character string. The context now pre-computes the
+tail lengths (`last 30 chars`, `last 20 chars`, `last 16 chars`) as plain facts,
+a substring of the hash the tool already holds rather than a guess.
+
+The command answer was Evil-WinRM noise: `Invoke-Expression` (the wrapper it puts
+on every command), the working-directory echo `C:\dev\kitchen-vagrant`, and the
+`(get-location).path` prompt refresh it runs itself. Commands are now read from the
+client's `<rsp:Arguments>` PSRP, where the real command rides, with those
+shell-driver strings dropped, so the decrypted list is what the operator typed:
+`whoami /all`, `reg save HKLM\SYSTEM C:\SYSTEM`, `reg save HKLM\SAM C:\SAM`, in
+order. Verified on the real capture: the web context now carries the target's open
+TCP ports, `55616532b664cd0b50cda8d4ba469f` as the hash tail, and the clean command
+list. The facts are measured, never memorised, so the same code answers any AD
+capture.
 
 ### Making the web copilot answer on upload, not on a button
 

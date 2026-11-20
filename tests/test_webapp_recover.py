@@ -183,25 +183,43 @@ def test_chat_context_note_when_recovery_ran_but_found_nothing():
 
 # ── Authoritative open ports ──────────────────────────────────────────────────
 
-def test_open_ports_payload_lists_only_ports_that_answered():
-    """A port is "open" only if a service answered a handshake; a probed-but-silent
-    or filtered port is not. The payload is sorted, de-duplicated and JSON-friendly."""
+def test_open_ports_payload_keeps_protocol_and_only_answered_ports():
+    """A port is "open" only if a service answered a handshake; a filtered port is
+    not. Protocol is kept so a TCP port-scan answer excludes UDP. Sorted, JSON-friendly."""
     result = types.SimpleNamespace(service_exposure={
-        ("10.0.2.75", 445, "tcp"): {"state": "open", "service": "smb"},
-        ("10.0.2.75", 88, "tcp"):  {"state": "open", "service": "kerberos"},
-        ("10.0.2.75", 23, "tcp"):  {"state": "filtered", "service": ""},   # not open → dropped
+        ("10.0.2.75", 445, "TCP"): {"state": "open", "service": "smb"},
+        ("10.0.2.75", 88, "TCP"):  {"state": "open", "service": "kerberos"},
+        ("10.0.2.75", 137, "UDP"): {"state": "open", "service": "netbios-ns"},
+        ("10.0.2.75", 23, "TCP"):  {"state": "filtered", "service": ""},   # not open → dropped
     })
     assert webapp._open_ports_payload(result) == {
-        "10.0.2.75": [[88, "kerberos"], [445, "smb"]]}
+        "10.0.2.75": [[88, "tcp", "kerberos"], [137, "udp", "netbios-ns"], [445, "tcp", "smb"]]}
 
 
-def test_chat_context_carries_authoritative_open_ports():
-    """The copilot must get the measured open-port list, so "what ports are open"
-    is answered from fact instead of guessed from the busiest ports."""
-    ctx = webapp._build_chat_context({"open_ports": {"10.0.2.75": [[88, "kerberos"], [445, ""]]}})
+def test_chat_context_separates_tcp_from_udp_open_ports():
+    """A TCP port scan reports TCP ports; UDP (137) must not leak into that answer,
+    so the context lists them separately. And when a WinRM session is present, the
+    note warns that 5985 was reached after the scan (so the scan answer can omit it)."""
+    ctx = webapp._build_chat_context({
+        "winrm": {"requests": 793},
+        "open_ports": {
+            "10.0.2.75": [[88, "tcp", "kerberos"], [445, "tcp", "smb"], [137, "udp", "netbios-ns"]]}})
     assert "OPEN PORTS DISCOVERED (services that answered a handshake)" in ctx
-    assert "10.0.2.75: 88, 445" in ctx
-    assert "kerberos" in ctx   # a port that carries a service names it
+    assert "open TCP ports: 88, 445" in ctx
+    assert "open UDP ports: 137" in ctx
+    assert "port 5985 (WinRM) carried" in ctx   # scan-timing caveat appears with a WinRM session
+
+
+def test_chat_context_gives_the_asrep_hash_and_its_last_30_chars():
+    """A small model cannot take 'the last 30 characters' of a 500-char hash, so the
+    context pre-computes it as a plain substring of the real hash."""
+    h = "$krb5asrep$23$larry.doe@DIRECTORY.THM:" + "a" * 32 + "$" + "b" * 90 + \
+        "55616532b664cd0b50cda8d4ba469f"
+    ctx = webapp._build_chat_context({"kerberos": {"asrep_hashes": {"larry.doe": h}}})
+    assert "AS-REP ROAST HASH (crackable, hashcat -m 18200)" in ctx
+    assert f"full hash     : {h}" in ctx
+    assert "last 30 chars : 55616532b664cd0b50cda8d4ba469f" in ctx
+    assert f"last 16 chars : {h[-16:]}" in ctx
 
 
 # ── Recovery runs automatically ───────────────────────────────────────────────

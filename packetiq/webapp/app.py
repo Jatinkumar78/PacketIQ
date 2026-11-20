@@ -710,11 +710,13 @@ def _open_ports_payload(result) -> dict:
     """
     exposure = getattr(result, "service_exposure", {}) or {}
     by_host: dict = {}
-    for (ip, port, _proto), info in exposure.items():
+    for (ip, port, proto), info in exposure.items():
         if info.get("state") != "open":
             continue
-        by_host.setdefault(ip, {})[port] = info.get("service", "")
-    return {ip: [[p, by_host[ip][p]] for p in sorted(by_host[ip])] for ip in sorted(by_host)}
+        by_host.setdefault(ip, {})[(port, (proto or "").lower())] = info.get("service", "")
+    return {ip: [[port, proto, by_host[ip][(port, proto)]]
+                 for (port, proto) in sorted(by_host[ip])]
+            for ip in sorted(by_host)}
 
 
 def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, progress=None):
@@ -1265,15 +1267,24 @@ def _build_chat_context(result: dict) -> str:
     open_ports = result.get("open_ports", {}) or {}
     if open_ports:
         lines.append("\n=== OPEN PORTS DISCOVERED (services that answered a handshake) ===")
-        lines.append("  This is the authoritative open-port list for \"what ports are open / what "
-                     "a scan found open\" — a port is here only because a service actually answered. "
-                     "Prefer it over TOP DESTINATION PORTS, which is only traffic volume.")
+        lines.append("  \"What ports are open / what a scan found open\" is answered by the TCP "
+                     "ports of the host that was scanned: a TCP port scan reports TCP ports that "
+                     "answered. UDP ports and other hosts are listed for completeness but are not "
+                     "what a TCP port scan reports, so do not add them to that answer. Prefer this "
+                     "over TOP DESTINATION PORTS, which is only traffic volume.")
         for ip in open_ports:
-            listed = ", ".join(str(p) for p, _ in open_ports[ip])
-            lines.append(f"  {ip}: {listed}")
-            for port, svc in open_ports[ip]:
-                if svc:
-                    lines.append(f"      {port:<6} {svc}")
+            tcp = sorted({p for p, pr, _ in open_ports[ip] if pr == "tcp"})
+            udp = sorted({p for p, pr, _ in open_ports[ip] if pr == "udp"})
+            lines.append(f"  {ip}:")
+            if tcp:
+                lines.append(f"      open TCP ports: {', '.join(str(p) for p in tcp)}")
+            if udp:
+                lines.append(f"      open UDP ports: {', '.join(str(p) for p in udp)}")
+        if (result.get("winrm") or {}).get("requests"):
+            lines.append("  NOTE: port 5985 (WinRM) carried the interactive remote-management "
+                         "session, which is established AFTER the initial port scan — so \"what "
+                         "ports did the scan initially find open\" can exclude 5985 even though it "
+                         "is open now.")
 
     # Severity breakdown
     brk = r.get("breakdown", {})
@@ -1374,6 +1385,19 @@ def _build_chat_context(result: dict) -> str:
                 f"  Motivation  : {a.get('motivation','')}",
                 f"  Matched TTPs: {', '.join(a.get('matched_ttps',[]))}",
             ]
+
+    # AS-REP roast hash(es). The full blob is long, and a small model cannot reliably
+    # take "the last N characters" of it, so the common tail lengths are pre-computed
+    # here as plain facts — a substring of a value the tool already has, not a guess.
+    asrep = (result.get("kerberos") or {}).get("asrep_hashes") or {}
+    if asrep:
+        lines.append("\n=== AS-REP ROAST HASH (crackable, hashcat -m 18200) ===")
+        for account, h in asrep.items():
+            lines.append(f"  account {account}:")
+            lines.append(f"    full hash     : {h}")
+            lines.append(f"    last 30 chars : {h[-30:]}")
+            lines.append(f"    last 20 chars : {h[-20:]}")
+            lines.append(f"    last 16 chars : {h[-16:]}")
 
     # Remote management (WinRM / WS-Management): who ran a remote session, and —
     # once the opt-in offline step has run — the commands and flag recovered from it.

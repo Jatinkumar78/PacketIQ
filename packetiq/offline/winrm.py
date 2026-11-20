@@ -33,6 +33,10 @@ _ORIG_LEN = re.compile(rb"OriginalContent:[^\r\n]*Length=(\d+)")
 _NTLM_TOKEN = re.compile(rb"(?:Authorization|WWW-Authenticate):\s*Negotiate\s+([A-Za-z0-9+/=]+)")
 _CMD_VALUE = re.compile(rb'<S N="V">([^<]{1,300})</S>')
 _RSP_COMMAND = re.compile(rb"<rsp:Command>([^<]{1,300})</rsp:Command>")
+_RSP_ARGS = re.compile(rb"<rsp:Arguments>([A-Za-z0-9+/=]+)</rsp:Arguments>")
+# Evil-WinRM runs every operator command as `Invoke-Expression <arg>` and drives
+# its own prompt with `(get-location).path`; both are protocol noise, not commands.
+_SHELL_NOISE = {"invoke-expression", "(get-location).path"}
 _B64_IN_XML = re.compile(rb">([A-Za-z0-9+/]{8,}={0,2})<")
 # Only a real CTF flag prefix — a loose `X{...}` pattern matches random braces in
 # the decoded binary PSRP and floods the result with garbage.
@@ -158,15 +162,38 @@ def decrypt_session(c2s: bytes, s2c: bytes, password: str) -> dict | None:
             "flags": flags, "files": files}
 
 
+def _add_command(command: str, commands: list[str], files: list[str]) -> None:
+    """Record one recovered command, dropping Evil-WinRM's own shell-driver noise."""
+    if not command or command.lower() in _SHELL_NOISE or not any(c.isalpha() for c in command):
+        return
+    if command not in commands:
+        commands.append(command)
+    reg = _REG_SAVE.search(command)
+    if reg and reg.group(1) not in files:
+        files.append(reg.group(1))
+
+
 def _collect_commands(data: bytes, commands: list[str], files: list[str]) -> None:
-    for pattern in (_CMD_VALUE, _RSP_COMMAND):
-        for m in pattern.finditer(data):
-            command = _clean_command(m.group(1).decode("utf-8", "replace"))
-            if command and command not in commands and any(c.isalpha() for c in command):
-                commands.append(command)
-            reg = _REG_SAVE.search(command)
-            if reg and reg.group(1) not in files:
-                files.append(reg.group(1))
+    """Pull the operator's commands out of decrypted WinRM traffic.
+
+    Two shapes carry them: a bare ``<rsp:Command>`` (the WSMan Shell Evil-WinRM
+    drives), and ``<rsp:Arguments>`` — a base64 PSRP blob whose ``<S N="V">``
+    values are the real command, because Evil-WinRM runs every command as
+    ``Invoke-Expression <arg>``. The ``Invoke-Expression`` wrapper and the
+    ``(get-location).path`` prompt refresh it issues itself are dropped as noise,
+    so what remains is what the operator actually typed. A ``<S N="V">`` taken
+    from anywhere other than ``<rsp:Arguments>`` (PSRP state, pipeline metadata, a
+    working-directory echo) is not a command and is deliberately left out.
+    """
+    for m in _RSP_COMMAND.finditer(data):
+        _add_command(_clean_command(m.group(1).decode("utf-8", "replace")), commands, files)
+    for am in _RSP_ARGS.finditer(data):
+        try:
+            decoded = base64.b64decode(am.group(1) + b"=" * (-len(am.group(1)) % 4))
+        except Exception:  # noqa: BLE001 - a non-base64 arguments blob is simply skipped
+            continue
+        for m in _CMD_VALUE.finditer(decoded):
+            _add_command(_clean_command(m.group(1).decode("utf-8", "replace")), commands, files)
 
 
 def _collect_flags(data: bytes, flags: list[str]) -> None:

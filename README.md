@@ -49,7 +49,7 @@
 
 <br/><br/>
 
-**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`33`** detection types · **`7,855`** threat-intel indicators · **`2,446`** tests · **`100%`** coverage · **`ruff`-clean**
+**`100%` recall** · **`90%` precision** on real CTU-13 malware · **`33`** detection types · **`7,855`** threat-intel indicators · **`2,447`** tests · **`100%`** coverage · **`ruff`-clean**
 
 </div>
 
@@ -162,7 +162,7 @@
 | Output | a wall of text | SIGMA (pySigma-valid), STIX, MISP, HTML report, evidence PCAP |
 | Inputs | PCAP only | **PCAP · Zeek conn.log · NetFlow/IPFIX · live capture** |
 | Detections | a few heuristics | **33 detection types** incl. recursive payload decoding + XOR, CTF-flag/secret extraction, cleartext session recovery, Kerberos, LDAP, SMB, DCERPC and WinRM AD attacks, JA4, TLS certs, YARA, file carving |
-| Trust | unverifiable claims | **2,446 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
+| Trust | unverifiable claims | **2,447 tests, 100% line coverage, CI, ruff-clean, fuzz-tested parser** |
 | Interface | terminal | **100% GUI web app — double-click to launch** |
 
 ---
@@ -215,12 +215,12 @@ Then open **http://localhost:8080** and drag in `samples/demo_attack.pcap` — `
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev,yara,geoip]"                   # everything (tests, YARA, GeoIP)
-pytest                                                # run the 2,446-test suite
+pytest                                                # run the 2,447-test suite
 pytest --cov=packetiq --cov-report=term-missing      # with line-coverage report
 ```
 The CLI (`packetiq …`) is the same engine the web app uses — handy for scripting/CI, but not required.
 
-**Test coverage: 100%** — every one of the 13,408 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for **every supported interpreter, 3.11 and 3.12**, so a line can never ship untested.
+**Test coverage: 100%** — every one of the 13,432 statements in `packetiq/` is executed by the suite (`pytest-cov`), measured over the *whole* codebase including the hardware-dependent live-capture path, the terminal renderers and every AI provider arm. Nothing is omitted to flatter the number: the only exclusions are `if TYPE_CHECKING`, `...` Protocol stubs, `raise NotImplementedError` and `__main__` guards. Code that proved genuinely unreachable was **deleted**, not excluded. CI enforces the **100% floor** on every push for **every supported interpreter, 3.11 and 3.12**, so a line can never ship untested.
 
 Coverage here is a property of the *suite*, not of the machine that runs it, and that distinction is enforced rather than assumed. Seven rules are fixed in `tests/conftest.py`, and `tests/test_harness_guards.py` asserts each one still holds: a test gets its own history database, may not open a socket, may not open a real capture device, never sees the machine's own list of network interfaces, never resolves a link-layer address on the wire (neither the destination nor its own), is told the machine has one fixed amount of RAM (the local-model picker branches on it), and renders every table at one fixed width. Without those guards a workstation quietly flatters the number — a Mac with capture privileges really does start a live capture, a machine running `ollama serve` really does find an AI provider, a laptop with four Thunderbolt bridge adapters really does exercise the branch that ranks them, a Mac whose account may capture really does put the ARP request on the wire that scapy needs to finish building a packet, and a frame built with no source MAC really does carry the address of whichever NIC the host has. Every OS-specific and host-specific path — the macOS/Linux/Windows capture-privilege checks, the interface enumerator, the whole `/api/live/*` lifecycle — is therefore driven from a fixture, so a line is covered on every matrix leg or on none. Verified by measuring the suite under simulated runner environments (Linux dispatch, denied capture socket, denied `/dev/bpf`, no local model, no external tools) on 3.11 and 3.12: 100.00% in every one.
 
@@ -548,7 +548,7 @@ Layering is `defaults < profile < your packetiq.toml`, so your own file always h
 
 ```bash
 pip install -e ".[dev]"
-pytest                 # 2,446 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
+pytest                 # 2,447 tests: parser, detectors, enrichment, TLS, SIGMA, export, fuzz, AI, security
 ruff check packetiq tools tests
 ```
 
@@ -651,7 +651,7 @@ PacketIQ/
 │   ├── screenshots/               # README UI screenshots — real running web app
 │   └── assets/                    # images (bot avatar)
 ├── samples/generate_sample.py     # build a demo PCAP
-├── tests/                         # 2,446 pytest tests
+├── tests/                         # 2,447 pytest tests
 ├── .github/
 │   ├── workflows/ci.yml           # CI (pytest + ruff + mypy + bandit + pip-audit)
 │   ├── ISSUE_TEMPLATE/            # bug · detection issue · feature request (+ config)

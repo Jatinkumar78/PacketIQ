@@ -225,11 +225,25 @@ def test_stream_helpers():
 
 def test_command_cleaning_and_flag_collection():
     cmds, files = [], []
-    data = (b'<rsp:Command>whoami /all\r\nif (!$?) { exit 1 }</rsp:Command>'
-            b'<S N="V">echo &gt; note.txt</S><S N="V">123</S>')
+    # Real Evil-WinRM: a <rsp:Command> wrapper (Invoke-Expression) plus the actual
+    # command carried as base64 PSRP in <rsp:Arguments>. The wrapper and the
+    # (get-location).path prompt refresh are noise; the operator command is not.
+    args = base64.b64encode(
+        b'<S N="V">reg save HKLM\\SYSTEM C:\\SYSTEM</S>'
+        b'<S N="V">(get-location).path</S>'       # Evil-WinRM prompt noise → dropped
+        b'<S N="V">123</S>')                        # no letters → not a command
+    data = (b'<rsp:Command>Invoke-Expression</rsp:Command>'            # wrapper → dropped
+            b'<rsp:Command>whoami /all\r\nif (!$?) { exit 1 }</rsp:Command>'
+            b'<rsp:Arguments>' + args + b'</rsp:Arguments>')
     winrm._collect_commands(data, cmds, files)
-    assert "whoami /all" in cmds and "echo > note.txt" in cmds
-    assert "123" not in cmds                 # no letters → not a command
+    assert cmds == ["whoami /all", "reg save HKLM\\SYSTEM C:\\SYSTEM"]
+    assert files == ["C:\\SYSTEM"]                  # reg save target carved
+    assert "Invoke-Expression" not in cmds and "(get-location).path" not in cmds
+    assert "123" not in cmds
+    # A non-base64 <rsp:Arguments> blob is skipped rather than raising.
+    skip_c, skip_f = [], []
+    winrm._collect_commands(b"<rsp:Arguments>A=B=</rsp:Arguments>", skip_c, skip_f)
+    assert skip_c == []
     flags = []
     winrm._collect_flags(b"result THM{x} THM{x}", flags)
     assert flags == ["THM{x}"]
