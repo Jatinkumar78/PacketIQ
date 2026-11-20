@@ -699,6 +699,24 @@ class _LiveSession:
 
 # ── Shared result builder (used by single-capture AND campaign/fuse) ──────────
 
+def _open_ports_payload(result) -> dict:
+    """Open ports per host — only services that answered a handshake, which is the
+    honest answer to "what ports are open" (not merely "ports we saw traffic to").
+
+    Keyed by IP, each value a sorted, de-duplicated ``[port, service]`` list.
+    ``result.service_exposure`` itself is keyed by ``(ip, port, proto)`` tuples
+    that cannot be JSON keys, so it is reshaped here into something the result
+    dict (and the copilot context built from it) can carry.
+    """
+    exposure = getattr(result, "service_exposure", {}) or {}
+    by_host: dict = {}
+    for (ip, port, _proto), info in exposure.items():
+        if info.get("state") != "open":
+            continue
+        by_host.setdefault(ip, {})[port] = info.get("service", "")
+    return {ip: [[p, by_host[ip][p]] for p in sorted(by_host[ip])] for ip in sorted(by_host)}
+
+
 def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, progress=None):
     """Build timeline/sigma/attrs/exports + the serialised result dict."""
     from packetiq.attribution.engine import AttributionEngine
@@ -771,6 +789,9 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
         },
         "protocols":    result.protocol_counts,
         "top_ports":    [{"port": p, "count": c} for p, c in sorted(result.dst_port_counts.items(), key=lambda x: -x[1])[:20]],
+        # Authoritative open ports — only services that answered a handshake, the
+        # honest answer to "what ports are open" (see _open_ports_payload).
+        "open_ports":   _open_ports_payload(result),
         "top_src_ips":  [{"ip": ip, "count": c} for ip, c in sorted(result.ip_src_counts.items(), key=lambda x: -x[1])[:15]],
         "top_dst_ips":  [{"ip": ip, "count": c} for ip, c in sorted(result.ip_dst_counts.items(), key=lambda x: -x[1])[:15]],
         "dns_top":      sorted(dns_counts.items(), key=lambda x: -x[1])[:50],
@@ -927,6 +948,18 @@ def _looks_like_netflow(path: str) -> bool:
     return struct.unpack("!H", head)[0] in (5, 9, 10)
 
 
+def _auto_recover_enabled() -> bool:
+    """Whether web analysis runs the offline AS-REP/WinRM recovery automatically.
+
+    On by default so the copilot answers "what was the password / what commands
+    ran / what is the flag" from recovered fact with no extra step. Set
+    ``PACKETIQ_AUTO_RECOVER=0`` to require the explicit Recover action instead
+    (a deployment that must not attempt credential cracking unprompted).
+    """
+    return os.environ.get("PACKETIQ_AUTO_RECOVER", "1").strip().lower() not in (
+        "0", "false", "no", "off")
+
+
 def _run_analysis(job_id: str, pcap_path: str, loop: asyncio.AbstractEventLoop) -> dict | None:
     """Full PacketIQ pipeline — blocking, call via run_in_executor."""
     from packetiq.correlation.engine import CorrelationEngine
@@ -1022,6 +1055,16 @@ def _run_analysis(job_id: str, pcap_path: str, loop: asyncio.AbstractEventLoop) 
 
         # ── Timeline / SIGMA / attribution / exports + serialise ────────
         data = _build_result_data(job_id, file_meta, result, events, risk, chains, fps, progress=progress)
+
+        # Offline recovery runs automatically for real captures so the copilot
+        # answers from recovered fact with no extra step — pure offline cryptanalysis
+        # of the capture's own bytes, suppressed so it can never fail the analysis,
+        # and skipped for flow/log inputs that carry no packets to decrypt.
+        if not is_netflow and not is_zeek and _auto_recover_enabled():
+            with contextlib.suppress(Exception):
+                from packetiq.offline.recover import recover as _recover
+                data["offline"] = _recover(pcap_path, None).to_dict()
+
         push(type="complete")
         return data
 
@@ -1217,6 +1260,21 @@ def _build_chat_context(result: dict) -> str:
         f"HTTP Requests      : {m.get('http_requests', 0)}",
     ]
 
+    # Open ports — the authoritative answer to "what ports are open", measured as
+    # the ports that actually answered a handshake (not merely the busiest ports).
+    open_ports = result.get("open_ports", {}) or {}
+    if open_ports:
+        lines.append("\n=== OPEN PORTS DISCOVERED (services that answered a handshake) ===")
+        lines.append("  This is the authoritative open-port list for \"what ports are open / what "
+                     "a scan found open\" — a port is here only because a service actually answered. "
+                     "Prefer it over TOP DESTINATION PORTS, which is only traffic volume.")
+        for ip in open_ports:
+            listed = ", ".join(str(p) for p, _ in open_ports[ip])
+            lines.append(f"  {ip}: {listed}")
+            for port, svc in open_ports[ip]:
+                if svc:
+                    lines.append(f"      {port:<6} {svc}")
+
     # Severity breakdown
     brk = r.get("breakdown", {})
     if brk:
@@ -1348,16 +1406,23 @@ def _build_chat_context(result: dict) -> str:
                          "The commands, the files written and any flag are in the OFFLINE "
                          "RECOVERY section below; use those to answer, and do not say the "
                          "session is unrecoverable.")
+        elif off:
+            lines.append("  NOTE: PacketIQ ran the offline recovery and recovered no commands "
+                         "from this session — the authenticating account is not AS-REP roastable "
+                         "in this capture, or its password is not in the offline wordlist. The "
+                         "command text is inside SPNEGO session encryption; do not invent which "
+                         "commands ran. The host's PowerShell operational and WinRM event logs "
+                         "hold it. The account, workstation and client software above are read "
+                         "from unencrypted headers and are reliable.")
         else:
             lines.append("  NOTE: the command text is inside SPNEGO session encryption and is "
                          "not in the packets as they stand. Do not invent which commands ran. "
                          "If the account authenticating here has a roastable AS-REP, PacketIQ "
-                         "can recover the commands and any flag OFFLINE: click “Recover "
-                         "credentials & commands” in the WinRM panel, or run "
-                         "`packetiq chat <pcap> --crack`. Otherwise the host's PowerShell "
-                         "operational and WinRM event logs hold the command text. The account, "
-                         "workstation and client software above are read from unencrypted "
-                         "headers and are reliable.")
+                         "can recover the commands and any flag OFFLINE: run "
+                         "`packetiq chat <pcap> --crack` or use the Recover action in the WinRM "
+                         "panel. Otherwise the host's PowerShell operational and WinRM event "
+                         "logs hold the command text. The account, workstation and client "
+                         "software above are read from unencrypted headers and are reliable.")
 
     # Offline recovery (opt-in): the cracked password, the decrypted WinRM commands
     # and the flag — the facts the packets alone cannot give, computed offline.

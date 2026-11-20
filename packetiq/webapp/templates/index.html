@@ -1262,7 +1262,7 @@ tbody tr:hover td{background:var(--surface2)}
           <div class="sec-head">
             <div>
               <div class="sec-title">Remote Management &mdash; WinRM</div>
-              <div class="sec-sub">WS-Management sessions: the channel PowerShell Remoting and tools such as Evil-WinRM use to run commands on a Windows host. Payloads are SPNEGO session-encrypted; the account, the workstation name the client sent and the client software are in the clear. If the account is AS-REP roastable with a weak password, the commands and any flag can be recovered <b>offline</b> &mdash; use <b>Recover credentials &amp; commands</b> below.</div>
+              <div class="sec-sub">WS-Management sessions: the channel PowerShell Remoting and tools such as Evil-WinRM use to run commands on a Windows host. Payloads are SPNEGO session-encrypted; the account, the workstation name the client sent and the client software are in the clear. If the account is AS-REP roastable with a weak password, PacketIQ recovers the commands and any flag <b>offline automatically</b>, shown below.</div>
             </div>
             <span class="result-count" id="wrm-count">0 requests</span>
           </div>
@@ -2541,9 +2541,9 @@ function renderWinRM(w, offline){
   notes.push((w.encrypted_requests||0).toLocaleString() + ' request(s) carried SPNEGO '
              + 'session-encrypted payloads totalling ' + (w.payload_bytes||0).toLocaleString()
              + ' bytes. If the authenticating account is AS-REP roastable with a weak password, '
-             + 'the commands and any flag can be recovered <b>offline</b> \u2014 use <b>Recover '
-             + 'credentials &amp; commands</b> below. Otherwise pull the target\u2019s PowerShell '
-             + 'operational and WinRM logs for this window, which hold the command text.');
+             + 'the commands and any flag are recovered <b>offline automatically</b> and shown '
+             + 'below. Otherwise pull the target\u2019s PowerShell operational and WinRM logs for '
+             + 'this window, which hold the command text.');
   document.getElementById('wrm-notes').innerHTML = notes.map(n=>`
     <div style="border:1px solid var(--border);border-left:3px solid var(--accent2);border-radius:8px;
                 padding:12px 14px;background:var(--surface);margin-bottom:8px;

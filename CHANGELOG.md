@@ -24,7 +24,7 @@ re-measured on 2026-11-19 after the documentation gates below were added:
 
 | | |
 |---|---|
-| Tests | **2,441 passing**, **100.00%** line coverage of **13,382** statements |
+| Tests | **2,446 passing**, **100.00%** line coverage of **13,408** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.11 and 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean at `py311` · `mypy` clean across **83** source files |
@@ -215,6 +215,32 @@ there the floor was the only thing standing.
 from three packages to seven since the 1.0.0 baseline; it is itemised in
 SECURITY.md and `docs/security_audit/pip_audit.txt` and printed by CI's advisory
 3.9 audit on every push, rather than rounded away.
+
+### Making the web copilot answer on upload, not on a button
+
+A screenshot from the live app showed the web copilot still getting the room
+wrong: it listed the wrong open ports and said the password, the commands and the
+flag were "not present in this capture". The model was not failing. Two things
+were. The offline recovery was opt-in, so a plain upload-then-ask left
+`result.offline` empty and the copilot honestly said it had nothing; and the web
+context carried only the busiest ports by packet count, not the authoritative
+list of ports that actually answered a handshake, so "what ports are open" was
+guessed and `443` was invented.
+
+Both are now fixed, and both fixes are general, not memorised answers. Web
+analysis runs the offline recovery automatically for real captures (a new
+`_auto_recover_enabled`, on by default; set `PACKETIQ_AUTO_RECOVER=0` to require
+the explicit Recover action instead), so the copilot has the cracked password,
+the decrypted commands and the flag the moment analysis finishes, with no click.
+The serialised result now carries `open_ports` (built from `service_exposure`,
+only ports that answered a handshake), which `_build_chat_context` surfaces as an
+`OPEN PORTS DISCOVERED` section the model is told to prefer over the volume-based
+top-ports list. The WinRM note became three-state: recovered, ran-and-recovered-
+nothing, or not-run. Verified on the real Directory capture: the web context now
+carries the full open-port set for the target host plus `Password1!`, the
+`reg save` commands and `THM{Ya_G0t_R0aSt3d!}`, with no manual step. The recovery
+stays pure offline cryptanalysis of the capture's own bytes and only recovers a
+password weak enough to be in the bundled wordlist, so it never fabricates.
 
 ### The web copilot gets the crack too, so the GUI answers the whole room
 

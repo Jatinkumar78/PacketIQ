@@ -12,6 +12,8 @@ the roast is pinned so the real cracker and the real WinRM decryptor run against
 real pcap bytes, and the assertions are about the endpoint and the copilot wiring.
 """
 
+import time
+import types
 import uuid
 
 import pytest
@@ -162,6 +164,83 @@ def test_chat_context_points_to_recovery_before_the_crack():
     assert "Client software    : Python PSRP Client x793" in ctx
     assert "Actions in clear   : Command x3" in ctx
     assert "--crack" in ctx
-    assert "Recover credentials" in ctx
+    assert "Recover action" in ctx
     # Nothing has been decrypted yet, so no OFFLINE RECOVERY section is claimed.
     assert "OFFLINE RECOVERY" not in ctx
+
+
+def test_chat_context_note_when_recovery_ran_but_found_nothing():
+    """When the offline step runs and recovers nothing (unroastable account, or a
+    password not in the wordlist) the note must say exactly that — not that the
+    analyst still needs to run a recovery that already ran."""
+    result = _winrm_result()
+    result["offline"] = {"roasts": 0, "credentials": {}, "commands": [],
+                         "flags": [], "exfiltrated_files": [], "sessions": 0}
+    ctx = webapp._build_chat_context(result)
+    assert "ran the offline recovery and recovered no commands" in ctx
+    assert "OFFLINE RECOVERY" not in ctx   # nothing recovered → no section
+
+
+# ── Authoritative open ports ──────────────────────────────────────────────────
+
+def test_open_ports_payload_lists_only_ports_that_answered():
+    """A port is "open" only if a service answered a handshake; a probed-but-silent
+    or filtered port is not. The payload is sorted, de-duplicated and JSON-friendly."""
+    result = types.SimpleNamespace(service_exposure={
+        ("10.0.2.75", 445, "tcp"): {"state": "open", "service": "smb"},
+        ("10.0.2.75", 88, "tcp"):  {"state": "open", "service": "kerberos"},
+        ("10.0.2.75", 23, "tcp"):  {"state": "filtered", "service": ""},   # not open → dropped
+    })
+    assert webapp._open_ports_payload(result) == {
+        "10.0.2.75": [[88, "kerberos"], [445, "smb"]]}
+
+
+def test_chat_context_carries_authoritative_open_ports():
+    """The copilot must get the measured open-port list, so "what ports are open"
+    is answered from fact instead of guessed from the busiest ports."""
+    ctx = webapp._build_chat_context({"open_ports": {"10.0.2.75": [[88, "kerberos"], [445, ""]]}})
+    assert "OPEN PORTS DISCOVERED (services that answered a handshake)" in ctx
+    assert "10.0.2.75: 88, 445" in ctx
+    assert "kerberos" in ctx   # a port that carries a service names it
+
+
+# ── Recovery runs automatically ───────────────────────────────────────────────
+
+def _upload_and_wait(client, path):
+    with open(path, "rb") as f:
+        r = client.post("/api/upload",
+                        files={"file": (path.name, f, "application/octet-stream")})
+    assert r.status_code == 200, r.text
+    job = r.json()["job_id"]
+    for _ in range(200):
+        if client.get(f"/api/results/{job}").status_code == 200:
+            return job
+        time.sleep(0.1)
+    raise AssertionError("analysis did not complete")
+
+
+def test_recovery_runs_automatically_on_upload(client, tmp_path, monkeypatch):
+    """The fix for the screenshot: a plain upload-then-ask already carries the
+    recovered facts, with no Recover click. Analysis auto-runs the offline step."""
+    monkeypatch.setattr(rec_mod, "_asrep_hashes",
+                        lambda p: {"larry.doe": make_asrep_hash("Password1!")})
+    pcap = _winrm_pcap_file(tmp_path)
+    job = _upload_and_wait(client, pcap)
+    off = (client.get(f"/api/results/{job}").json() or {}).get("offline") or {}
+    assert off.get("credentials", {}).get("larry.doe") == "Password1!"
+    assert any("reg save" in c for c in off.get("commands", []))
+    # …and the copilot context carries it with no manual step.
+    ctx = webapp._build_chat_context(webapp._jobs[job]["result"])
+    assert "OFFLINE RECOVERY" in ctx and "RECOVERED by offline decryption" in ctx
+
+
+def test_auto_recovery_can_be_disabled(client, tmp_path, monkeypatch):
+    """A deployment that must not crack unprompted sets PACKETIQ_AUTO_RECOVER=0;
+    analysis then leaves recovery to the explicit Recover action."""
+    monkeypatch.setenv("PACKETIQ_AUTO_RECOVER", "0")
+    monkeypatch.setattr(rec_mod, "_asrep_hashes",
+                        lambda p: {"larry.doe": make_asrep_hash("Password1!")})
+    pcap = _winrm_pcap_file(tmp_path)
+    job = _upload_and_wait(client, pcap)
+    assert not ((client.get(f"/api/results/{job}").json() or {}).get("offline")), \
+        "with auto-recover off, analysis must not auto-crack"
