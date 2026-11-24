@@ -399,10 +399,54 @@ def test_the_context_lists_the_open_ports_a_scan_found():
 
     text = _discovered_services(result)
     assert "OPEN PORTS DISCOVERED" in text
-    # listed lowest-to-highest, and only the ports that answered
-    assert "10.0.2.75: 53, 88, 445" in text
+    # TCP ports listed lowest-to-highest, only the ports that answered a handshake
+    assert "open TCP ports: 53, 88, 445" in text
     assert "TELNET" not in text          # closed
     assert "9999" not in text            # filtered
+
+
+def test_the_context_states_the_scan_found_ports_dropping_winrm_and_udp():
+    """With a real scan (many TCP ports), one authoritative line gives the answer:
+    the scanned host's TCP ports, minus the post-scan WinRM port and UDP."""
+    from packetiq.copilot.context_builder import _discovered_services
+
+    result = ExtractionResult()
+    result.winrm = {"requests": 793}
+    result.service_exposure = {
+        ("10.0.2.75", p, "TCP"): {"state": "open", "service": ""}
+        for p in (53, 80, 88, 135, 445, 5985)
+    }
+    result.service_exposure[("10.0.2.75", 137, "UDP")] = {"state": "open", "service": ""}
+    result.service_exposure[("10.0.2.3", 67, "UDP")] = {"state": "open", "service": ""}
+
+    text = _discovered_services(result)
+    assert ("find open\" — the TCP ports the scan of 10.0.2.75 found, lowest to highest, "
+            "comma-separated: 53, 80, 88, 135, 445") in text
+    assert "Port 5985/WinRM answered too" in text
+    assert "open TCP ports: 53, 80, 88, 135, 445, 5985" in text   # full inventory keeps 5985
+    assert "open UDP ports: 137" in text
+
+
+def test_offline_recovery_numbers_commands_per_session():
+    """The CLI copilot numbers decrypted commands within each WinRM session, so a
+    brief first shell does not shift the main session's count (reg save is #2/#3)."""
+    from packetiq.copilot.context_builder import _offline_recovery
+
+    result = ExtractionResult()
+    result.offline = {
+        "credentials": {"larry.doe": "Password1!"},
+        "commands": ["hostname", "whoami /all", "reg save HKLM\\SYSTEM C:\\SYSTEM",
+                     "reg save HKLM\\SAM C:\\SAM"],
+        "command_sessions": [
+            ["hostname"],
+            ["whoami /all", "reg save HKLM\\SYSTEM C:\\SYSTEM", "reg save HKLM\\SAM C:\\SAM"]],
+        "flags": [], "exfiltrated_files": [], "roasts": 1, "sessions": 2,
+    }
+    text = _offline_recovery(result)
+    assert "session 1:" in text
+    assert "session 2 (main):" in text
+    assert "      2. reg save HKLM\\SYSTEM C:\\SYSTEM" in text
+    assert "      3. reg save HKLM\\SAM C:\\SAM" in text
 
 
 def test_the_open_ports_section_is_absent_when_nothing_answered():

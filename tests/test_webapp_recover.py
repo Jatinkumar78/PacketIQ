@@ -155,6 +155,27 @@ def test_chat_context_offline_section_lists_every_recovered_fact():
     assert "RECOVERED by offline decryption" in ctx
 
 
+def test_chat_context_numbers_commands_per_session():
+    """Each WinRM shell is its own session; "the Nth command" is counted within one
+    session, so a brief first session (hostname) does not shift the main session's
+    count — within the main session reg save SYSTEM is #2 and reg save SAM is #3."""
+    result = {"offline": {
+        "credentials": {"larry.doe": "Password1!"},
+        "commands": ["hostname", "whoami /all", "reg save HKLM\\SYSTEM C:\\SYSTEM",
+                     "reg save HKLM\\SAM C:\\SAM"],
+        "command_sessions": [
+            ["hostname"],
+            ["whoami /all", "reg save HKLM\\SYSTEM C:\\SYSTEM", "reg save HKLM\\SAM C:\\SAM"]],
+        "flags": [], "exfiltrated_files": [], "roasts": 1, "sessions": 2,
+    }}
+    ctx = webapp._build_chat_context(result)
+    assert "session 1:" in ctx
+    assert "session 2 (main):" in ctx
+    assert "      1. whoami /all" in ctx
+    assert "      2. reg save HKLM\\SYSTEM C:\\SYSTEM" in ctx
+    assert "      3. reg save HKLM\\SAM C:\\SAM" in ctx
+
+
 def test_chat_context_points_to_recovery_before_the_crack():
     """Before recovery runs, the WinRM note must tell the model the commands are
     recoverable (and how) — not that they are gone, which is what starved it."""
@@ -196,18 +217,24 @@ def test_open_ports_payload_keeps_protocol_and_only_answered_ports():
         "10.0.2.75": [[88, "tcp", "kerberos"], [137, "udp", "netbios-ns"], [445, "tcp", "smb"]]}
 
 
-def test_chat_context_separates_tcp_from_udp_open_ports():
-    """A TCP port scan reports TCP ports; UDP (137) must not leak into that answer,
-    so the context lists them separately. And when a WinRM session is present, the
-    note warns that 5985 was reached after the scan (so the scan answer can omit it)."""
+def test_chat_context_names_the_scan_found_ports_dropping_winrm_and_udp():
+    """The model truncated a 14-port list, so the context now states the scan answer
+    on one line: the scanned host's TCP ports, excluding post-scan WinRM (5985) and
+    UDP (137). The full per-host TCP/UDP inventory is still listed below it."""
     ctx = webapp._build_chat_context({
         "winrm": {"requests": 793},
         "open_ports": {
-            "10.0.2.75": [[88, "tcp", "kerberos"], [445, "tcp", "smb"], [137, "udp", "netbios-ns"]]}})
+            "10.0.2.75": [[p, "tcp", ""] for p in (53, 80, 88, 135, 445, 5985)]
+                         + [[137, "udp", "netbios-ns"]],
+            "20.0.0.1": [[443, "tcp", "https"]]}})   # a single-service host, not the scan target
     assert "OPEN PORTS DISCOVERED (services that answered a handshake)" in ctx
-    assert "open TCP ports: 88, 445" in ctx
+    # one authoritative answer line: the scan target's TCP ports, no 5985, no UDP
+    assert ("find open\" — the TCP ports the scan of 10.0.2.75 found, lowest to highest, "
+            "comma-separated: 53, 80, 88, 135, 445") in ctx
+    assert "Port 5985/WinRM answered too" in ctx
+    # the full inventory still lists everything, TCP and UDP separately
+    assert "open TCP ports: 53, 80, 88, 135, 445, 5985" in ctx
     assert "open UDP ports: 137" in ctx
-    assert "port 5985 (WinRM) carried" in ctx   # scan-timing caveat appears with a WinRM session
 
 
 def test_chat_context_gives_the_asrep_hash_and_its_last_30_chars():

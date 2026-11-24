@@ -24,6 +24,7 @@ class OfflineRecovery:
     flags: list[str] = field(default_factory=list)
     exfiltrated_files: list[str] = field(default_factory=list)
     sessions: int = 0
+    command_sessions: list[list[str]] = field(default_factory=list)  # commands per shell
 
     def __bool__(self) -> bool:
         return bool(self.credentials or self.commands or self.flags)
@@ -36,6 +37,7 @@ class OfflineRecovery:
             "flags": list(self.flags),
             "exfiltrated_files": list(self.exfiltrated_files),
             "sessions": self.sessions,
+            "command_sessions": [list(s) for s in self.command_sessions],
         }
 
 
@@ -73,6 +75,7 @@ def recover(pcap_path: str, wordlist: str | None = None) -> OfflineRecovery:
     for password in dict.fromkeys(result.credentials.values()):
         session = winrm.decrypt_capture(pcap_path, password)
         result.sessions += session.sessions
+        result.command_sessions.extend(session.command_sessions)
         for command in session.commands:
             if command not in result.commands:
                 result.commands.append(command)

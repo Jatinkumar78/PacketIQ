@@ -81,7 +81,7 @@ jobs:
       # Blocking. This was advisory (`|| true`) and reported a real defect for a
       # full release cycle: a dataclass field was deleted while the CLI still
       # read it, so `fuse` raised AttributeError on any capture that matched a
-      # threat actor. mypy is clean across all 83 modules — keep it that way.
+      # threat actor. mypy is clean across all 98 modules — keep it that way.
       - name: Type check (mypy)
         run: mypy packetiq
 

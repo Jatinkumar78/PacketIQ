@@ -53,6 +53,10 @@ class WinRMResult:
     commands: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
     exfiltrated_files: list[str] = field(default_factory=list)
+    # Commands grouped per remote shell, in the order typed. Each WinRM connection
+    # is its own shell, so "the Nth command" is counted within one session — merging
+    # them would put a brief first session's probe ahead of the real command run.
+    command_sessions: list[list[str]] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         return bool(self.commands or self.flags)
@@ -162,6 +166,14 @@ def decrypt_session(c2s: bytes, s2c: bytes, password: str) -> dict | None:
             "flags": flags, "files": files}
 
 
+def _b64_or_none(blob: bytes) -> bytes | None:
+    """Base64-decode a PSRP arguments blob, or None when it is not valid base64."""
+    try:
+        return base64.b64decode(blob + b"=" * (-len(blob) % 4))
+    except ValueError:        # binascii.Error (bad padding/chars) is a ValueError
+        return None
+
+
 def _add_command(command: str, commands: list[str], files: list[str]) -> None:
     """Record one recovered command, dropping Evil-WinRM's own shell-driver noise."""
     if not command or command.lower() in _SHELL_NOISE or not any(c.isalpha() for c in command):
@@ -188,9 +200,8 @@ def _collect_commands(data: bytes, commands: list[str], files: list[str]) -> Non
     for m in _RSP_COMMAND.finditer(data):
         _add_command(_clean_command(m.group(1).decode("utf-8", "replace")), commands, files)
     for am in _RSP_ARGS.finditer(data):
-        try:
-            decoded = base64.b64decode(am.group(1) + b"=" * (-len(am.group(1)) % 4))
-        except Exception:  # noqa: BLE001 - a non-base64 arguments blob is simply skipped
+        decoded = _b64_or_none(am.group(1))
+        if decoded is None:                       # a non-base64 arguments blob is not a command
             continue
         for m in _CMD_VALUE.finditer(decoded):
             _add_command(_clean_command(m.group(1).decode("utf-8", "replace")), commands, files)
@@ -236,6 +247,8 @@ def decrypt_capture(pcap_path: str, password: str) -> WinRMResult:
         if session is None:
             continue
         result.sessions += 1
+        if session["commands"]:
+            result.command_sessions.append(list(session["commands"]))
         for command in session["commands"]:
             if command not in result.commands:
                 result.commands.append(command)

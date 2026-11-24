@@ -24,10 +24,10 @@ re-measured on 2026-11-19 after the documentation gates below were added:
 
 | | |
 |---|---|
-| Tests | **2,447 passing**, **100.00%** line coverage of **13,432** statements |
+| Tests | **2,450 passing**, **100.00%** line coverage of **13,477** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.11 and 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
-| Lint / types | `ruff` clean at `py311` · `mypy` clean across **83** source files |
+| Lint / types | `ruff` clean at `py311` · `mypy` clean across **98** source files |
 | Static security | `bandit` at its strictest setting: **no issues at any severity** over **17,450** lines |
 | Dependencies | runtime closure (73 packages) **and** development closure (103): **zero** known advisories, both audited from a freshly built virtualenv |
 | Supported interpreters | **3.11, 3.12** — the oldest on which every dependency has a patched release |
@@ -215,6 +215,42 @@ there the floor was the only thing standing.
 from three packages to seven since the 1.0.0 baseline; it is itemised in
 SECURITY.md and `docs/security_audit/pip_audit.txt` and printed by CI's advisory
 3.9 audit on every push, rather than rounded away.
+
+### The CLI copilot gets the same three fixes, so both copilots match
+
+The ports, hash-tail and command fixes lived in the web copilot's context; the CLI
+copilot (`context_builder.py`, a separate builder over the `ExtractionResult`) still
+had the older presentation. It now matches. `_discovered_services` states the scan's
+TCP ports on one line (excluding the post-scan WinRM port and UDP) above a per-host
+TCP/UDP inventory; the Active Directory / Kerberos section prints each AS-REP hash's
+last 30, 20 and 16 characters as plain facts; and `_offline_recovery` numbers the
+decrypted commands within each WinRM session with the main session marked. Verified
+on the real capture: `packetiq chat <pcap> --crack` now carries the same ports,
+hash tail and per-session commands the web app does.
+
+### Nailing the last three room answers, and a green CI
+
+The copilot answered the hash (Q3) but still missed the ports (Q1) and the command
+order (Q5), and the CI the last push triggered went red. All of it is fixed, none of
+it by memorising a room.
+
+Q1: the model truncated a 14-port list and mixed in UDP and a second host. The
+context now states the scan answer on one line (the scanned host's open TCP ports,
+lowest to highest, with the post-scan WinRM port 5985 and UDP held out and the reason
+given) above the full per-host TCP/UDP inventory.
+
+Q5: the command list merged two WinRM shells, so a brief first session's `hostname`
+shifted every count by one. Commands are now grouped per session, numbered in the
+order typed, with the main session marked, so the second and third commands of the
+real session read as the room expects.
+
+CI: the security job failed on a bandit B112 (a `try`/`except`/`continue` the new
+`<rsp:Arguments>` base64 handling introduced); it is refactored into a helper that
+returns None, and bandit is clean at every severity again. The test job failed
+because the twelve README screenshots were referenced but never committed (untracked,
+and they did not survive an environment reset); they are regenerated from the real
+running app on `samples/demo_attack.pcap` and committed. pip-audit is clean, and the
+documented mypy count is corrected from 83 to the 98 files it now checks.
 
 ### Getting the open ports, the hash tail and the commands right for the copilot
 

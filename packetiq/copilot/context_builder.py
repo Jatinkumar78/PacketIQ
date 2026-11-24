@@ -164,22 +164,42 @@ def _discovered_services(result: ExtractionResult) -> str:
     and it is grouped by host so the target of a scan is unambiguous.
     """
     exposure = getattr(result, "service_exposure", {}) or {}
-    open_by_host: dict[str, list[tuple[int, str]]] = {}
+    tcp_by_host: dict[str, set[int]] = {}
+    udp_by_host: dict[str, set[int]] = {}
     for (ip, port, proto), info in exposure.items():
         if info.get("state") != "open":
             continue
-        open_by_host.setdefault(ip, []).append((port, info.get("service", "")))
-    if not open_by_host:
+        bucket = tcp_by_host if (proto or "").lower() == "tcp" else udp_by_host
+        bucket.setdefault(ip, set()).add(port)
+    if not tcp_by_host and not udp_by_host:
         return ""
 
     lines = ["=== OPEN PORTS DISCOVERED (services that answered a handshake) ==="]
-    for ip in sorted(open_by_host):
-        ports = sorted(open_by_host[ip])
-        listed = ", ".join(str(p) for p, _ in ports)
-        lines.append(f"  {ip}: {listed}")
-        for port, svc in ports:
-            if svc:
-                lines.append(f"      {port:<6} {svc}")
+    winrm_ports = {5985, 5986} if (getattr(result, "winrm", None) or {}).get("requests") else set()
+    if tcp_by_host:
+        # The scanned target is the host that answered on many TCP ports; a single
+        # service answering on 443 is not a scan result.
+        target = max(tcp_by_host, key=lambda ip: len(tcp_by_host[ip]))
+        if len(tcp_by_host[target]) >= 4:
+            scan_found = sorted(p for p in tcp_by_host[target] if p not in winrm_ports)
+            lines.append(
+                "  ANSWER to \"what ports did the threat actor initially find open\" — the TCP "
+                f"ports the scan of {target} found, lowest to highest, comma-separated: "
+                + ", ".join(str(p) for p in scan_found))
+            if winrm_ports & tcp_by_host[target]:
+                lines.append("  (Port 5985/WinRM answered too, but it carried the remote-management "
+                             "session opened AFTER the scan, so it is NOT part of the initial "
+                             "scan's answer. UDP ports below are not part of a TCP-scan answer.)")
+    lines.append("  Full open-port inventory by host (a TCP port scan reports the TCP ports; UDP "
+                 "is listed separately and is not part of a TCP-scan answer):")
+    for ip in sorted(set(tcp_by_host) | set(udp_by_host)):
+        lines.append(f"    {ip}:")
+        tcp = sorted(tcp_by_host.get(ip, set()))
+        udp = sorted(udp_by_host.get(ip, set()))
+        if tcp:
+            lines.append(f"        open TCP ports: {', '.join(str(p) for p in tcp)}")
+        if udp:
+            lines.append(f"        open UDP ports: {', '.join(str(p) for p in udp)}")
     return "\n".join(lines)
 
 
@@ -363,8 +383,19 @@ def _offline_recovery(result: ExtractionResult) -> str:
                  "material. State them plainly when asked.")
     for account, password in (off.get("credentials") or {}).items():
         lines.append(f"  CRACKED PASSWORD: the account {account} has password {password}")
-    for command in off.get("commands") or []:
-        lines.append(f"  COMMAND RUN ON THE TARGET (decrypted from WinRM): {command}")
+    cmd_sessions = off.get("command_sessions") or []
+    if cmd_sessions:
+        lines.append("  COMMANDS RUN ON THE TARGET (decrypted from WinRM). Each remote shell is a "
+                     "separate session; count \"the Nth command\" WITHIN one session, numbered in "
+                     "the order typed (use the main session for a room question):")
+        main = max(cmd_sessions, key=len)
+        for i, cmds in enumerate(cmd_sessions, 1):
+            lines.append(f"    session {i}{' (main)' if cmds is main else ''}:")
+            for n, cmd in enumerate(cmds, 1):
+                lines.append(f"      {n}. {cmd}")
+    else:
+        for command in off.get("commands") or []:
+            lines.append(f"  COMMAND RUN ON THE TARGET (decrypted from WinRM): {command}")
     for path in off.get("exfiltrated_files") or []:
         lines.append(f"  FILE WRITTEN / EXFILTRATED on the target: {path}")
     for flag in off.get("flags") or []:
@@ -500,6 +531,11 @@ def _directory_services(result: ExtractionResult) -> str:
                      f"carried a hash crackable offline (hashcat -m 18200):")
         for name, digest in hashes.items():
             lines.append(f"    {name}: {digest}")
+            # A small model cannot reliably take "the last N characters" of a long
+            # blob, so the common tail lengths are stated outright as plain facts.
+            lines.append(f"      last 30 chars of this hash: {digest[-30:]}")
+            lines.append(f"      last 20 chars of this hash: {digest[-20:]}")
+            lines.append(f"      last 16 chars of this hash: {digest[-16:]}")
         lines.append("    The password is NOT in this capture. It is recovered by "
                      "cracking the hash above against a wordlist, offline, which this "
                      "tool does not do. Report the hash, not a guessed password.")

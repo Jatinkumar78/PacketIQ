@@ -1267,24 +1267,31 @@ def _build_chat_context(result: dict) -> str:
     open_ports = result.get("open_ports", {}) or {}
     if open_ports:
         lines.append("\n=== OPEN PORTS DISCOVERED (services that answered a handshake) ===")
-        lines.append("  \"What ports are open / what a scan found open\" is answered by the TCP "
-                     "ports of the host that was scanned: a TCP port scan reports TCP ports that "
-                     "answered. UDP ports and other hosts are listed for completeness but are not "
-                     "what a TCP port scan reports, so do not add them to that answer. Prefer this "
-                     "over TOP DESTINATION PORTS, which is only traffic volume.")
+        tcp_by_host = {ip: sorted({p for p, pr, _ in ports if pr == "tcp"})
+                       for ip, ports in open_ports.items()}
+        # The scanned target is the host that answered on many TCP ports; a single
+        # service answering on 443 is not a scan result.
+        target = max(tcp_by_host, key=lambda ip: len(tcp_by_host[ip]), default="")
+        winrm_ports = {5985, 5986} if (result.get("winrm") or {}).get("requests") else set()
+        if target and len(tcp_by_host[target]) >= 4:
+            scan_found = [p for p in tcp_by_host[target] if p not in winrm_ports]
+            lines.append(
+                f"  ANSWER to \"what ports did the threat actor initially find open\" — the TCP "
+                f"ports the scan of {target} found, lowest to highest, comma-separated: "
+                f"{', '.join(str(p) for p in scan_found)}")
+            if winrm_ports & set(tcp_by_host[target]):
+                lines.append("  (Port 5985/WinRM answered too, but it carried the remote-management "
+                             "session opened AFTER the scan, so it is NOT part of the initial "
+                             "scan's answer. UDP ports below are not part of a TCP-scan answer.)")
+        lines.append("  Full open-port inventory by host (a TCP port scan reports the TCP ports; "
+                     "UDP is listed separately and is not part of a TCP-scan answer):")
         for ip in open_ports:
-            tcp = sorted({p for p, pr, _ in open_ports[ip] if pr == "tcp"})
             udp = sorted({p for p, pr, _ in open_ports[ip] if pr == "udp"})
-            lines.append(f"  {ip}:")
-            if tcp:
-                lines.append(f"      open TCP ports: {', '.join(str(p) for p in tcp)}")
+            lines.append(f"    {ip}:")
+            if tcp_by_host[ip]:
+                lines.append(f"        open TCP ports: {', '.join(str(p) for p in tcp_by_host[ip])}")
             if udp:
-                lines.append(f"      open UDP ports: {', '.join(str(p) for p in udp)}")
-        if (result.get("winrm") or {}).get("requests"):
-            lines.append("  NOTE: port 5985 (WinRM) carried the interactive remote-management "
-                         "session, which is established AFTER the initial port scan — so \"what "
-                         "ports did the scan initially find open\" can exclude 5985 even though it "
-                         "is open now.")
+                lines.append(f"        open UDP ports: {', '.join(str(p) for p in udp)}")
 
     # Severity breakdown
     brk = r.get("breakdown", {})
@@ -1456,8 +1463,19 @@ def _build_chat_context(result: dict) -> str:
                      "material. State them plainly when asked.")
         for account, password in (off.get("credentials") or {}).items():
             lines.append(f"  CRACKED PASSWORD: the account {account} has password {password}")
-        for command in off.get("commands") or []:
-            lines.append(f"  COMMAND RUN ON THE TARGET (decrypted from WinRM): {command}")
+        cmd_sessions = off.get("command_sessions") or []
+        if cmd_sessions:
+            lines.append("  COMMANDS RUN ON THE TARGET (decrypted from WinRM). Each remote shell "
+                         "is a separate session; count \"the Nth command\" WITHIN one session, "
+                         "numbered in the order typed (use the main session for a room question):")
+            main = max(cmd_sessions, key=len)
+            for i, cmds in enumerate(cmd_sessions, 1):
+                lines.append(f"    session {i}{' (main)' if cmds is main else ''}:")
+                for n, cmd in enumerate(cmds, 1):
+                    lines.append(f"      {n}. {cmd}")
+        else:
+            for command in off.get("commands") or []:
+                lines.append(f"  COMMAND RUN ON THE TARGET (decrypted from WinRM): {command}")
         for path in off.get("exfiltrated_files") or []:
             lines.append(f"  FILE WRITTEN / EXFILTRATED on the target: {path}")
         for flag in off.get("flags") or []:

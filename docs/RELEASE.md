@@ -57,7 +57,7 @@ except the two `pip-audit` closures, which were not re-run:
 |---|---|
 | `ruff check packetiq tools tests` | clean (now at `target-version = "py311"`) |
 | `mypy packetiq` | clean, 90 source files, `python_version = "3.11"` |
-| `pytest` with `--cov-fail-under=100` | **2,447 passed**, 100.00% of 13,432 statements |
+| `pytest` with `--cov-fail-under=100` | **2,450 passed**, 100.00% of 13,477 statements |
 | `bandit -r packetiq --severity-level low --confidence-level low` | no issues at any severity, 17,450 lines |
 | `pip-audit` (runtime closure, fresh venv, 73 packages) | no known vulnerabilities |
 | `pip-audit` (dev closure, fresh venv, 103 packages) | no known vulnerabilities — the diskcache residual is gone |
@@ -79,7 +79,7 @@ macOS 26.6.1 arm64 / CPython 3.12.13:
 | Check | Result |
 |---|---|
 | `ruff check packetiq tools tests` | clean |
-| `mypy packetiq` | clean, 83 source files |
+| `mypy packetiq` | clean, 98 source files |
 | `pytest` with `--cov-fail-under=100` | **1,846 passed**, 100.00% of 10,050 statements |
 | `bandit -r packetiq --severity-level low --confidence-level low` | no issues at any severity, 17,196 lines |
 | `pip-audit` (runtime closure, fresh venv) | no known vulnerabilities |
