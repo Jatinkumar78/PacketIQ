@@ -1035,6 +1035,11 @@ tbody tr:hover td{background:var(--surface2)}
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
         <span>Assets</span>
       </div>
+      <div class="nav-item" data-panel="credentials" title="Leaked & stolen credentials recovered from the capture, aligned to Active Directory">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M11.4 11.4 21 2"/><path d="m15.5 7.5 3 3"/></svg>
+        <span>Credentials</span>
+        <span class="nav-badge" id="nb-credentials" style="display:none">0</span>
+      </div>
       <div class="nav-divider"></div>
       <div class="nav-section">Intelligence</div>
       <div class="nav-item" data-panel="attribution" title="Behavioural TTP overlap — not confirmed attribution">
@@ -1298,6 +1303,39 @@ tbody tr:hover td{background:var(--surface2)}
               <tbody id="fp-tbody"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <!-- CREDENTIALS -->
+      <div class="panel" id="panel-credentials">
+        <div class="sec-header" style="margin-bottom:12px">
+          <div>
+            <div class="sec-title">Credential Exposure</div>
+            <div class="sec-sub">Every credential this capture leaks or the attacker steals, aligned to the account that owns it. A password shown here is a fact PacketIQ recovered &mdash; read in cleartext, or cracked offline from the capture&rsquo;s own hash. A hash with no plaintext was not cracked, so it is shown as a hash, never a guess.</div>
+          </div>
+          <span class="result-count" id="cred-count">0 credentials</span>
+        </div>
+        <div id="cred-empty" class="card" style="padding:28px;text-align:center;color:var(--text-sub)">
+          No leaked or stolen credentials were recovered from this capture.
+        </div>
+        <div id="cred-records-block" style="display:none;margin-bottom:22px">
+          <div class="card" style="padding:0;overflow:hidden">
+            <div class="tbl-wrap">
+              <table>
+                <thead><tr><th>Account</th><th>Password / secret</th><th>Recovered from</th><th>Aligned to</th></tr></thead>
+                <tbody id="cred-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div id="cred-tech-block" style="display:none">
+          <div class="sec-head">
+            <div>
+              <div class="sec-title">Credential-access techniques</div>
+              <div class="sec-sub">Credential theft performed <b>on the target</b> &mdash; the hashes are carried off for offline cracking, so no password crosses the wire. The exact commands are shown; for a SAM&nbsp;+&nbsp;SYSTEM hive dump, the dump command is called out as the answer to &ldquo;what did the attacker use to dump the hashes&rdquo;.</div>
+            </div>
+          </div>
+          <div id="cred-tech-body"></div>
         </div>
       </div>
 
@@ -1922,6 +1960,9 @@ function resetPerCaptureFilters(){
   const tf = document.getElementById('threat-forecast'); if(tf) tf.innerHTML = '';
   const pp = document.getElementById('pred-panel-body'); if(pp) pp.innerHTML = '';
   const npb = document.getElementById('nb-predictions'); if(npb) npb.textContent = '0';
+  const ctb = document.getElementById('cred-tbody'); if(ctb) ctb.innerHTML = '';
+  const ctt = document.getElementById('cred-tech-body'); if(ctt) ctt.innerHTML = '';
+  const nbc = document.getElementById('nb-credentials'); if(nbc){ nbc.textContent = '0'; nbc.style.display='none'; }
   _lastGraph = null;
   if(_graphAnim){ cancelAnimationFrame(_graphAnim); _graphAnim = null; }
   const gc = document.getElementById('net-graph');
@@ -1943,7 +1984,7 @@ function showResults(){
   focusDashboard();
   const d = resultData;
   renderDashboard(d); renderPredictions(d); renderEvents(d); renderChains(d);
-  renderNetwork(d); renderAssets(d); renderAttribution(d);
+  renderNetwork(d); renderAssets(d); renderCredentialExposure(d); renderAttribution(d);
   renderSigma(d); renderTimeline(d); renderExports(d); updateHeader(d);
   renderIntelMatches();
   // Nav badges
@@ -2610,6 +2651,15 @@ async function recoverWinRM(){
     const off = await r.json();
     if(window._lastResult) window._lastResult.offline = off;
     renderRecovered(off);
+    // Refresh the Credentials panel so the newly cracked plaintext appears there too.
+    try{
+      const rr = await fetch('/api/results/'+jobId);
+      if(rr.ok){
+        const dd = await rr.json();
+        if(window._lastResult) window._lastResult.credential_exposure = dd.credential_exposure;
+        renderCredentialExposure(dd);
+      }
+    }catch(_e){ /* panel refresh is best-effort */ }
   }catch(e){
     if(st) st.textContent = 'Recovery failed: ' + e;
     b.disabled = false;
@@ -2659,6 +2709,75 @@ function renderAssets(d){
       <td class="mono" style="color:var(--text-sub)">${f.hops}</td>
       <td>${f.is_external?'<span class="badge badge-HIGH">External</span>':'<span class="badge badge-INFO">Internal</span>'}</td>
     </tr>`).join('') || '<tr><td colspan="6"><div class="no-data" style="padding:24px"><p>No OS fingerprints detected</p></div></td></tr>';
+}
+
+/* ── Credential Exposure ── */
+function renderCredentialExposure(d){
+  const ce = (d && d.credential_exposure) || {records:[], techniques:[]};
+  const records = ce.records || [];
+  const techs   = ce.techniques || [];
+
+  const badge = document.getElementById('nb-credentials');
+  if(badge){
+    if(records.length){ badge.style.display=''; badge.textContent = records.length; }
+    else { badge.style.display='none'; badge.textContent = '0'; }
+  }
+  const count = document.getElementById('cred-count');
+  if(count) count.textContent = records.length + (records.length===1?' credential':' credentials');
+
+  const empty = document.getElementById('cred-empty');
+  if(empty) empty.style.display = (!records.length && !techs.length) ? '' : 'none';
+
+  // Exposed credentials — one row per account, plaintext where recovered.
+  const recBlock = document.getElementById('cred-records-block');
+  if(recBlock){
+    recBlock.style.display = records.length ? '' : 'none';
+    const body = document.getElementById('cred-tbody');
+    if(body) body.innerHTML = records.map(r=>{
+      let who = esc(r.principal);
+      if(r.domain) who += ' <span style="color:var(--text-sub)">@ '+esc(r.domain)+'</span>';
+      if(r.confirmed_in_ad) who += ' <span class="badge badge-INFO" style="margin-left:6px">in AD</span>';
+      let secret;
+      if(r.plaintext){
+        secret = '<span class="mono" style="color:var(--critical);font-weight:700">'+esc(r.plaintext)+'</span>';
+        if(r.hash) secret += '<div style="color:var(--text-sub);font-size:11px;margin-top:3px">cracked offline from '+esc(r.hash_mode||'a hash')+'</div>';
+      } else if(r.hash){
+        secret = '<span class="mono" style="color:var(--medium);font-weight:600">hash only &mdash; not cracked</span>'
+               + '<div style="color:var(--text-sub);font-size:11px;margin-top:3px">'+esc(r.hash_mode||'')+'</div>';
+      } else {
+        secret = '<span style="color:var(--text-sub)">&mdash;</span>';
+      }
+      const src  = (r.sources||[]).map(esc).join('<br>')  || '<span style="color:var(--text-sub)">&mdash;</span>';
+      const used = (r.used_for||[]).map(esc).join('<br>') || '<span style="color:var(--text-sub)">&mdash;</span>';
+      return `<tr>
+        <td style="font-weight:600">${who}</td>
+        <td>${secret}</td>
+        <td style="color:var(--text-sub);font-size:12px">${src}</td>
+        <td style="color:var(--text-sub);font-size:12px">${used}</td></tr>`;
+    }).join('');
+  }
+
+  // Credential-access techniques — the on-host theft (registry hive dump, …).
+  const techBlock = document.getElementById('cred-tech-block');
+  if(techBlock){
+    techBlock.style.display = techs.length ? '' : 'none';
+    const body = document.getElementById('cred-tech-body');
+    if(body) body.innerHTML = techs.map(t=>{
+      const mitre = (t.mitre||[]).map(m=>'<span class="badge badge-HIGH" style="margin-left:6px">'+esc(m)+'</span>').join('');
+      const cmds  = (t.commands||[]).map(c=>'<div class="mono" style="color:var(--text);font-size:12.5px">'+esc(c)+'</div>').join('');
+      const hives = (t.hives||[]).map(h=>
+        `<div style="color:var(--text-sub);font-size:12px;margin-top:3px">&rarr; <span class="mono">HKLM\\${esc(h.hive)}</span> &rarr; <span class="mono">${esc(h.dest)}</span>: ${esc(h.meaning)}</div>`).join('');
+      let answer = '';
+      if(t.answer){
+        answer = `<div style="margin-top:12px;padding:10px 12px;border:1px solid var(--critical);border-radius:8px;background:var(--crit-bg)">
+            <div style="color:var(--text-sub);font-size:11.5px;margin-bottom:4px">Dump command &mdash; the answer to &ldquo;what did the attacker use to dump the hashes / registry hives&rdquo;:</div>
+            <div class="mono" style="color:var(--critical);font-weight:700;word-break:break-all">${esc(t.answer)}</div></div>`;
+      }
+      return `<div style="border:1px solid var(--border);border-left:3px solid var(--critical);border-radius:8px;padding:14px;background:var(--surface);margin-bottom:12px">
+          <div style="font-weight:600;color:var(--text);margin-bottom:8px">${esc(t.technique)}${mitre}</div>
+          ${cmds}${hives}${answer}</div>`;
+    }).join('');
+  }
 }
 
 /* ── Attribution ── */

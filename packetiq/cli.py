@@ -475,6 +475,7 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
     _rec = _apply_offline_recovery(result, str(pcap_path), do_crack, wordlist)
     if _rec:
         _print_offline_recovery(_rec)
+    _print_credential_exposure(result)
 
     # ── Summary panel ──────────────────────────────────────────────────
     ui.print_section("CAPTURE SUMMARY")
@@ -1095,6 +1096,56 @@ def _print_offline_recovery(rec) -> None:
             ui.print_status(f"Flag recovered from the decrypted session: {flag}", "warning")
 
 
+def _print_credential_exposure(result) -> None:
+    """Visible panel: every credential the capture leaks or the attacker steals,
+    aligned to the account that owns it and shown as plaintext where PacketIQ cracked
+    it. Reads the same synthesis the copilot does (`copilot.credentials`), so the
+    terminal and the AI never disagree. Prints nothing when there is nothing to show."""
+    from packetiq.copilot.credentials import build_credential_exposure
+
+    records, techniques = build_credential_exposure(
+        getattr(result, "cleartext", None),
+        getattr(result, "http_forensics", None),
+        getattr(result, "kerberos", None),
+        getattr(result, "offline", None),
+        getattr(result, "winrm", None),
+    )
+    if not records and not techniques:
+        return
+
+    ui.print_section("CREDENTIAL EXPOSURE",
+                     "leaked & stolen credentials, aligned to Active Directory")
+
+    if records:
+        rows = []
+        for rec in records:
+            who = rec["principal"] + (f"@{rec['domain']}" if rec["domain"] else "")
+            if rec["plaintext"]:
+                secret = rec["plaintext"]
+            else:
+                secret = f"(hash only — not cracked, {rec['hash_mode'] or 'offline'})"
+            source = rec["sources"][0] if rec["sources"] else "—"
+            rows.append([who, secret, source])
+        ui.print_table(
+            "Exposed credentials",
+            columns=[("Account", "bold cyan", "left"),
+                     ("Password / secret", "bold green", "left"),
+                     ("Recovered from", "dim white", "left")],
+            rows=rows, max_rows=9999,
+        )
+        for rec in records:
+            for use in rec["used_for"]:
+                ui.print_status(f"{rec['principal']}: {use}", "info")
+
+    for tech in techniques:
+        mitre = " / ".join(tech["mitre"])
+        ui.print_status(f"CREDENTIAL ACCESS [{mitre}] {tech['technique']}: "
+                        + "; ".join(tech["commands"]), "warning")
+        if tech.get("has_credential_pair"):
+            ui.print_status("The SAM + SYSTEM pair recovers every local account's NTLM hash "
+                            "offline (secretsdump.py -sam SAM -system SYSTEM LOCAL).", "info")
+
+
 def _apply_offline_recovery(result, pcap_path: str, do_crack: bool, wordlist: str | None):
     """For chat/analyze: run the opt-in offline step and fold it into the result so
     the copilot and the report can use the recovered facts. Returns the recovery
@@ -1262,6 +1313,7 @@ def chat(pcap_file: str, provider: str, model: str, do_crack: bool, wordlist: st
     rec = _apply_offline_recovery(result, str(pcap_path), do_crack, wordlist)
     if rec:
         _print_offline_recovery(rec)
+    _print_credential_exposure(result)
 
     ui.print_section("AI COPILOT", "loading analysis context")
 

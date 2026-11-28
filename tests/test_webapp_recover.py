@@ -289,3 +289,61 @@ def test_auto_recovery_can_be_disabled(client, tmp_path, monkeypatch):
     job = _upload_and_wait(client, pcap)
     assert not ((client.get(f"/api/results/{job}").json() or {}).get("offline")), \
         "with auto-recover off, analysis must not auto-crack"
+
+
+# --------------------------------------------------------------------------- #
+#  Credential Exposure panel data (web)                                         #
+# --------------------------------------------------------------------------- #
+
+def test_results_endpoint_carries_credential_exposure_panel_data(client):
+    """`/api/results` feeds the web Credentials panel: a record with the cracked
+    plaintext aligned to AD, plus the hive-dump technique and its exact answer."""
+    job = "rec-" + uuid.uuid4().hex
+    webapp._jobs[job] = {
+        "status": "complete",
+        "filename": "winrm.pcap",
+        "result": {
+            **_winrm_result(),
+            "kerberos": {"asrep_hashes": {"larry.doe": make_asrep_hash("Password1!")},
+                         "valid_accounts": {"larry.doe": "AS-REP issued without pre-authentication"}},
+            "offline": {"credentials": {"larry.doe": "Password1!"},
+                        "commands": ["reg save HKLM\\SYSTEM C:\\SYSTEM",
+                                     "reg save HKLM\\SAM C:\\SAM"]},
+        },
+    }
+    try:
+        ce = (client.get(f"/api/results/{job}").json() or {}).get("credential_exposure") or {}
+        rec = ce["records"][0]
+        assert rec["principal"] == "larry.doe"
+        assert rec["plaintext"] == "Password1!"
+        assert rec["confirmed_in_ad"] is True
+        assert any("KALI" in u for u in rec["used_for"])
+        tech = ce["techniques"][0]
+        assert tech["answer"] == "reg save HKLM\\SYSTEM C:\\SYSTEM,reg save HKLM\\SAM C:\\SAM"
+    finally:
+        webapp._jobs.pop(job, None)
+
+
+def test_attach_credential_exposure_reads_the_result_findings():
+    data = {
+        "kerberos": {"asrep_hashes": {"larry.doe": make_asrep_hash("Password1!")}},
+        "offline": {"credentials": {"larry.doe": "Password1!"}},
+        "winrm": {}, "cleartext": {}, "http_forensics": {},
+    }
+    webapp._attach_credential_exposure(data)
+    assert data["credential_exposure"]["records"][0]["plaintext"] == "Password1!"
+
+
+def test_recover_keeps_credential_exposure_consistent(client, tmp_path, monkeypatch):
+    """After a manual /api/recover, the stored result's credential_exposure reflects
+    the newly cracked plaintext, so a Credentials-panel refresh shows it."""
+    monkeypatch.setattr(rec_mod, "_asrep_hashes",
+                        lambda p: {"larry.doe": make_asrep_hash("Password1!")})
+    pcap = _winrm_pcap_file(tmp_path)
+    job = _seed_job(tmp_path, pcap)
+    try:
+        assert client.post(f"/api/recover/{job}").status_code == 200
+        ce = webapp._jobs[job]["result"].get("credential_exposure") or {}
+        assert ce["records"][0]["plaintext"] == "Password1!"
+    finally:
+        webapp._jobs.pop(job, None)

@@ -11,6 +11,7 @@ Design goals:
 
 from datetime import datetime
 
+from packetiq.copilot.credentials import credential_exposure_section
 from packetiq.correlation.models import AttackChain
 from packetiq.detection.models import DetectionEvent
 from packetiq.extractor.data_extractor import ExtractionResult
@@ -54,6 +55,7 @@ def build_context(
     sections.append(_decoded_artifacts(result))
     sections.append(_http_forensics(result))
     sections.append(_offline_recovery(result))
+    sections.append(_credential_exposure(result))
     sections.append(_detection_events(events))
     sections.append(_attack_chains(chains))
     sections.append(_dns_intelligence(result))
@@ -401,6 +403,22 @@ def _offline_recovery(result: ExtractionResult) -> str:
     for flag in off.get("flags") or []:
         lines.append(f"  FLAG RECOVERED: {flag}")
     return "\n".join(lines)
+
+
+def _credential_exposure(result: ExtractionResult) -> str:
+    """Consolidated credential-exposure section: every leaked or stolen credential,
+    aligned to its account and resolved to plaintext where cracked.
+
+    Shared verbatim with the web copilot (`webapp.app._build_chat_context`) so the two
+    answer a credential question identically. See `packetiq.copilot.credentials`.
+    """
+    return credential_exposure_section(
+        getattr(result, "cleartext", None),
+        getattr(result, "http_forensics", None),
+        getattr(result, "kerberos", None),
+        getattr(result, "offline", None),
+        getattr(result, "winrm", None),
+    )
 
 
 def _detection_events(events: list[DetectionEvent]) -> str:

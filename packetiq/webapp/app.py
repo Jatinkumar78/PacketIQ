@@ -824,6 +824,10 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
         "smb":           getattr(result, "smb", {}) or {},
         "dcerpc":        getattr(result, "dcerpc", {}) or {},
         "cleartext":     getattr(result, "cleartext", {}) or {},
+        # HTTP deep-inspection findings (login POSTs, Basic-auth headers, session
+        # cookies). Carried so the web copilot's credential-exposure synthesis sees
+        # the same cleartext HTTP credentials the CLI copilot does.
+        "http_forensics": getattr(result, "http_forensics", {}) or {},
         "sigma_rules":   [{"title": r.title, "level": r.level, "yaml": r.raw_yaml} for r in sigma],
         "attributions":  [_ser_attr(a) for a in attrs],
         "graph":         _build_graph(result, events),
@@ -831,6 +835,19 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
         "misp":          misp_event,
         "html_report":   html_report,
     }
+
+
+def _attach_credential_exposure(data: dict) -> None:
+    """Serialise the consolidated credential exposure into ``data["credential_exposure"]``
+    for the web Credentials panel, reading the capture's own cleartext / HTTP / Kerberos /
+    offline / WinRM findings. Idempotent and cheap, so it is recomputed wherever the
+    offline recovery changes — the panel then shows a cracked plaintext the moment it
+    exists. The same `copilot.credentials` synthesis feeds the copilot and the CLI panel,
+    so all three agree."""
+    from packetiq.copilot.credentials import credential_exposure_payload
+    data["credential_exposure"] = credential_exposure_payload(
+        data.get("cleartext"), data.get("http_forensics"),
+        data.get("kerberos"), data.get("offline"), data.get("winrm"))
 
 
 def _merge_results(results: list):
@@ -1480,6 +1497,22 @@ def _build_chat_context(result: dict) -> str:
             lines.append(f"  FILE WRITTEN / EXFILTRATED on the target: {path}")
         for flag in off.get("flags") or []:
             lines.append(f"  FLAG RECOVERED: {flag}")
+
+    # Consolidated credential exposure — every leaked or stolen credential aligned to
+    # its account and resolved to plaintext where cracked, plus the credential-access
+    # techniques (a registry hive dump) with their exact commands. Shared verbatim
+    # with the CLI copilot (`context_builder._credential_exposure`) so both answer a
+    # credential question identically. See `packetiq.copilot.credentials`.
+    from packetiq.copilot.credentials import credential_exposure_section
+    exposure = credential_exposure_section(
+        result.get("cleartext"),
+        result.get("http_forensics"),
+        result.get("kerberos"),
+        off,
+        wrm,
+    )
+    if exposure:
+        lines.append("\n" + exposure)
 
     return "\n".join(lines)
 
@@ -3021,6 +3054,9 @@ def create_app() -> FastAPI:
             raise HTTPException(500, job.get("error") or "Analysis failed.")
         if job["status"] != "complete" or job["result"] is None:
             raise HTTPException(202, "Analysis still in progress.")
+        # Recompute the credential exposure from the current findings (offline recovery
+        # may have landed after the result was first built), then serve it.
+        _attach_credential_exposure(job["result"])
         # Exclude large blobs — they have dedicated endpoints
         payload = {k: v for k, v in job["result"].items() if k not in ("html_report", "misp")}
         return JSONResponse(payload)
@@ -3053,6 +3089,7 @@ def create_app() -> FastAPI:
         _evict_old_jobs()
         if data is None:
             raise HTTPException(500, "Analysis failed.")
+        _attach_credential_exposure(data)
         return JSONResponse({"job_id": job_id, **data})
 
     @app.get("/api/report/{job_id}.html")
@@ -3891,6 +3928,9 @@ def create_app() -> FastAPI:
 
         data = await loop.run_in_executor(None, _run)
         result["offline"] = data
+        # Keep the stored result's credential exposure consistent with the new crack,
+        # so a Credentials-panel refresh after a manual recover shows the plaintext.
+        _attach_credential_exposure(result)
         return data
 
     @app.get("/api/chat/{job_id}/status")
