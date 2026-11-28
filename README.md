@@ -199,6 +199,33 @@ cd PacketIQ
 ./quickstart.sh                 # creates venv, installs, builds a demo capture, opens the web app
 ```
 
+<details>
+<summary><b>Linux / Ubuntu — install two prerequisites first</b></summary>
+
+PacketIQ needs **Python 3.11+**, plus `git` and the `venv` module. macOS ships these; a fresh Ubuntu may not, so install them once:
+
+```bash
+sudo apt update && sudo apt install -y git python3-venv python3-pip
+```
+
+`python3-venv` is the one people miss — without it `python3 -m venv` fails with *“ensurepip is not available”*.
+
+Then check your version:
+
+```bash
+python3 --version
+```
+
+**Ubuntu 24.04** ships Python 3.12 — you're set. **Ubuntu 22.04** ships Python 3.10, which is below the floor; install 3.11 alongside it (no need to change the system default — `quickstart.sh` looks for `python3.11` by name):
+
+```bash
+sudo apt install -y python3.11 python3.11-venv
+```
+
+On an older release where `python3.11` isn't in `apt`, add it first with `sudo add-apt-repository ppa:deadsnakes/ppa`. Then run `./quickstart.sh` and open **http://localhost:8080**. No `sudo` on a managed machine? If Python 3.11+ is already installed, `./quickstart.sh` works without the `apt` step.
+
+</details>
+
 ### Alternative — Docker
 
 ```bash
