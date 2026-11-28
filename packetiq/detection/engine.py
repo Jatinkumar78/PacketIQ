@@ -150,6 +150,16 @@ class DetectionEngine:
         _step("http_forensics")
         from packetiq.detection import http_forensics as http_deep
         http_acc = http_deep.HTTPForensicsAccumulator()
+        # Remote Access Trojan C2 that names itself on the wire (NetSupport RAT is
+        # plain HTTP on 443, which the web ports above miss). Reads TCP payload.
+        _step("rat_c2_analysis")
+        from packetiq.detection import netsupport as netsupport_detect
+        netsupport_acc = netsupport_detect.NetSupportAccumulator()
+        # Host identity (the computer name/OS a host announces for itself over
+        # NetBIOS Browser and DHCP), for the asset inventory and the copilot.
+        _step("host_identity")
+        from packetiq.detection import host_names as host_names_detect
+        host_names_acc = host_names_detect.HostNameAccumulator()
         with contextlib.suppress(Exception):
             from scapy.all import PcapReader
             with PcapReader(pcap_path) as reader:
@@ -166,6 +176,8 @@ class DetectionEngine:
                     cleartext_acc.feed(pkt)
                     artifact_acc.feed(pkt)
                     http_acc.feed(pkt)
+                    netsupport_acc.feed(pkt)
+                    host_names_acc.feed(pkt)
         with contextlib.suppress(Exception):
             events.extend(krb_acc.finalize())
             # Published even when nothing fired: a responder asking "which
@@ -193,6 +205,13 @@ class DetectionEngine:
         with contextlib.suppress(Exception):
             events.extend(http_acc.finalize())
             result.http_forensics = http_acc.summary()
+        with contextlib.suppress(Exception):
+            events.extend(netsupport_acc.finalize())
+            result.netsupport = netsupport_acc.summary()
+        with contextlib.suppress(Exception):
+            # No events of its own: a host announcing its name is identity
+            # evidence, not an alert.
+            result.host_names = host_names_acc.summary()
         if tls_acc is not None:
             with contextlib.suppress(Exception):
                 events.extend(tls_acc.finalize())

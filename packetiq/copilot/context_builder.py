@@ -12,6 +12,7 @@ Design goals:
 from datetime import datetime
 
 from packetiq.copilot.credentials import credential_exposure_section
+from packetiq.copilot.host_identity import host_identity_section, open_ports_from_exposure
 from packetiq.correlation.models import AttackChain
 from packetiq.detection.models import DetectionEvent
 from packetiq.extractor.data_extractor import ExtractionResult
@@ -49,6 +50,7 @@ def build_context(
     sections.append(_capture_stats(result))
     sections.append(_protocol_distribution(result))
     sections.append(_network_topology(result))
+    sections.append(_host_identity(result))
     sections.append(_port_activity(result))
     sections.append(_discovered_services(result))
     sections.append(_cleartext_sessions(result))
@@ -403,6 +405,26 @@ def _offline_recovery(result: ExtractionResult) -> str:
     for flag in off.get("flags") or []:
         lines.append(f"  FLAG RECOVERED: {flag}")
     return "\n".join(lines)
+
+
+def _host_identity(result: ExtractionResult) -> str:
+    """Consolidated asset inventory: each internal host's IP, MAC, computer name,
+    user, OS and role, with the RAT C2 that marks the infected one and the exact
+    answer lines for "which host is infected / what is its MAC / name / user".
+
+    Shared verbatim with the web copilot (`webapp.app._build_chat_context`) so the
+    two answer host-identity questions identically. See
+    `packetiq.copilot.host_identity`.
+    """
+    return host_identity_section(
+        getattr(result, "ip_to_mac", None),
+        getattr(result, "mac_to_ips", None),
+        getattr(result, "host_names", None),
+        getattr(result, "kerberos", None),
+        getattr(result, "netsupport", None),
+        open_ports_from_exposure(getattr(result, "service_exposure", None)),
+        getattr(result, "dns_queries", None),
+    )
 
 
 def _credential_exposure(result: ExtractionResult) -> str:

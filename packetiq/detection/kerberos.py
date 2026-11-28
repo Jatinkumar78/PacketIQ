@@ -413,6 +413,23 @@ class KerberosAccumulator:
         for m in self.messages:
             if m.error_code is not None:
                 errors[ERROR_NAMES.get(m.error_code, f"error {m.error_code}")] += 1
+        # Per requesting host, so a host's own machine account and its logged-in
+        # user can be told apart from everything else the capture saw. An AS-REQ is
+        # sent BY the client, so the request's source is the host the identity
+        # belongs to; a KDC reply echoing the name does not create an entry here
+        # because a reply is not a request.
+        by_host: dict[str, dict] = {}
+        for (src, _dst), state in self.clients.items():
+            names = [n for _, n in state.tried]
+            if not names:
+                continue
+            bucket = by_host.setdefault(
+                src, {"machine_accounts": set(), "user_accounts": set(), "all": set()})
+            for name in names:
+                bucket["all"].add(name)
+                target = "machine_accounts" if name.endswith("$") else "user_accounts"
+                bucket[target].add(name)
+
         for state in self.clients.values():
             accounts.update(state.confirmed)
             tried.update(name for _, name in state.tried)
@@ -424,6 +441,8 @@ class KerberosAccumulator:
             "message_types": dict(by_type),
             "realms": realms,
             "usernames_seen": sorted(tried),
+            "by_host": {ip: {k: sorted(v) for k, v in d.items()}
+                        for ip, d in sorted(by_host.items())},
             "valid_accounts": dict(sorted(accounts.items())),
             "service_principals": sorted(spns),
             # account -> hashcat -m 18200 string. The crackable material that

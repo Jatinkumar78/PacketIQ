@@ -24,7 +24,7 @@ re-measured on 2026-11-19 after the documentation gates below were added:
 
 | | |
 |---|---|
-| Tests | **2,450 passing**, **100.00%** line coverage of **13,477** statements |
+| Tests | **2,543 passing**, **100.00%** line coverage of **14,184** statements |
 | Coverage gate | 100% floor enforced in CI on **Python 3.11 and 3.12** |
 | Platforms | Linux, macOS and Windows each run the suite in CI |
 | Lint / types | `ruff` clean at `py311` · `mypy` clean across **98** source files |

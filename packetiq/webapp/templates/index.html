@@ -1219,6 +1219,25 @@ tbody tr:hover td{background:var(--surface2)}
 
       <!-- ASSETS -->
       <div class="panel" id="panel-assets">
+        <div id="hostid-block" style="display:none;margin-bottom:24px">
+          <div class="sec-header" style="margin-bottom:12px">
+            <div>
+              <div class="sec-title">Host Identity</div>
+              <div class="sec-sub">Each internal host identified from this capture &mdash; its IP, MAC, computer name, logged-in Windows user, OS and role, joined from link-layer, NetBIOS/DHCP and Kerberos evidence. The infected host is the one that contacted a RAT command-and-control server.</div>
+            </div>
+            <span class="result-count" id="hostid-count">0 hosts</span>
+          </div>
+          <div id="hostid-rat" style="margin-bottom:14px"></div>
+          <div class="card" style="padding:0;overflow:hidden">
+            <div class="tbl-wrap">
+              <table>
+                <thead><tr><th>IP</th><th>Host name</th><th>MAC</th><th>User</th><th>OS</th><th>Role</th></tr></thead>
+                <tbody id="hostid-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <div class="sec-header" style="margin-bottom:12px">
           <div>
             <div class="sec-title">Device Inventory</div>
@@ -1963,6 +1982,9 @@ function resetPerCaptureFilters(){
   const ctb = document.getElementById('cred-tbody'); if(ctb) ctb.innerHTML = '';
   const ctt = document.getElementById('cred-tech-body'); if(ctt) ctt.innerHTML = '';
   const nbc = document.getElementById('nb-credentials'); if(nbc){ nbc.textContent = '0'; nbc.style.display='none'; }
+  const htb = document.getElementById('hostid-tbody'); if(htb) htb.innerHTML = '';
+  const hrt = document.getElementById('hostid-rat'); if(hrt) hrt.innerHTML = '';
+  const hbk = document.getElementById('hostid-block'); if(hbk) hbk.style.display = 'none';
   _lastGraph = null;
   if(_graphAnim){ cancelAnimationFrame(_graphAnim); _graphAnim = null; }
   const gc = document.getElementById('net-graph');
@@ -1984,7 +2006,7 @@ function showResults(){
   focusDashboard();
   const d = resultData;
   renderDashboard(d); renderPredictions(d); renderEvents(d); renderChains(d);
-  renderNetwork(d); renderAssets(d); renderCredentialExposure(d); renderAttribution(d);
+  renderNetwork(d); renderAssets(d); renderHostIdentity(d); renderCredentialExposure(d); renderAttribution(d);
   renderSigma(d); renderTimeline(d); renderExports(d); updateHeader(d);
   renderIntelMatches();
   // Nav badges
@@ -2709,6 +2731,54 @@ function renderAssets(d){
       <td class="mono" style="color:var(--text-sub)">${f.hops}</td>
       <td>${f.is_external?'<span class="badge badge-HIGH">External</span>':'<span class="badge badge-INFO">Internal</span>'}</td>
     </tr>`).join('') || '<tr><td colspan="6"><div class="no-data" style="padding:24px"><p>No OS fingerprints detected</p></div></td></tr>';
+}
+
+/* ── Host Identity ── */
+const HOSTID_ROLE_BADGE = {'domain controller':'MEDIUM','workstation':'INFO','server':'MEDIUM','host':'INFO'};
+function renderHostIdentity(d){
+  const hi = (d && d.host_identity) || {hosts:[], rat:{}};
+  const hosts = hi.hosts || [];
+  const block = document.getElementById('hostid-block');
+  if(block) block.style.display = hosts.length ? '' : 'none';
+  const count = document.getElementById('hostid-count');
+  if(count) count.textContent = hosts.length + (hosts.length===1?' host':' hosts');
+
+  const body = document.getElementById('hostid-tbody');
+  if(body) body.innerHTML = hosts.map(h=>{
+    let name = h.hostname ? esc(h.hostname) : '<span style="color:var(--text-sub)">&mdash;</span>';
+    if(h.fqdn) name += '<br><span style="font-size:11px;color:var(--text-sub)">'+esc(h.fqdn)+'</span>';
+    const infected = h.infected ? ' <span class="badge badge-CRITICAL">INFECTED</span>' : '';
+    const user = (h.users&&h.users.length) ? esc(h.users.join(', ')) : '<span style="color:var(--text-sub)">&mdash;</span>';
+    const os = h.os ? esc(h.os) : '<span style="color:var(--text-sub)">&mdash;</span>';
+    return `<tr${h.infected?' style="background:var(--crit-bg)"':''}>
+      <td class="ip-text">${esc(h.ip)}${infected}</td>
+      <td style="font-weight:600">${name}</td>
+      <td class="mono" style="color:var(--text-sub)">${esc(h.mac||'')}</td>
+      <td style="color:var(--critical);font-weight:600">${user}</td>
+      <td style="color:var(--text-sub)">${os}</td>
+      <td><span class="badge badge-${HOSTID_ROLE_BADGE[h.role]||'INFO'}">${esc(h.role||'host')}</span></td>
+    </tr>`;
+  }).join('');
+
+  // RAT C2 callout — the malware channel that marks the infected host, and the
+  // start time that answers "when did the RAT traffic begin".
+  const rat = hi.rat || {};
+  const chans = rat.channels || [];
+  const ratEl = document.getElementById('hostid-rat');
+  if(ratEl){
+    ratEl.innerHTML = chans.map(c=>`
+      <div style="border:1px solid var(--critical);border-left:3px solid var(--critical);border-radius:8px;padding:12px 14px;background:var(--crit-bg)">
+        <div style="font-size:13px;font-weight:700;color:var(--critical)">${esc(rat.family||'Remote Access Trojan')} &mdash; command &amp; control</div>
+        <div style="font-size:12.5px;color:var(--text);margin-top:5px">
+          Infected host <b>${esc(c.client||'')}</b> &rarr; C2 <b>${esc(c.c2||'')}</b>
+        </div>
+        <div style="font-size:12px;color:var(--text-sub);margin-top:3px">
+          First seen (start of the RAT traffic): <b>${esc(c.first_seen_utc||'')}</b>
+          &middot; client ${esc(c.client_agent||'—')} &middot; gateway ${esc(c.gateway||'—')}
+          ${c.commands&&c.commands.length?' &middot; commands '+esc(c.commands.join(', ')):''}
+        </div>
+      </div>`).join('');
+  }
 }
 
 /* ── Credential Exposure ── */

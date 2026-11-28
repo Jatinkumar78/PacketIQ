@@ -36,6 +36,10 @@ class EventType(str, Enum):
     ICMP_TUNNELING      = "ICMP_TUNNELING"
     SUSPICIOUS_FLAGS    = "SUSPICIOUS_FLAGS"
     C2_BEACON           = "C2_BEACON"
+    # A Remote Access Trojan command-and-control channel identified by its own
+    # protocol signature on the wire (not inferred from a port), e.g. NetSupport
+    # Manager abused as a RAT, which names itself in its HTTP headers.
+    RAT_C2              = "RAT_C2"
     JA3_ANOMALY         = "JA3_ANOMALY"
     IOC_MATCH           = "IOC_MATCH"
     MALICIOUS_FILE      = "MALICIOUS_FILE"

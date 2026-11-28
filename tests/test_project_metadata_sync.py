@@ -289,6 +289,7 @@ def test_every_emitted_detection_type_reaches_the_readme_table():
         EventType.ICMP_TUNNELING: "icmp tunneling", EventType.IOC_MATCH: "ioc match",
         EventType.JA3_ANOMALY: "ja3", EventType.MALICIOUS_FILE: "file carving",
         EventType.PORT_SCAN: "port scan", EventType.PROTOCOL_MISUSE: "protocol misuse",
+        EventType.RAT_C2: "netsupport rat",
         EventType.SUSPICIOUS_FLAGS: "suspicious tcp flags", EventType.TLS_ANOMALY: "tls certificate",
         EventType.KERBEROS_USER_ENUM: "kerberos user enumeration",
         EventType.KERBEROS_BRUTE_FORCE: "kerberos brute force",

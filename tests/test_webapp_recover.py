@@ -347,3 +347,65 @@ def test_recover_keeps_credential_exposure_consistent(client, tmp_path, monkeypa
         assert ce["records"][0]["plaintext"] == "Password1!"
     finally:
         webapp._jobs.pop(job, None)
+
+
+# ── host identity (NetSupport RAT + the infected host's IP/MAC/name/user) ──────
+
+_HOSTID_RESULT = {
+    "ip_to_mac": {"10.11.10.10": "00:c0:4f:a2:95:e7", "10.11.10.147": "00:12:f0:e5:17:43"},
+    "mac_to_ips": {"00:c0:4f:a2:95:e7": ["10.11.10.10"], "00:12:f0:e5:17:43": ["10.11.10.147"]},
+    "host_names": {"by_ip": {"10.11.10.147": {"name": "DESKTOP-5OMVI3L",
+                                              "os": "Windows 10/11 or Server 2016+",
+                                              "role": "workstation", "mac": "00:12:f0:e5:17:43",
+                                              "sources": ["NetBIOS Browser"]}},
+                   "by_mac": {}},
+    "kerberos": {"realms": ["THELUCKYTURKEY.COM"],
+                 "by_host": {"10.11.10.147": {"machine_accounts": ["DESKTOP-5OMVI3L$"],
+                                              "user_accounts": ["edward.winslow"], "all": []}}},
+    "netsupport": {"family": "NetSupport RAT (NetSupport Manager)", "detected": True,
+                   "channels": [{"client": "10.11.10.147", "server": "93.152.209.36",
+                                 "port": 443, "c2": "93.152.209.36:443", "first_seen": 1.0,
+                                 "first_seen_utc": "2026-11-10 18:22:07 UTC",
+                                 "client_agent": "NetSupport Manager/1.3",
+                                 "gateway": "NetSupport Gateway/1.92", "uri": "/fakeurl.htm",
+                                 "commands": ["POLL", "ENCD"], "request_count": 127}]},
+    "open_ports": {"10.11.10.10": [[53, "udp", "DNS"], [389, "tcp", "LDAP"]]},
+    "dns_queries": [{"qname": "luckyturkey-dc.theluckyturkey.com"}],
+}
+
+
+def test_build_chat_context_carries_host_identity_answers():
+    ctx = webapp._build_chat_context(dict(_HOSTID_RESULT))
+    for answer in ("10.11.10.147", "00:12:f0:e5:17:43", "DESKTOP-5OMVI3L",
+                   "edward.winslow", "2026-11-10 18:22:07 UTC", "93.152.209.36:443"):
+        assert answer in ctx
+    assert "INFECTED WINDOWS CLIENT" in ctx
+
+
+def test_attach_host_identity_marks_the_infected_host():
+    data = dict(_HOSTID_RESULT)
+    webapp._attach_host_identity(data)
+    hosts = data["host_identity"]["hosts"]
+    infected = [h for h in hosts if h["infected"]]
+    assert infected[0]["ip"] == "10.11.10.147"
+    assert infected[0]["hostname"] == "DESKTOP-5OMVI3L"
+    assert data["host_identity"]["rat"]["family"] == "NetSupport RAT (NetSupport Manager)"
+
+
+def test_results_endpoint_carries_host_identity_panel_data(client):
+    job = "hid-" + uuid.uuid4().hex
+    webapp._jobs[job] = {"status": "complete", "filename": "x.pcap",
+                         "result": dict(_HOSTID_RESULT)}
+    try:
+        hi = (client.get(f"/api/results/{job}").json() or {}).get("host_identity") or {}
+        assert any(h["infected"] and h["hostname"] == "DESKTOP-5OMVI3L" for h in hi["hosts"])
+    finally:
+        webapp._jobs.pop(job, None)
+
+
+def test_dns_query_names_dedups_skips_blank_and_caps():
+    queries = ([{"qname": "a.com"}, {"qname": "a.com"}, {"qname": ""}, {"qname": "b.com"}]
+               + [{"qname": f"h{i}.com"} for i in range(600)])
+    out = webapp._dns_query_names(types.SimpleNamespace(dns_queries=queries))
+    assert {"qname": "a.com"} in out and {"qname": "b.com"} in out
+    assert len(out) == 500                      # de-duplicated, blank skipped, capped

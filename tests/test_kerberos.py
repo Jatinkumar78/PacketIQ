@@ -839,3 +839,22 @@ def test_the_copilot_context_carries_the_crackable_hash_and_forbids_a_guessed_pa
     assert "$krb5asrep$23$larry.doe@" in text
     assert "hashcat -m 18200" in text
     assert "password is NOT in this capture" in text
+
+
+# ── per-host account attribution (summary["by_host"]) ─────────────────────────
+
+def test_summary_attributes_each_host_its_own_machine_and_user_accounts():
+    """`by_host` lets the asset synthesis tell a host's machine account and its
+    logged-in user apart from everything else the capture saw. An AS-REQ is sent BY
+    the client, so the request's source owns the identity; a client that only asked
+    for a service ticket (no cname) contributes no identity and is absent."""
+    acc = _run([
+        as_req("DESKTOP-5OMVI3L$", src="10.11.10.147", dst="10.11.10.10"),
+        as_req("edward.winslow", src="10.11.10.147", dst="10.11.10.10"),
+        tgs_req(["HTTP", "dc.thm"], src="10.11.10.50", dst="10.11.10.10"),
+    ])
+    by_host = acc.summary()["by_host"]
+    assert by_host["10.11.10.147"]["machine_accounts"] == ["DESKTOP-5OMVI3L$"]
+    assert by_host["10.11.10.147"]["user_accounts"] == ["edward.winslow"]
+    assert set(by_host["10.11.10.147"]["all"]) == {"DESKTOP-5OMVI3L$", "edward.winslow"}
+    assert "10.11.10.50" not in by_host

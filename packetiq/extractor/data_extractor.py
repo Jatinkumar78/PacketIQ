@@ -159,6 +159,16 @@ class ExtractionResult:
     # uploads and decompressed response bodies read from the full HTTP exchange.
     http_forensics: dict = field(default_factory=dict)
 
+    # Remote Access Trojan command-and-control identified by a protocol signature
+    # on the wire (e.g. NetSupport Manager abused as a RAT, which names itself in
+    # its HTTP headers). Empty when no RAT C2 channel was seen.
+    netsupport: dict = field(default_factory=dict)
+
+    # Host identity evidence a host announces for itself: computer name, FQDN and
+    # OS from NetBIOS Browser host announcements and DHCP option 12 / 81. Keyed by
+    # IP. Empty when the capture carries no such name-service traffic.
+    host_names: dict = field(default_factory=dict)
+
     # Offline recovery (opt-in, --crack): the cracked password, the decrypted WinRM
     # commands and the flag. Empty unless the user asked for the offline step.
     offline: dict = field(default_factory=dict)

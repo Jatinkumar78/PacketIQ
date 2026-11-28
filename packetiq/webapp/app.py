@@ -719,6 +719,22 @@ def _open_ports_payload(result) -> dict:
             for ip in sorted(by_host)}
 
 
+def _dns_query_names(result) -> list:
+    """Unique DNS query names (qname only), carried so the web host-identity synthesis
+    can name a domain controller from the lookups of it exactly as the CLI does.
+    De-duplicated and capped to keep the result payload small."""
+    seen: set = set()
+    out: list = []
+    for q in getattr(result, "dns_queries", []) or []:
+        qname = q.get("qname", "")
+        if qname and qname not in seen:
+            seen.add(qname)
+            out.append({"qname": qname})
+        if len(out) >= 500:
+            break
+    return out
+
+
 def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, progress=None):
     """Build timeline/sigma/attrs/exports + the serialised result dict."""
     from packetiq.attribution.engine import AttributionEngine
@@ -828,6 +844,15 @@ def _build_result_data(job_id, file_meta, result, events, risk, chains, fps, pro
         # cookies). Carried so the web copilot's credential-exposure synthesis sees
         # the same cleartext HTTP credentials the CLI copilot does.
         "http_forensics": getattr(result, "http_forensics", {}) or {},
+        # Remote Access Trojan C2 (NetSupport RAT) and the host-identity evidence
+        # the asset synthesis joins (self-announced names, OS, and the MAC↔IP
+        # bindings), so the web copilot and Assets panel see the same identity and
+        # RAT facts the CLI copilot does.
+        "netsupport":    getattr(result, "netsupport", {}) or {},
+        "host_names":    getattr(result, "host_names", {}) or {},
+        "ip_to_mac":     dict(getattr(result, "ip_to_mac", {}) or {}),
+        "mac_to_ips":    {m: sorted(ips) for m, ips in (getattr(result, "mac_to_ips", {}) or {}).items()},
+        "dns_queries":   _dns_query_names(result),
         "sigma_rules":   [{"title": r.title, "level": r.level, "yaml": r.raw_yaml} for r in sigma],
         "attributions":  [_ser_attr(a) for a in attrs],
         "graph":         _build_graph(result, events),
@@ -848,6 +873,18 @@ def _attach_credential_exposure(data: dict) -> None:
     data["credential_exposure"] = credential_exposure_payload(
         data.get("cleartext"), data.get("http_forensics"),
         data.get("kerberos"), data.get("offline"), data.get("winrm"))
+
+
+def _attach_host_identity(data: dict) -> None:
+    """Serialise the consolidated host identity into ``data["host_identity"]`` for the
+    web Assets panel: each internal host's IP, MAC, name, user, OS and role, with the
+    RAT C2 that marks the infected one. The same `copilot.host_identity` synthesis feeds
+    the web copilot and the CLI, so all surfaces agree on who the infected host is."""
+    from packetiq.copilot.host_identity import host_identity_payload
+    data["host_identity"] = host_identity_payload(
+        data.get("ip_to_mac"), data.get("mac_to_ips"), data.get("host_names"),
+        data.get("kerberos"), data.get("netsupport"),
+        data.get("open_ports"), data.get("dns_queries"))
 
 
 def _merge_results(results: list):
@@ -1267,6 +1304,20 @@ def _build_chat_context(result: dict) -> str:
         f"Risk Score  : {r.get('score', 0)}/100  [{r.get('tier', '?')}]",
         f"Risk Summary: {r.get('summary', '')}",
     ]
+
+    # Host identity + RAT C2 — the consolidated asset inventory (each internal host's
+    # IP, MAC, computer name, user, OS and role) with the RAT that marks the infected
+    # one, and the exact answer lines for "which host is infected / its MAC / name /
+    # user / when did the RAT start". Front-loaded and shared verbatim with the CLI
+    # copilot (`context_builder._host_identity`) so both answer identically. See
+    # `packetiq.copilot.host_identity`.
+    from packetiq.copilot.host_identity import host_identity_section
+    identity = host_identity_section(
+        result.get("ip_to_mac"), result.get("mac_to_ips"), result.get("host_names"),
+        result.get("kerberos"), result.get("netsupport"),
+        result.get("open_ports"), result.get("dns_queries"))
+    if identity:
+        lines.append("\n" + identity)
 
     # Capture stats
     lines += [
@@ -3057,6 +3108,7 @@ def create_app() -> FastAPI:
         # Recompute the credential exposure from the current findings (offline recovery
         # may have landed after the result was first built), then serve it.
         _attach_credential_exposure(job["result"])
+        _attach_host_identity(job["result"])
         # Exclude large blobs — they have dedicated endpoints
         payload = {k: v for k, v in job["result"].items() if k not in ("html_report", "misp")}
         return JSONResponse(payload)
@@ -3090,6 +3142,7 @@ def create_app() -> FastAPI:
         if data is None:
             raise HTTPException(500, "Analysis failed.")
         _attach_credential_exposure(data)
+        _attach_host_identity(data)
         return JSONResponse({"job_id": job_id, **data})
 
     @app.get("/api/report/{job_id}.html")
@@ -3931,6 +3984,7 @@ def create_app() -> FastAPI:
         # Keep the stored result's credential exposure consistent with the new crack,
         # so a Credentials-panel refresh after a manual recover shows the plaintext.
         _attach_credential_exposure(result)
+        _attach_host_identity(result)
         return data
 
     @app.get("/api/chat/{job_id}/status")

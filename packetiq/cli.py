@@ -475,6 +475,7 @@ def analyze(pcap_file: str, top: int, full: bool, alert: bool, alert_threshold: 
     _rec = _apply_offline_recovery(result, str(pcap_path), do_crack, wordlist)
     if _rec:
         _print_offline_recovery(_rec)
+    _print_host_identity(result)
     _print_credential_exposure(result)
 
     # ── Summary panel ──────────────────────────────────────────────────
@@ -1096,6 +1097,54 @@ def _print_offline_recovery(rec) -> None:
             ui.print_status(f"Flag recovered from the decrypted session: {flag}", "warning")
 
 
+def _print_host_identity(result) -> None:
+    """Visible panel: the consolidated asset inventory — each internal host's IP, MAC,
+    computer name, user, OS and role — with the RAT C2 that marks the infected one.
+    Reads the same synthesis the copilot does (`copilot.host_identity`), so the terminal
+    and the AI never disagree. Prints nothing when there is no host to show."""
+    from packetiq.copilot.host_identity import build_host_identity, open_ports_from_exposure
+
+    netsupport = getattr(result, "netsupport", None) or {}
+    profiles = build_host_identity(
+        getattr(result, "ip_to_mac", None),
+        getattr(result, "mac_to_ips", None),
+        getattr(result, "host_names", None),
+        getattr(result, "kerberos", None),
+        netsupport,
+        open_ports_from_exposure(getattr(result, "service_exposure", None)),
+        getattr(result, "dns_queries", None),
+    )
+    channels = netsupport.get("channels") or []
+    if not profiles and not channels:
+        return
+
+    ui.print_section("HOST IDENTITY", "internal assets — IP, MAC, name, user, role")
+
+    # Per-host status lines rather than a table: a terminal fixed at 80 columns breaks
+    # a 15-char host name across a narrow table cell, so each host is one full-width
+    # line whose values stay intact.
+    for p in profiles:
+        tag = "INFECTED" if p["infected"] else p["role"].upper()
+        head = f"{p['ip']}  {p['hostname'] or '(name not announced)'}  [{tag}]"
+        ui.print_status(head, "error" if p["infected"] else "info")
+        bits = [f"MAC {p['mac']}"]
+        if p["users"]:
+            bits.append(f"user {', '.join(p['users'])}")
+        if p["os"]:
+            bits.append(p["os"])
+        if p["fqdn"]:
+            bits.append(p["fqdn"])
+        ui.print_status("    " + "  ·  ".join(bits), "info")
+
+    family = netsupport.get("family", "RAT")
+    for c in channels:
+        ui.print_status(
+            f"RAT C2 [{family}]: {c.get('client')} → {c.get('c2')} — "
+            f"first seen {c.get('first_seen_utc')} "
+            f"(client {c.get('client_agent') or '—'}, gateway {c.get('gateway') or '—'})",
+            "warn")
+
+
 def _print_credential_exposure(result) -> None:
     """Visible panel: every credential the capture leaks or the attacker steals,
     aligned to the account that owns it and shown as plaintext where PacketIQ cracked
@@ -1313,6 +1362,7 @@ def chat(pcap_file: str, provider: str, model: str, do_crack: bool, wordlist: st
     rec = _apply_offline_recovery(result, str(pcap_path), do_crack, wordlist)
     if rec:
         _print_offline_recovery(rec)
+    _print_host_identity(result)
     _print_credential_exposure(result)
 
     ui.print_section("AI COPILOT", "loading analysis context")
